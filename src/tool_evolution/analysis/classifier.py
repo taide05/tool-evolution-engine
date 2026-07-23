@@ -46,8 +46,9 @@ class FailureClassifier:
         num_features = np.array([[c[f"feat_{k}"] for k in ("param_count", "has_auth_header", "hour_of_day")] for c in combined])
 
         # TF-IDF on combined tool_name + error_message text
+        # character n-grams capture sub-word patterns: "timeout" ~ "timed out"
         self.pipeline = Pipeline([
-            ("tfidf", TfidfVectorizer(max_features=500)),
+            ("tfidf", TfidfVectorizer(max_features=500, analyzer="char_wb", ngram_range=(2, 4))),
         ])
         tfidf_matrix = self.pipeline.named_steps["tfidf"].fit_transform(texts)
 
@@ -92,8 +93,9 @@ class FailureClassifier:
 
     def save(self, path: Path) -> None:
         import joblib as jl
+        tfidf = self.pipeline.named_steps["tfidf"] if self.pipeline else None
         jl.dump({
-            "pipeline": self.pipeline,
+            "tfidf": tfidf,
             "clf": self._clf,
             "le": self.label_encoder,
             "tool_enc": self._tool_encoder,
@@ -102,7 +104,8 @@ class FailureClassifier:
     def load(self, path: Path) -> None:
         import joblib as jl
         data = jl.load(path)
-        self.pipeline = data["pipeline"]
+        if data["tfidf"] is not None:
+            self.pipeline = Pipeline([("tfidf", data["tfidf"])])
         self._clf = data["clf"]
         self.label_encoder = data["le"]
         self._tool_encoder = data["tool_enc"]
