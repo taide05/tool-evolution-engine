@@ -27,16 +27,19 @@ class TestTracesAPI:
         assert r.json() == {"status": "ok"}
 
     async def test_report_trace(self, client):
+        import uuid
         r = await client.post("/api/traces/report", json={
-            "trace_id": "api-1", "agent_id": "test", "tool_name": "search",
+            "trace_id": f"api-{uuid.uuid4().hex[:8]}", "agent_id": "test", "tool_name": "search",
             "success": True, "latency_ms": 42
         })
         assert r.status_code == 200
 
     async def test_seed_traces(self, client):
+        import uuid
+        sid1, sid2 = f"seed-{uuid.uuid4().hex[:8]}", f"seed-{uuid.uuid4().hex[:8]}"
         r = await client.post("/api/traces/seed", json=[
-            {"trace_id": "seed-1", "agent_id": "test", "tool_name": "search", "success": True, "latency_ms": 10},
-            {"trace_id": "seed-2", "agent_id": "test", "tool_name": "search", "success": False, "latency_ms": 500,
+            {"trace_id": sid1, "agent_id": "test", "tool_name": "search", "success": True, "latency_ms": 10},
+            {"trace_id": sid2, "agent_id": "test", "tool_name": "search", "success": False, "latency_ms": 500,
              "error_type": "timeout", "error_message": "timeout"},
         ])
         assert r.status_code == 200
