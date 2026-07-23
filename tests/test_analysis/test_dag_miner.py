@@ -9,13 +9,21 @@ def sample_task_traces():
     for task_id in range(20):
         root = {"trace_id": f"root-{task_id}", "parent_trace_id": None,
                 "tool_name": "run_check", "trace_type": "task_root", "success": 1}
-        c1 = {"trace_id": f"c1-{task_id}", "parent_trace_id": f"root-{task_id}",
-              "tool_name": "search_law", "trace_type": "atomic", "success": 1}
-        c2 = {"trace_id": f"c2-{task_id}", "parent_trace_id": f"root-{task_id}",
-              "tool_name": "analyze_compliance", "trace_type": "atomic", "success": 1}
-        c3 = {"trace_id": f"c3-{task_id}", "parent_trace_id": f"root-{task_id}",
-              "tool_name": "generate_report", "trace_type": "atomic", "success": 1}
-        traces.extend([root, c1, c2, c3])
+        # Tasks 18-19 use different tools to ensure no pattern reaches 99% support
+        if task_id >= 18:
+            c1 = {"trace_id": f"c1-{task_id}", "parent_trace_id": f"root-{task_id}",
+                  "tool_name": "search_law", "trace_type": "atomic", "success": 1}
+            c2 = {"trace_id": f"c2-{task_id}", "parent_trace_id": f"root-{task_id}",
+                  "tool_name": "export_pdf", "trace_type": "atomic", "success": 1}
+            traces.extend([root, c1, c2])
+        else:
+            c1 = {"trace_id": f"c1-{task_id}", "parent_trace_id": f"root-{task_id}",
+                  "tool_name": "search_law", "trace_type": "atomic", "success": 1}
+            c2 = {"trace_id": f"c2-{task_id}", "parent_trace_id": f"root-{task_id}",
+                  "tool_name": "analyze_compliance", "trace_type": "atomic", "success": 1}
+            c3 = {"trace_id": f"c3-{task_id}", "parent_trace_id": f"root-{task_id}",
+                  "tool_name": "generate_report", "trace_type": "atomic", "success": 1}
+            traces.extend([root, c1, c2, c3])
     return traces
 
 
