@@ -62,7 +62,6 @@ class TestFailureClassifier:
         assert len(importance) > 0
         assert "tool_name" in importance
 
-    @pytest.mark.xfail(reason="sklearn Pipeline serialization compatibility — predict before save works")
     def test_save_and_load(self, sample_traces):
         clf = FailureClassifier()
         clf.train(sample_traces)
