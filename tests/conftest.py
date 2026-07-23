@@ -1,10 +1,11 @@
 import pytest
+import pytest_asyncio
 import aiosqlite
 from pathlib import Path
 from tool_evolution.utils.database import init_db
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_conn():
     conn = await aiosqlite.connect(":memory:")
     conn.row_factory = aiosqlite.Row
