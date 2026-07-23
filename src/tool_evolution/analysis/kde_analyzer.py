@@ -76,9 +76,35 @@ class KDEAnalyzer:
             }
 
     def _analyze_str(self, values: list) -> dict:
-        counter = Counter(values)
-        most_common = counter.most_common(1)[0][0]
-        return {"default_value": most_common, "unique_count": len(counter)}
+        unique = list(set(values))
+        if len(unique) <= 3:
+            counter = Counter(values)
+            most_common = counter.most_common(1)[0][0]
+            return {"default_value": most_common, "unique_count": len(counter), "method": "frequency"}
+
+        try:
+            vec = TfidfVectorizer(max_features=100, analyzer="char_wb", ngram_range=(2, 4))
+            tfidf_matrix = vec.fit_transform(values)
+            n_clusters = min(5, len(unique))
+            km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            labels = km.fit_predict(tfidf_matrix)
+            cluster_counts = Counter(labels)
+            dominant_cluster = cluster_counts.most_common(1)[0][0]
+            cluster_mask = labels == dominant_cluster
+            cluster_values = [values[i] for i, m in enumerate(cluster_mask) if m]
+            counter = Counter(cluster_values)
+            most_common = counter.most_common(1)[0][0]
+            return {
+                "default_value": most_common,
+                "unique_count": len(unique),
+                "n_clusters": n_clusters,
+                "dominant_cluster_ratio": round(cluster_counts[dominant_cluster] / len(values), 3),
+                "method": "tfidf_kmeans",
+            }
+        except Exception:
+            counter = Counter(values)
+            most_common = counter.most_common(1)[0][0]
+            return {"default_value": most_common, "unique_count": len(counter), "method": "frequency_fallback"}
 
     def _analyze_bool(self, values: list) -> dict:
         true_count = sum(1 for v in values if v)

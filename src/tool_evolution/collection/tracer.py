@@ -12,6 +12,27 @@ class Tracer:
         self.flush_interval_s = flush_interval_s
         self._queue: asyncio.Queue[TraceReport] = asyncio.Queue()
         self._flush_task: asyncio.Task | None = None
+        self._running = False
+
+    async def start(self) -> None:
+        self._running = True
+        self._flush_task = asyncio.create_task(self._periodic_flush())
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._flush_task:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+        await self.flush()
+
+    async def _periodic_flush(self) -> None:
+        while self._running:
+            await asyncio.sleep(self.flush_interval_s)
+            if self._queue.qsize() > 0:
+                await self._flush_batch()
 
     def start_trace(self, agent_id: str, tool_name: str, **kwargs) -> TraceReport:
         return TraceReport(

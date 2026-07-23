@@ -60,7 +60,7 @@ class DAGMiner:
             if name not in nodes:
                 nodes[name] = {"tool_name": name}
 
-        ordered = sorted(children, key=lambda t: t.get("created_at", ""))
+        ordered = sorted(children, key=lambda t: t.get("rowid", 0))
         for i in range(len(ordered) - 1):
             src = ordered[i]["tool_name"]
             dst = ordered[i + 1]["tool_name"]
@@ -75,5 +75,28 @@ class DAGMiner:
         return f"{'|'.join(node_names)}::{edge_pairs}"
 
     def _name_dag(self, dag: dict) -> str:
-        node_names = [n["tool_name"] for n in dag["nodes"]]
-        return " → ".join(node_names[:5])
+        if not dag.get("edges"):
+            node_names = sorted(n["tool_name"] for n in dag["nodes"])
+            return " → ".join(node_names[:5])
+        # Topological ordering from edges
+        node_set = {n["tool_name"] for n in dag["nodes"]}
+        in_degree = {name: 0 for name in node_set}
+        adj = {name: [] for name in node_set}
+        edge_list = []
+        for e in dag["edges"]:
+            src, dst = e["from"], e["to"]
+            if src in node_set and dst in node_set:
+                adj[src].append(dst)
+                in_degree[dst] += 1
+                edge_list.append((src, dst))
+        # Start nodes sorted by their position in the first outgoing edge
+        starts = sorted([n for n, d in in_degree.items() if d == 0])
+        order = []
+        while starts:
+            node = starts.pop(0)
+            order.append(node)
+            for nb in sorted(adj.get(node, [])):
+                in_degree[nb] -= 1
+                if in_degree[nb] == 0:
+                    starts.append(nb)
+        return " → ".join(order[:5]) if order else " → ".join(sorted(node_set))

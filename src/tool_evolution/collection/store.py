@@ -76,14 +76,14 @@ class TraceStore:
 
     async def get_all_traces(self, limit: int = 100, offset: int = 0) -> list[dict]:
         cursor = await self.conn.execute(
-            "SELECT * FROM trajectories ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            "SELECT rowid, * FROM trajectories ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (limit, offset)
         )
         return [dict(row) for row in await cursor.fetchall()]
 
     async def get_recent_traces(self, days: int = 30, limit: int = 10000) -> list[dict]:
         cursor = await self.conn.execute(
-            "SELECT * FROM trajectories WHERE created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?",
+            "SELECT rowid, * FROM trajectories WHERE created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?",
             (f"-{days} days", limit)
         )
         return [dict(row) for row in await cursor.fetchall()]
