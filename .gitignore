@@ -19,3 +19,4 @@ data/
 
 # Env
 .env
+benchmarks/runs/
