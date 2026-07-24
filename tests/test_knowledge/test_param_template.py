@@ -47,3 +47,20 @@ class TestParamTemplateManager:
         tmpl = await manager.generate("search", "1.0.0")
         assert tmpl is not None
         assert "max_results" in tmpl
+
+    async def test_generate_with_user_prefs(self, manager, db_conn):
+        from tool_evolution.collection.store import TraceStore
+        from tool_evolution.collection.schemas import TraceReport
+
+        store = TraceStore(db_conn)
+        for i in range(40):
+            await store.insert(TraceReport(
+                trace_id=f"p{i}", agent_id="a", tool_name="pref_tool",
+                tool_version="1.0.0", success=True, latency_ms=10,
+                params={"max_results": 10 + (i % 5)}
+            ))
+        tmpl = await manager.generate("pref_tool", "1.0.0",
+                                       user_prefs={"max_results": 99})
+        assert tmpl is not None
+        assert tmpl["max_results"]["default_value"] == 99
+        assert tmpl["max_results"]["source"] == "user_preference"

@@ -47,7 +47,13 @@ class ParamTemplateManager:
             }
         return result
 
-    async def generate(self, tool_name: str, tool_version: str) -> dict | None:
+    async def generate(self, tool_name: str, tool_version: str,
+                       user_prefs: dict | None = None) -> dict | None:
+        """Generate parameter templates from KDE analysis of success traces.
+
+        When user_prefs is provided, user-specified defaults take priority
+        over statistically-derived defaults for matching parameter names.
+        """
         params_list = await self.store.get_success_params(tool_name, tool_version, limit=500)
         if len(params_list) < settings.min_samples:
             return None
@@ -58,4 +64,11 @@ class ParamTemplateManager:
         dists = self.kde.analyze(tool_name, tool_version, filtered)
         if dists:
             await self.save(tool_name, tool_version, dists)
-        return await self.get_template(tool_name, tool_version)
+        template = await self.get_template(tool_name, tool_version)
+        # Inject user preferences as overrides
+        if template and user_prefs:
+            for param_name, pref_value in user_prefs.items():
+                if param_name in template:
+                    template[param_name]["default_value"] = pref_value
+                    template[param_name]["source"] = "user_preference"
+        return template

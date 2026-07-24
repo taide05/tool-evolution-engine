@@ -95,6 +95,17 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS canary_invocations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            skill_id INTEGER NOT NULL REFERENCES deployed_skills(id),
+            variant TEXT NOT NULL CHECK(variant IN ('stable','canary')),
+            success INTEGER NOT NULL,
+            latency_ms INTEGER NOT NULL,
+            tokens INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_canary_skill ON canary_invocations(skill_id, variant);
+
         CREATE TABLE IF NOT EXISTS memory_cache (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,

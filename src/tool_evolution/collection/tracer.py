@@ -6,10 +6,12 @@ from .store import TraceStore
 
 
 class Tracer:
-    def __init__(self, conn: aiosqlite.Connection, batch_size: int = 100, flush_interval_s: int = 5):
+    def __init__(self, conn: aiosqlite.Connection, batch_size: int = 100,
+                 flush_interval_s: int = 5, mcp_bridge=None):
         self.store = TraceStore(conn)
         self.batch_size = batch_size
         self.flush_interval_s = flush_interval_s
+        self._mcp_bridge = mcp_bridge
         self._queue: asyncio.Queue[TraceReport] = asyncio.Queue()
         self._flush_task: asyncio.Task | None = None
         self._running = False
@@ -61,6 +63,12 @@ class Tracer:
                 break
         for report in batch:
             await self.store.insert(report)
+            if self._mcp_bridge and report.success and report.result:
+                await self._mcp_bridge.extract_and_update({
+                    "success": True,
+                    "result": report.result,
+                    "tool_name": report.tool_name,
+                })
 
     async def close(self) -> None:
         await self.flush()

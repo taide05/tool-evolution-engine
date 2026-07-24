@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     idle_decay_days: int = 7
     canary_threshold: int = 50
     ab_rollback_margin: float = 0.10
+    canary_check_interval_s: int = 300
+    canary_min_samples: int = 30
 
     class Config:
         env_prefix = "TOOLEVO_"

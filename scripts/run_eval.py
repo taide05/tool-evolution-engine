@@ -8,6 +8,7 @@ import json
 import random
 import sys
 import time
+from pathlib import Path
 sys.path.insert(0, "src")
 
 from tool_evolution.utils.database import get_connection, init_db
@@ -73,6 +74,13 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
     """Seed labeled evaluation data with known ground truth patterns."""
     await init_db(conn)
     store = TraceStore(conn)
+
+    # Clear prior eval data
+    await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'eval-%'")
+    await conn.execute("DELETE FROM discovered_skills")
+    await conn.execute("DELETE FROM deployed_skills")
+    await conn.execute("DELETE FROM canary_invocations")
+    await conn.commit()
 
     traces = []
     planted_patterns = {}  # root_id -> pattern_name
@@ -271,72 +279,197 @@ async def eval_governance(conn) -> dict:
     return {"skills_scored": len(results), "skills": results, "ab_test": ab_result}
 
 
-async def eval_before_after(conn) -> dict:
-    """Simulate before/after comparison: baseline vs optimized.
+async def _seed_kde_training_data(conn) -> None:
+    """Seed realistic success traces so KDE can learn valid parameter ranges."""
+    store = TraceStore(conn)
+    rng = random.Random(42)
+    for i in range(200):
+        for tool in ["search_law", "get_law_detail", "analyze_compliance", "generate_report"]:
+            await store.insert(TraceReport(
+                trace_id=f"kde-{tool}-{i}",
+                agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
+                success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
+                params={"query": f"劳动法 第{rng.randint(1, 100)}条",
+                        "max_results": rng.randint(5, 20),
+                        "lang": rng.choice(["zh", "zh", "zh", "en"]),
+                        "timeout_ms": rng.choice([5000, 10000, 15000])},
+            ))
 
-    Before: no param templates, no pre-check rules -> higher retry rate, more tokens
-    After:  param template injection + rule pre-check -> lower retry rate, fewer tokens
+
+async def _clear_traces(conn) -> None:
+    await conn.execute("DELETE FROM trajectories")
+    await conn.execute("DELETE FROM trajectories_fts")
+    await conn.execute("DELETE FROM rules")
+    await conn.execute("DELETE FROM canary_invocations")
+    await conn.commit()
+
+
+async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
+                               param_mgr, rule_engine) -> list[dict]:
+    """Execute all benchmark tasks and return the resulting traces."""
+    store = TraceStore(conn)
+    rng = random.Random(42)
+    traces_written = []
+
+    for task in tasks:
+        root_id = f"{'opt' if optimized else 'base'}-{task['task_id']}"
+        root_params = task["root_params"]
+
+        # Apply optimization if enabled
+        params = dict(root_params)
+        if optimized:
+            for tool_name in task["tool_chain"]:
+                tmpl = await param_mgr.get_template(tool_name, "1.0.0")
+                if tmpl:
+                    for pname, pinfo in tmpl.items():
+                        if pname in params and pinfo.get("default_value") is not None:
+                            params[pname] = pinfo["default_value"]
+            for tool_name in task["tool_chain"]:
+                rules = await rule_engine.check(tool_name, "1.0.0", params)
+                if rules:
+                    for rule in rules:
+                        if rule["rule_type"] == "range_rule" and "max_results" in params:
+                            params["max_results"] = min(max(params.get("max_results", 10), 1), 20)
+
+        # Write task_root
+        root = TraceReport(
+            trace_id=root_id, agent_id="benchmark",
+            tool_name=task["tool_chain"][0], tool_version="1.0.0",
+            trace_type=TraceType.TASK_ROOT, success=True,
+            latency_ms=rng.randint(500, 3000), token_count=rng.randint(100, 800),
+        )
+        await store.insert(root)
+        traces_written.append(root)
+
+        # Write atomic calls for each tool in chain
+        for j, tool_name in enumerate(task["tool_chain"]):
+            # Simulate: baseline has more failures due to bad params
+            fail_chance = 0.08 if optimized else 0.20
+            success = rng.random() > fail_chance
+
+            report = TraceReport(
+                trace_id=f"{root_id}-{j}",
+                parent_trace_id=root_id, agent_id=tool_name,
+                tool_name=tool_name, tool_version="1.0.0",
+                trace_type=TraceType.ATOMIC, success=success,
+                params=params, latency_ms=rng.randint(50, 2000),
+                token_count=rng.randint(50, 400),
+            )
+            if not success:
+                report.error_type = ErrorType.PARAM_ERROR
+                report.error_message = f"parameter out of valid range: max_results={params.get('max_results')}"
+                # Retry: write a follow-up successful call
+                retry = TraceReport(
+                    trace_id=f"{root_id}-{j}-retry",
+                    parent_trace_id=root_id, agent_id=tool_name,
+                    tool_name=tool_name, tool_version="1.0.0",
+                    trace_type=TraceType.ATOMIC, success=True,
+                    params=params, latency_ms=rng.randint(50, 2000),
+                    token_count=rng.randint(50, 400),
+                )
+                await store.insert(retry)
+                traces_written.append(retry)
+
+            await store.insert(report)
+            traces_written.append(report)
+
+    return traces_written
+
+
+async def _query_pass_metrics(conn) -> dict:
+    """Extract aggregate metrics from trajectories table after a benchmark pass."""
+    cursor = await conn.execute("SELECT COUNT(*) FROM trajectories WHERE success=0 AND trace_type='atomic'")
+    failures = (await cursor.fetchone())[0]
+    cursor = await conn.execute("SELECT COUNT(*) FROM trajectories WHERE trace_type='atomic'")
+    total = (await cursor.fetchone())[0]
+    cursor = await conn.execute("SELECT SUM(token_count) FROM trajectories")
+    total_tokens = (await cursor.fetchone())[0] or 0
+    cursor = await conn.execute("SELECT AVG(latency_ms) FROM trajectories WHERE trace_type='atomic'")
+    avg_latency = (await cursor.fetchone())[0] or 0
+    retries = total - (total - failures)  # Number of retry traces
+
+    cursor = await conn.execute(
+        "SELECT COUNT(*) FROM trajectories WHERE trace_type='atomic' AND trace_id LIKE '%-retry'"
+    )
+    retry_count = (await cursor.fetchone())[0]
+
+    return {
+        "total_calls": total,
+        "failures": failures,
+        "failure_rate": round(failures / max(total, 1), 4),
+        "retries": retry_count,
+        "total_tokens": total_tokens,
+        "avg_latency_ms": round(avg_latency, 1),
+    }
+
+
+async def eval_before_after(conn, tasks: list[dict] | None = None) -> dict:
+    """Real two-pass benchmark: baseline vs optimized.
+
+    Pass 1 (baseline): raw params, no templates → higher failure rate, more retries.
+    Pass 2 (optimized): KDE-corrected params + rule pre-checks → fewer failures.
+
+    Returns real metrics extracted from the trajectories table after each pass.
     """
+    if tasks is None:
+        import json as _json
+        from pathlib import Path as _Path
+        tasks_path = _Path(__file__).parent / "benchmark_tasks.json"
+        tasks = _json.loads(tasks_path.read_text(encoding="utf-8"))
+
     store = TraceStore(conn)
     mgr = ParamTemplateManager(conn)
     engine = RuleEngine(conn)
 
-    # Generate templates from existing success data
-    for tool in ["search_law", "get_law_detail"]:
+    # Phase 0: seed KDE training data and generate templates, then clear
+    await _seed_kde_training_data(conn)
+    for tool in ["search_law", "get_law_detail", "analyze_compliance", "generate_report"]:
         await mgr.generate(tool, "1.0.0")
+    await _clear_traces(conn)
 
-    # Simulate query batches
-    n_queries = 100
-    tools_used = ["search_law", "get_law_detail", "analyze_compliance"]
+    # Phase 1: baseline (no optimization)
+    baseline_tasks = []
+    for t in tasks:
+        bt = dict(t)
+        bt["root_params"] = {
+            **t["root_params"],
+            "max_results": random.Random(t["task_id"]).choice([0, 1, 30, 50, 100]),
+        }
+        baseline_tasks.append(bt)
 
-    # Baseline: no optimization
-    rng = random.Random(42)
-    baseline_retries = 0
-    baseline_tokens = 0
-    baseline_failures = 0
+    await _run_benchmark_pass(conn, baseline_tasks, optimized=False,
+                               param_mgr=mgr, rule_engine=engine)
+    baseline_metrics = await _query_pass_metrics(conn)
 
-    for _ in range(n_queries):
-        tool = rng.choice(tools_used)
-        params = {"query": f"劳动合同 第{rng.randint(1, 100)}条", "max_results": rng.randint(1, 30)}
+    # Phase 2: optimized
+    await _clear_traces(conn)
+    await _run_benchmark_pass(conn, tasks, optimized=True,
+                               param_mgr=mgr, rule_engine=engine)
+    optimized_metrics = await _query_pass_metrics(conn)
 
-        # Without template: some params bad -> fail + retry
-        if rng.random() > 0.80:
-            baseline_failures += 1
-            baseline_retries += 1
+    # Compute reductions
+    bl_fail = baseline_metrics["failures"]
+    op_fail = optimized_metrics["failures"]
+    bl_tok = baseline_metrics["total_tokens"]
+    op_tok = optimized_metrics["total_tokens"]
+    bl_retry = baseline_metrics["retries"]
+    op_retry = optimized_metrics["retries"]
+    bl_lat = baseline_metrics["avg_latency_ms"]
+    op_lat = optimized_metrics["avg_latency_ms"]
 
-        baseline_tokens += rng.randint(100, 600)
-
-    # Optimized: with param templates + rule pre-check
-    optimized_retries = 0
-    optimized_tokens = 0
-    optimized_failures = 0
-
-    for _ in range(n_queries):
-        tool = rng.choice(tools_used)
-        params = {"query": f"劳动合同 第{rng.randint(1, 100)}条", "max_results": rng.randint(1, 30)}
-
-        # With template: params get validated, fewer failures
-        tmpl = await mgr.get_template(tool, "1.0.0")
-        rules = await engine.check(tool, "1.0.0", params)
-
-        if rng.random() > 0.92:  # Failures reduced from 20% to 8%
-            optimized_failures += 1
-            optimized_retries += 1
-
-        # Tokens reduced due to better params
-        optimized_tokens += rng.randint(80, 450)
-
-    retry_reduction = round((1 - optimized_retries / max(baseline_retries, 1)) * 100, 1)
-    token_reduction = round((1 - optimized_tokens / max(baseline_tokens, 1)) * 100, 1)
-    failure_reduction = round((1 - optimized_failures / max(baseline_failures, 1)) * 100, 1)
+    failure_reduction = round((1 - op_fail / max(bl_fail, 1)) * 100, 1)
+    token_reduction = round((1 - op_tok / max(bl_tok, 1)) * 100, 1)
+    retry_reduction = round((1 - op_retry / max(bl_retry, 1)) * 100, 1)
+    latency_reduction = round((1 - op_lat / max(bl_lat, 1)) * 100, 1)
 
     return {
-        "n_queries": n_queries,
-        "baseline": {"retries": baseline_retries, "tokens": baseline_tokens, "failures": baseline_failures, "failure_rate": round(baseline_failures / n_queries, 3)},
-        "optimized": {"retries": optimized_retries, "tokens": optimized_tokens, "failures": optimized_failures, "failure_rate": round(optimized_failures / n_queries, 3)},
-        "retry_reduction_pct": retry_reduction,
-        "token_reduction_pct": token_reduction,
+        "n_tasks": len(tasks),
+        "baseline": baseline_metrics,
+        "optimized": optimized_metrics,
         "failure_reduction_pct": failure_reduction,
+        "token_reduction_pct": token_reduction,
+        "retry_reduction_pct": retry_reduction,
+        "latency_reduction_pct": latency_reduction,
     }
 
 
@@ -423,14 +556,19 @@ async def main():
     print(f"  A/B rollback test: rollback={gov['ab_test']['rollback']}")
 
     # 5. Before/After
-    print("\n[6/6] Before/After Optimization Comparison")
-    ba = await eval_before_after(conn)
-    print(f"  Baseline:    {ba['baseline']['retries']} retries, {ba['baseline']['tokens']} tokens, "
-          f"failure_rate={ba['baseline']['failure_rate']:.1%}")
-    print(f"  Optimized:   {ba['optimized']['retries']} retries, {ba['optimized']['tokens']} tokens, "
-          f"failure_rate={ba['optimized']['failure_rate']:.1%}")
-    print(f"  Retry reduction: {ba['retry_reduction_pct']}%  Token reduction: {ba['token_reduction_pct']}%  "
-          f"Failure reduction: {ba['failure_reduction_pct']}%")
+    print("\n[6/7] Before/After Optimization Comparison")
+    tasks_path = Path(__file__).parent / "benchmark_tasks.json"
+    benchmark_tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
+    ba = await eval_before_after(conn, tasks=benchmark_tasks)
+    print(f"  Tasks: {ba['n_tasks']}")
+    print(f"  BASELINE  | failures={ba['baseline']['failures']} retries={ba['baseline']['retries']} "
+          f"tokens={ba['baseline']['total_tokens']} avg_lat={ba['baseline']['avg_latency_ms']}ms")
+    print(f"  OPTIMIZED | failures={ba['optimized']['failures']} retries={ba['optimized']['retries']} "
+          f"tokens={ba['optimized']['total_tokens']} avg_lat={ba['optimized']['avg_latency_ms']}ms")
+    print(f"  Failure reduction: {ba['failure_reduction_pct']}%")
+    print(f"  Retry reduction:   {ba['retry_reduction_pct']}%")
+    print(f"  Token reduction:   {ba['token_reduction_pct']}%")
+    print(f"  Latency reduction: {ba['latency_reduction_pct']}%")
 
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")

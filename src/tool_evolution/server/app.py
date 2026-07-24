@@ -19,11 +19,31 @@ async def get_db():
 
 async def _periodic_scoring(conn):
     from ..governance.governor import SkillGovernor
+    from ..governance.canary_router import CanaryRouter
+    from ..knowledge.skill_pack import SkillPackManager
     gov = SkillGovernor(conn)
+    router = CanaryRouter(conn)
+    skill_mgr = SkillPackManager(conn)
     while True:
         await asyncio.sleep(settings.credit_update_interval_s)
         try:
             await gov.update_all_scores()
+        except Exception:
+            pass
+        try:
+            deployed = await skill_mgr.list_deployed()
+            for skill in deployed:
+                if skill["status"] not in ("canary_5", "canary_15", "canary_50"):
+                    continue
+                comparison = await router.compare_variants(
+                    skill["id"], min_samples=settings.canary_min_samples
+                )
+                if comparison is None:
+                    continue
+                if comparison["rollback"]:
+                    await gov.demote(skill["id"], "canary underperformance")
+                elif comparison["promote"]:
+                    await gov.promote(skill["id"])
         except Exception:
             pass
 
