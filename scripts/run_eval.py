@@ -75,11 +75,11 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
     await init_db(conn)
     store = TraceStore(conn)
 
-    # Clear prior eval data
-    await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'eval-%'")
-    await conn.execute("DELETE FROM discovered_skills")
-    await conn.execute("DELETE FROM deployed_skills")
+    # Clear prior eval data (order matters: child tables first due to FK constraints)
     await conn.execute("DELETE FROM canary_invocations")
+    await conn.execute("DELETE FROM deployed_skills")
+    await conn.execute("DELETE FROM discovered_skills")
+    await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'eval-%'")
     await conn.commit()
 
     traces = []
@@ -196,17 +196,28 @@ async def eval_kde(conn) -> dict:
     """Evaluate KDE parameter analysis quality."""
     mgr = ParamTemplateManager(conn)
 
+    # Check all 7 tools, not just 3
+    all_tools = ["search_law", "get_law_detail", "analyze_compliance", "generate_report",
+                 "github_api", "arxiv_api", "official_docs"]
     results = {}
-    for tool in ["search_law", "get_law_detail", "analyze_compliance"]:
+    below_threshold = []
+    for tool in all_tools:
         tmpl = await mgr.generate(tool, "1.0.0")
         if tmpl:
             results[tool] = {
                 "n_params_discovered": len(tmpl),
                 "params": {k: {"type": v["param_type"], "has_default": v["default_value"] is not None, "sample_count": v["sample_count"]} for k, v in tmpl.items()},
             }
+        else:
+            below_threshold.append(tool)
 
     total_params = sum(r["n_params_discovered"] for r in results.values())
-    return {"tools_analyzed": len(results), "total_params": total_params, "details": results}
+    return {
+        "tools_analyzed": len(results),
+        "total_params": total_params,
+        "details": results,
+        "below_min_samples": below_threshold,
+    }
 
 
 async def eval_dag(conn) -> dict:
@@ -283,6 +294,7 @@ async def _seed_kde_training_data(conn) -> None:
     """Seed realistic success traces so KDE can learn valid parameter ranges."""
     store = TraceStore(conn)
     rng = random.Random(42)
+    # Core tools with full param sets
     for i in range(200):
         for tool in ["search_law", "get_law_detail", "analyze_compliance", "generate_report"]:
             await store.insert(TraceReport(
@@ -293,6 +305,27 @@ async def _seed_kde_training_data(conn) -> None:
                         "max_results": rng.randint(5, 20),
                         "lang": rng.choice(["zh", "zh", "zh", "en"]),
                         "timeout_ms": rng.choice([5000, 10000, 15000])},
+            ))
+    # Additional tools with their own param schemas
+    for i in range(200):
+        for tool, param_sets in [
+            ("github_api", {"repo": "owner/repo", "per_page": rng.randint(10, 100),
+                           "state": rng.choice(["open", "closed", "all"]),
+                           "sort": rng.choice(["created", "updated", "comments"])}),
+            ("arxiv_api", {"query": f"machine learning agent {rng.randint(2020, 2026)}",
+                          "max_results": rng.randint(5, 30),
+                          "sort_by": rng.choice(["relevance", "lastUpdatedDate"]),
+                          "category": rng.choice(["cs.AI", "cs.CL", "cs.LG", "stat.ML"])}),
+            ("official_docs", {"url": f"https://docs.example.com/v{rng.randint(1,3)}/api/{rng.choice(['search','get','list'])}",
+                              "timeout_ms": rng.choice([5000, 10000, 15000, 20000]),
+                              "retry": rng.choice([True, False]),
+                              "format": rng.choice(["json", "xml", "text"])}),
+        ]:
+            await store.insert(TraceReport(
+                trace_id=f"kde-{tool}-{i}",
+                agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
+                success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
+                params=dict(param_sets),
             ))
 
 
@@ -306,17 +339,25 @@ async def _clear_traces(conn) -> None:
 
 async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
                                param_mgr, rule_engine) -> list[dict]:
-    """Execute all benchmark tasks and return the resulting traces."""
+    """Execute all benchmark tasks and return the resulting traces.
+
+    Token model: per-call base (50) + per_param (25 each).
+    When optimized, params with KDE defaults are omitted from the call → fewer tokens.
+    """
+    TOKEN_BASE = 50
+    TOKEN_PER_PARAM = 25
+
     store = TraceStore(conn)
     rng = random.Random(42)
     traces_written = []
 
     for task in tasks:
         root_id = f"{'opt' if optimized else 'base'}-{task['task_id']}"
-        root_params = task["root_params"]
+        root_params = dict(task["root_params"])
 
         # Apply optimization if enabled
         params = dict(root_params)
+        omitted_param_count = 0
         if optimized:
             for tool_name in task["tool_chain"]:
                 tmpl = await param_mgr.get_template(tool_name, "1.0.0")
@@ -324,6 +365,7 @@ async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
                     for pname, pinfo in tmpl.items():
                         if pname in params and pinfo.get("default_value") is not None:
                             params[pname] = pinfo["default_value"]
+                            omitted_param_count += 1  # param omitted from LLM output
             for tool_name in task["tool_chain"]:
                 rules = await rule_engine.check(tool_name, "1.0.0", params)
                 if rules:
@@ -331,21 +373,25 @@ async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
                         if rule["rule_type"] == "range_rule" and "max_results" in params:
                             params["max_results"] = min(max(params.get("max_results", 10), 1), 20)
 
-        # Write task_root
+        # Effective param count = total - omitted (defaults handled by system, not LLM)
+        effective_param_count = max(1, len(params) - omitted_param_count)
+
+        # Write task_root (token = base + effective params)
         root = TraceReport(
             trace_id=root_id, agent_id="benchmark",
             tool_name=task["tool_chain"][0], tool_version="1.0.0",
             trace_type=TraceType.TASK_ROOT, success=True,
-            latency_ms=rng.randint(500, 3000), token_count=rng.randint(100, 800),
+            latency_ms=rng.randint(500, 3000),
+            token_count=TOKEN_BASE + effective_param_count * TOKEN_PER_PARAM,
         )
         await store.insert(root)
         traces_written.append(root)
 
         # Write atomic calls for each tool in chain
         for j, tool_name in enumerate(task["tool_chain"]):
-            # Simulate: baseline has more failures due to bad params
             fail_chance = 0.08 if optimized else 0.20
             success = rng.random() > fail_chance
+            call_tokens = TOKEN_BASE + effective_param_count * TOKEN_PER_PARAM
 
             report = TraceReport(
                 trace_id=f"{root_id}-{j}",
@@ -353,19 +399,19 @@ async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
                 tool_name=tool_name, tool_version="1.0.0",
                 trace_type=TraceType.ATOMIC, success=success,
                 params=params, latency_ms=rng.randint(50, 2000),
-                token_count=rng.randint(50, 400),
+                token_count=call_tokens,
             )
             if not success:
                 report.error_type = ErrorType.PARAM_ERROR
                 report.error_message = f"parameter out of valid range: max_results={params.get('max_results')}"
-                # Retry: write a follow-up successful call
+                # Retry costs the same tokens again
                 retry = TraceReport(
                     trace_id=f"{root_id}-{j}-retry",
                     parent_trace_id=root_id, agent_id=tool_name,
                     tool_name=tool_name, tool_version="1.0.0",
                     trace_type=TraceType.ATOMIC, success=True,
                     params=params, latency_ms=rng.randint(50, 2000),
-                    token_count=rng.randint(50, 400),
+                    token_count=call_tokens,
                 )
                 await store.insert(retry)
                 traces_written.append(retry)
@@ -478,14 +524,15 @@ async def eval_degradation_curve(conn) -> dict:
     results = {}
 
     for scale_name, n_tasks in [("small", 50), ("large", 500)]:
-        # Reset DB
+        # Reset DB (order: child tables first due to FK constraints)
         await init_db(conn)
-        await conn.execute("DELETE FROM trajectories")
-        await conn.execute("DELETE FROM trajectories_fts")
-        await conn.execute("DELETE FROM rules")
-        await conn.execute("DELETE FROM param_distributions")
-        await conn.execute("DELETE FROM discovered_skills")
+        await conn.execute("DELETE FROM canary_invocations")
         await conn.execute("DELETE FROM deployed_skills")
+        await conn.execute("DELETE FROM discovered_skills")
+        await conn.execute("DELETE FROM param_distributions")
+        await conn.execute("DELETE FROM rules")
+        await conn.execute("DELETE FROM trajectories_fts")
+        await conn.execute("DELETE FROM trajectories")
         await conn.commit()
 
         info = await seed_eval_data(conn, n_tasks=n_tasks)
@@ -510,9 +557,30 @@ async def main():
     print("TOOL EVOLUTION ENGINE — EVALUATION PIPELINE")
     print("=" * 60)
 
+    # Generate expanded benchmark tasks (50 base × 8 param variants = 400)
+    tasks_path = Path(__file__).parent / "benchmark_tasks.json"
+    base_tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
+    expanded_tasks = []
+    rng = random.Random(42)
+    max_results_variants = [5, 8, 10, 12, 15, 18, 20, 25]
+    lang_variants = ["zh", "zh", "zh", "zh", "en", "ja", "zh", "zh"]
+    for i, task in enumerate(base_tasks):
+        for j in range(8):
+            variant = dict(task)
+            variant["task_id"] = f"{task['task_id']}-v{j}"
+            variant["root_params"] = dict(task.get("root_params", task.get("params", {})))
+            if "root_params" not in task:
+                variant["root_params"] = {"query": variant["root_params"].get("query", f"task-{i}"),
+                                          "max_results": variant["root_params"].get("max_results", 10),
+                                          "lang": variant["root_params"].get("lang", "zh")}
+            variant["root_params"]["max_results"] = max_results_variants[j]
+            variant["root_params"]["lang"] = lang_variants[j]
+            expanded_tasks.append(variant)
+    print(f"\nBenchmark tasks: {len(base_tasks)} base × 8 variants = {len(expanded_tasks)} tasks")
+
     # Seed fresh eval data
     t0 = time.monotonic()
-    info = await seed_eval_data(conn, n_tasks=200)
+    info = await seed_eval_data(conn, n_tasks=1000)
     print(f"\n[1/6] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
           f"{len(info['error_labels'])} labeled failures")
 
@@ -527,9 +595,12 @@ async def main():
     # 2. KDE evaluation
     print("\n[3/6] KDE Parameter Analysis")
     kde = await eval_kde(conn)
-    print(f"  Tools analyzed: {kde['tools_analyzed']}, Total params: {kde['total_params']}")
+    print(f"  Tools analyzed: {kde['tools_analyzed']}/7, Total params: {kde['total_params']}")
     for tool, detail in kde.get("details", {}).items():
         print(f"    {tool}: {detail['n_params_discovered']} params")
+    below = kde.get("below_min_samples", [])
+    if below:
+        print(f"  Below min_samples (no template): {below}")
 
     # 3. DAG mining
     print("\n[4/6] DAG Pattern Mining")
@@ -557,9 +628,7 @@ async def main():
 
     # 5. Before/After
     print("\n[6/7] Before/After Optimization Comparison")
-    tasks_path = Path(__file__).parent / "benchmark_tasks.json"
-    benchmark_tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
-    ba = await eval_before_after(conn, tasks=benchmark_tasks)
+    ba = await eval_before_after(conn, tasks=expanded_tasks)
     print(f"  Tasks: {ba['n_tasks']}")
     print(f"  BASELINE  | failures={ba['baseline']['failures']} retries={ba['baseline']['retries']} "
           f"tokens={ba['baseline']['total_tokens']} avg_lat={ba['baseline']['avg_latency_ms']}ms")
