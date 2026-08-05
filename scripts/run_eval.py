@@ -212,11 +212,56 @@ async def eval_kde(conn) -> dict:
             below_threshold.append(tool)
 
     total_params = sum(r["n_params_discovered"] for r in results.values())
+
+    # F5: KDE mode vs median comparison for numeric params
+    import numpy as _np
+    store_kde = TraceStore(conn)
+    mode_vs_median = {}
+    for tool in results:
+        rows = await store_kde.get_success_params(tool, "1.0.0", limit=200)
+        if not rows:
+            continue
+        tmpl = await mgr.get_template(tool, "1.0.0")
+        if not tmpl:
+            continue
+        tool_compare = {}
+        for pname, pinfo in tmpl.items():
+            if pinfo["param_type"] not in ("int", "float"):
+                continue
+            values = []
+            for r in rows:
+                params = r.get("params", {})
+                if isinstance(params, str):
+                    try:
+                        params = json.loads(params)
+                    except Exception:
+                        continue
+                if pname in params and isinstance(params[pname], (int, float)):
+                    values.append(float(params[pname]))
+            if len(values) < 5:
+                continue
+            arr = _np.array(values)
+            kde_default = pinfo.get("default_value")
+            median_val = round(float(_np.median(arr)), 4)
+            # MAE of KDE default vs median against actual values
+            kde_mae = round(float(_np.mean(_np.abs(arr - kde_default))) if kde_default is not None else 999, 2)
+            median_mae = round(float(_np.mean(_np.abs(arr - median_val))), 2)
+            tool_compare[pname] = {
+                "kde_default": kde_default,
+                "median": median_val,
+                "kde_mae": kde_mae,
+                "median_mae": median_mae,
+                "kde_better": kde_mae < median_mae,
+            }
+        if tool_compare:
+            mode_vs_median[tool] = tool_compare
+
     return {
         "tools_analyzed": len(results),
         "total_params": total_params,
         "details": results,
         "below_min_samples": below_threshold,
+        "mode_vs_median": mode_vs_median,  # F5 addition
     }
 
 
@@ -280,14 +325,24 @@ async def eval_governance(conn) -> dict:
             "status": dep["status"] if dep else "unknown",
         })
 
+    # Trigger promotion via update_all_scores (F12 fix: was missing)
+    gov2 = SkillGovernor(conn)
+    await gov2.update_all_scores()
+    promoted_results = []
+    for r in results:
+        dep = await skill_mgr.get_deployed(r["name"])
+        r["status_after_update"] = dep["status"] if dep else "unknown"
+        r["credit_score_after"] = dep["credit_score"] if dep else 0
+        promoted_results.append(r)
+
     # A/B test simulation
     if results:
-        gov = SkillGovernor(conn)
-        ab_result = await gov.ab_compare(1, old_success=0.85, new_success=0.72)
+        gov3 = SkillGovernor(conn)
+        ab_result = await gov3.ab_compare(1, old_success=0.85, new_success=0.72)
     else:
         ab_result = {"rollback": False}
 
-    return {"skills_scored": len(results), "skills": results, "ab_test": ab_result}
+    return {"skills_scored": len(promoted_results), "skills": promoted_results, "ab_test": ab_result}
 
 
 async def _seed_kde_training_data(conn) -> None:
@@ -295,10 +350,12 @@ async def _seed_kde_training_data(conn) -> None:
     store = TraceStore(conn)
     rng = random.Random(42)
     # Core tools with full param sets
+    import uuid as _uuid
+    _batch_id = _uuid.uuid4().hex[:8]
     for i in range(200):
         for tool in ["search_law", "get_law_detail", "analyze_compliance", "generate_report"]:
             await store.insert(TraceReport(
-                trace_id=f"kde-{tool}-{i}",
+                trace_id=f"kde-{_batch_id}-{tool}-{i}",
                 agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
                 success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
                 params={"query": f"劳动法 第{rng.randint(1, 100)}条",
@@ -322,7 +379,7 @@ async def _seed_kde_training_data(conn) -> None:
                               "format": rng.choice(["json", "xml", "text"])}),
         ]:
             await store.insert(TraceReport(
-                trace_id=f"kde-{tool}-{i}",
+                trace_id=f"kde-{_batch_id}-{tool}-{i}",
                 agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
                 success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
                 params=dict(param_sets),
@@ -523,7 +580,7 @@ async def eval_degradation_curve(conn) -> dict:
     """Run pipeline at small (50 tasks) and large (500 tasks) scale."""
     results = {}
 
-    for scale_name, n_tasks in [("small", 50), ("large", 500)]:
+    for scale_name, n_tasks in [("small", 200), ("large", 500)]:
         # Reset DB (order: child tables first due to FK constraints)
         await init_db(conn)
         await conn.execute("DELETE FROM canary_invocations")
@@ -548,6 +605,196 @@ async def eval_degradation_curve(conn) -> dict:
         }
 
     return results
+
+
+async def eval_weight_sensitivity(conn) -> dict:
+    """F6: Run governance with 3 weight variants to test sensitivity."""
+    results = {}
+    weight_sets = {
+        "40/30/30 (default)": (0.4, 0.3, 0.3),
+        "50/25/25": (0.5, 0.25, 0.25),
+        "60/20/20": (0.6, 0.2, 0.2),
+    }
+
+    skill_mgr = SkillPackManager(conn)
+    discoveries = await skill_mgr.list_discoveries()
+
+    for w_name, (w_success, w_lat, w_token) in weight_sets.items():
+        # Reset deployed skills for fair comparison
+        cursor = await conn.execute("SELECT id FROM deployed_skills")
+        existing = await cursor.fetchall()
+        if not existing:
+            # Promote discoveries for this weight test
+            for disc in discoveries[:3]:
+                await skill_mgr.promote_to_deployed(disc["id"])
+
+        gov = SkillGovernor(conn)
+        # Patch weights for sensitivity test
+        original_score = gov.score_skill
+        async def patched_score(skill_id):
+            cursor = await conn.execute("SELECT * FROM deployed_skills WHERE id=?", (skill_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return 0.0
+            skill = dict(row)
+            if skill["total_calls"] == 0:
+                return 50.0
+            sr = skill["success_count"] / skill["total_calls"] * 100
+            ls = min(100, 1000 / max(skill["total_latency_ms"] / max(skill["total_calls"], 1), 1) * 50)
+            ts = min(100, 500 / max(skill["total_tokens"] / max(skill["total_calls"], 1), 1) * 50)
+            return round(sr * w_success + ls * w_lat + ts * w_token, 2)
+
+        gov.score_skill = patched_score
+
+        # Simulate 60 calls for each deployed skill
+        cursor = await conn.execute("SELECT id FROM deployed_skills")
+        dep_rows = await cursor.fetchall()
+        for row in dep_rows:
+            for _ in range(60):
+                success = random.random() > 0.15
+                await gov.record_call(row["id"], success=success,
+                                      latency_ms=random.randint(100, 800),
+                                      tokens=random.randint(50, 200))
+
+        await gov.update_all_scores()
+        gov.score_skill = original_score
+
+        # Count outcomes
+        cursor = await conn.execute("SELECT status, COUNT(*) as cnt FROM deployed_skills GROUP BY status")
+        status_counts = {row["status"]: row["cnt"] for row in await cursor.fetchall()}
+        results[w_name] = {
+            "promotions": status_counts.get("canary_15", 0) + status_counts.get("canary_50", 0) + status_counts.get("active", 0),
+            "demotions": status_counts.get("deprecated", 0),
+            "offlines": status_counts.get("offline", 0),
+            "canary_5": status_counts.get("canary_5", 0),
+        }
+
+        # Reset for next weight set
+        await conn.execute("DELETE FROM canary_invocations")
+        await conn.execute("DELETE FROM deployed_skills")
+        await conn.commit()
+
+    return results
+
+
+async def eval_simplified_scenario(conn) -> dict:
+    """F8: Compare RF classifier vs pure rule-based classification on simplified scenario.
+
+    Simplified = 3 tools, 50 tasks, 2 error types per tool.
+    """
+    import hashlib as _hashlib
+
+    store = TraceStore(conn)
+    await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'simp-%'")
+    await conn.commit()
+
+    tools = ["search_law", "get_law_detail", "analyze_compliance"]
+    rng = random.Random(99)
+
+    traces = []
+    for i in range(150):
+        tool = rng.choice(tools)
+        success = rng.random() > 0.35
+        err_type = rng.choice(["param_error", "timeout", "permission_denied", "quota_exhausted", "service_unavailable"])
+        err_msgs = {
+            "param_error": ["missing required parameter 'query'", "expected int but got str", "value -1 out of range"],
+            "timeout": ["connection timed out after 30s", "upstream server did not respond", "request took too long"],
+            "permission_denied": ["403 Forbidden", "access denied", "token expired"],
+            "quota_exhausted": ["rate limit exceeded", "daily quota reached"],
+            "service_unavailable": ["503 unavailable", "502 Bad Gateway", "connection reset"],
+        }
+        t = TraceReport(
+            trace_id=f"simp-{i}",
+            agent_id="test", tool_name=tool, tool_version="1.0.0",
+            trace_type=TraceType.ATOMIC, success=success,
+            params={"query": f"test-{i}", "max_results": rng.randint(1, 50)},
+            latency_ms=rng.randint(50, 2000),
+            token_count=rng.randint(50, 300),
+        )
+        if not success:
+            t.error_type = ErrorType(err_type)
+            t.error_message = rng.choice(err_msgs[err_type])
+        traces.append(t)
+
+    for t in traces:
+        await store.insert(t)
+
+    failed_rows = [dict(r) for r in await (await conn.execute(
+        "SELECT * FROM trajectories WHERE success=0 AND trace_id LIKE 'simp-%'"
+    )).fetchall()]
+
+    # RF classifier
+    random.shuffle(failed_rows)
+    split = int(len(failed_rows) * 0.7)
+    train_set = failed_rows[:split]
+    test_set = failed_rows[split:]
+
+    clf = FailureClassifier()
+    if len(train_set) >= 10:
+        clf.train(train_set)
+        rf_correct = 0
+        rf_y_true, rf_y_pred = [], []
+        for t in test_set:
+            try:
+                pred = clf.predict(t).value
+                if pred == t["error_type"]:
+                    rf_correct += 1
+                rf_y_true.append(t["error_type"])
+                rf_y_pred.append(pred)
+            except Exception:
+                pass
+        rf_acc = rf_correct / max(len(test_set), 1)
+        classes = sorted(set(rf_y_true + rf_y_pred))
+        per_class = {}
+        for c in classes:
+            tp = sum(1 for t, p in zip(rf_y_true, rf_y_pred) if t == c and p == c)
+            fp = sum(1 for t, p in zip(rf_y_true, rf_y_pred) if t != c and p == c)
+            fn = sum(1 for t, p in zip(rf_y_true, rf_y_pred) if t == c and p != c)
+            p = tp / max(tp + fp, 1)
+            r = tp / max(tp + fn, 1)
+            per_class[c] = round(2 * p * r / max(p + r, 0.01), 3)
+        rf_f1 = round(sum(per_class.values()) / max(len(per_class), 1), 3)
+    else:
+        rf_acc = 0
+        rf_f1 = 0
+
+    # Pure rules: keyword match on error_message
+    rules_correct = 0
+    rules_y_true, rules_y_pred = [], []
+    for t in test_set:
+        msg = t.get("error_message", "")
+        if "missing" in msg or "expected" in msg or "out of range" in msg:
+            rule_pred = "param_error"
+        elif "timeout" in msg or "timed out" in msg or "did not respond" in msg:
+            rule_pred = "timeout"
+        else:
+            rule_pred = "param_error"
+        if rule_pred == t["error_type"]:
+            rules_correct += 1
+        rules_y_true.append(t["error_type"])
+        rules_y_pred.append(rule_pred)
+    rules_acc = rules_correct / max(len(test_set), 1)
+    classes_r = sorted(set(rules_y_true + rules_y_pred))
+    per_class_r = {}
+    for c in classes_r:
+        tp = sum(1 for t, p in zip(rules_y_true, rules_y_pred) if t == c and p == c)
+        fp = sum(1 for t, p in zip(rules_y_true, rules_y_pred) if t != c and p == c)
+        fn = sum(1 for t, p in zip(rules_y_true, rules_y_pred) if t == c and p != c)
+        p = tp / max(tp + fp, 1)
+        r = tp / max(tp + fn, 1)
+        per_class_r[c] = round(2 * p * r / max(p + r, 0.01), 3)
+    rules_f1 = round(sum(per_class_r.values()) / max(len(per_class_r), 1), 3)
+
+    return {
+        "n_traces": len(failed_rows),
+        "train_size": len(train_set),
+        "test_size": len(test_set),
+        "rf_accuracy": round(rf_acc, 3),
+        "rf_f1": rf_f1,
+        "rules_accuracy": round(rules_acc, 3),
+        "rules_f1": rules_f1,
+        "rf_wins": rf_acc > rules_acc,
+    }
 
 
 async def main():
@@ -580,20 +827,29 @@ async def main():
 
     # Seed fresh eval data
     t0 = time.monotonic()
+    stage_times = {}  # per-stage timing (F3 fix)
+    t_stage = t0
     info = await seed_eval_data(conn, n_tasks=1000)
-    print(f"\n[1/6] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
+    print(f"\n[1/8] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
           f"{len(info['error_labels'])} labeled failures")
 
     # 1. Classifier evaluation
-    print("\n[2/6] Classifier Evaluation")
+    print("\n[2/8] Classifier Evaluation")
     cls = await eval_classifier(conn)
     print(f"  Train/Test: {cls['train_size']}/{cls['test_size']}")
     print(f"  Accuracy: {cls['accuracy']:.1%}  Macro F1: {cls['macro_f1']:.3f}")
     for c, m in cls.get("per_class", {}).items():
         print(f"    {c}: P={m['precision']:.2f} R={m['recall']:.2f} F1={m['f1']:.2f} (n={m['support']})")
+    t_now = time.monotonic()
+    stage_times["classifier"] = round(t_now - t_stage, 2)
+    t_stage = t_now
 
-    # 2. KDE evaluation
-    print("\n[3/6] KDE Parameter Analysis")
+    # F13 fix: seed KDE training data BEFORE eval_kde so all 7 tools have data
+    print("\n[3/8] KDE Parameter Analysis (with F13 timing fix)")
+    await _seed_kde_training_data(conn)
+    mgr_kde = ParamTemplateManager(conn)
+    for tool in EVAL_TOOLS:
+        await mgr_kde.generate(tool, "1.0.0")
     kde = await eval_kde(conn)
     print(f"  Tools analyzed: {kde['tools_analyzed']}/7, Total params: {kde['total_params']}")
     for tool, detail in kde.get("details", {}).items():
@@ -601,14 +857,20 @@ async def main():
     below = kde.get("below_min_samples", [])
     if below:
         print(f"  Below min_samples (no template): {below}")
+    t_now = time.monotonic()
+    stage_times["kde"] = round(t_now - t_stage, 2)
+    t_stage = t_now
 
     # 3. DAG mining
-    print("\n[4/6] DAG Pattern Mining")
+    print("\n[4/8] DAG Pattern Mining")
     dag = await eval_dag(conn)
     print(f"  Planted: {len(dag['planted_patterns'])}  Discovered: {dag['n_discovered']}  Matched: {len(dag['matched'])}")
     print(f"  Pattern Recall: {dag['pattern_recall']:.1%}")
     for d in dag["discoveries"]:
         print(f"    - {d['name'][:60]} (freq={d['frequency']:.1%}, status={d['status']})")
+    t_now = time.monotonic()
+    stage_times["dag"] = round(t_now - t_stage, 2)
+    t_stage = t_now
 
     # Insert discovered skills for governance scoring
     skill_mgr = SkillPackManager(conn)
@@ -618,16 +880,25 @@ async def main():
     for d in discovered:
         await skill_mgr.add_discovery(d)
 
-    # 4. Governance
-    print("\n[5/6] Skill Governance")
+    # 4. Governance (with F6 weight sensitivity)
+    print("\n[5/8] Skill Governance + Weight Sensitivity (F6)")
     gov = await eval_governance(conn)
     print(f"  Skills scored: {gov['skills_scored']}")
     for s in gov["skills"]:
-        print(f"    {s['name'][:50]}: score={s['credit_score']:.1f} success_rate={s['success_rate']:.1%} calls={s['total_calls']} status={s['status']}")
+        print(f"    {s['name'][:50]}: score={s['credit_score']:.1f} success_rate={s['success_rate']:.1%} "
+              f"calls={s['total_calls']} status={s['status']} -> after_update:{s.get('status_after_update','?')}")
     print(f"  A/B rollback test: rollback={gov['ab_test']['rollback']}")
+    # F6: weight sensitivity
+    w_sensitivity = await eval_weight_sensitivity(conn)
+    print(f"  Weight sensitivity (40/30/30 vs 50/25/25 vs 60/20/20):")
+    for w_name, w_data in w_sensitivity.items():
+        print(f"    {w_name}: {w_data['promotions']} promotions, {w_data['demotions']} demotions, {w_data['offlines']} offlines")
+    t_now = time.monotonic()
+    stage_times["governance"] = round(t_now - t_stage, 2)
+    t_stage = t_now
 
     # 5. Before/After
-    print("\n[6/7] Before/After Optimization Comparison")
+    print("\n[6/8] Before/After Optimization Comparison")
     ba = await eval_before_after(conn, tasks=expanded_tasks)
     print(f"  Tasks: {ba['n_tasks']}")
     print(f"  BASELINE  | failures={ba['baseline']['failures']} retries={ba['baseline']['retries']} "
@@ -638,9 +909,35 @@ async def main():
     print(f"  Retry reduction:   {ba['retry_reduction_pct']}%")
     print(f"  Token reduction:   {ba['token_reduction_pct']}%")
     print(f"  Latency reduction: {ba['latency_reduction_pct']}%")
+    t_now = time.monotonic()
+    stage_times["before_after"] = round(t_now - t_stage, 2)
+    t_stage = t_now
+
+    # F4: degradation curve (small=200, large=500)
+    print("\n[7/8] Degradation Curve (F4 — 200/500 seed)")
+    deg = await eval_degradation_curve(conn)
+    for scale, m in deg.items():
+        print(f"  {scale}: n={m['n_traces']} cls_acc={m['classifier_accuracy']:.1%} "
+              f"cls_f1={m['classifier_macro_f1']:.3f} dag_recall={m['dag_pattern_recall']:.1%} "
+              f"dag_disc={m['dag_discovered']}")
+    t_now = time.monotonic()
+    stage_times["degradation"] = round(t_now - t_stage, 2)
+    t_stage = t_now
+
+    # F8: simplified scenario — RF vs pure rules
+    print("\n[8/8] Simplified Scenario: RF vs Rules (F8)")
+    simplified = await eval_simplified_scenario(conn)
+    print(f"  RF accuracy: {simplified['rf_accuracy']:.1%}  Rules accuracy: {simplified['rules_accuracy']:.1%}")
+    print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
+    t_now = time.monotonic()
+    stage_times["simplified"] = round(t_now - t_stage, 2)
 
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")
+    print(f"Stage timing breakdown (F3):")
+    for name, sec in stage_times.items():
+        pct = sec / elapsed * 100 if elapsed > 0 else 0
+        print(f"  {name}: {sec:.1f}s ({pct:.0f}%)")
     print(f"Evaluation complete in {elapsed:.1f}s")
 
     await conn.close()
@@ -652,6 +949,10 @@ async def main():
         "dag": dag,
         "governance": gov,
         "before_after": ba,
+        "degradation": deg,
+        "weight_sensitivity": w_sensitivity,
+        "simplified": simplified,
+        "stage_times": stage_times,
     }
 
 
