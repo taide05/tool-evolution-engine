@@ -1,8 +1,10 @@
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="TOOLEVO_")
+
     db_path: Path = Path("data/engine.db")
     batch_size: int = 100
     flush_interval_s: int = 5
@@ -16,9 +18,6 @@ class Settings(BaseSettings):
     ab_rollback_margin: float = 0.10
     canary_check_interval_s: int = 300
     canary_min_samples: int = 30
-
-    class Config:
-        env_prefix = "TOOLEVO_"
 
 
 settings = Settings()
