@@ -235,14 +235,9 @@ async def eval_kde(conn) -> dict:
                 continue
             values = []
             for r in rows:
-                params = r.get("params", {})
-                if isinstance(params, str):
-                    try:
-                        params = json.loads(params)
-                    except Exception:
-                        continue
-                if pname in params and isinstance(params[pname], (int, float)):
-                    values.append(float(params[pname]))
+                pdict = r  # get_success_params returns parsed params dicts directly
+                if pname in pdict and isinstance(pdict[pname], (int, float)):
+                    values.append(float(pdict[pname]))
             if len(values) < 5:
                 continue
             arr = _np.array(values)
@@ -761,7 +756,7 @@ async def eval_simplified_scenario(conn) -> dict:
     rng = random.Random(99)
 
     traces = []
-    for i in range(150):
+    for i in range(300):
         tool = rng.choice(tools)
         success = rng.random() > 0.35
         err_type = rng.choice(["param_error", "timeout", "permission_denied", "quota_exhausted", "service_unavailable"])
@@ -861,7 +856,9 @@ async def eval_simplified_scenario(conn) -> dict:
         per_class_r[c] = round(2 * p * r / max(p + r, 0.01), 3)
     rules_f1 = round(sum(per_class_r.values()) / max(len(per_class_r), 1), 3)
 
-    # I-2: char_wb cross-spelling robustness test
+    # I-2: char_wb cross-spelling robustness test — split EN/CN
+    import re as _re
+    def _has_cjk(s): return bool(_re.search(r'[一-鿿]', s))
     variant_cases = {
         "timeout": ["connection timed out", "conection timed out", "timed_out waiting",
                      "请求超时：服务器未响应", "timeout after 30s", "request time out"],
@@ -877,16 +874,28 @@ async def eval_simplified_scenario(conn) -> dict:
                 "error_type": err_type_str, "params": json.dumps({}),
                 "created_at": "2026-08-06T12:00:00",
             })
-    vt_acc = 0; vt_total = 0; vt_details = []
+    vt_en_acc = 0; vt_en_total = 0; vt_cn_acc = 0; vt_cn_total = 0
+    vt_en_details = []; vt_cn_details = []
     if len(train_set) >= 10:
         for t in variant_test:
             try:
                 pred = clf.predict(t).value
-                vt_total += 1; ok = pred == t["error_type"]
-                if ok: vt_acc += 1
-                vt_details.append(f"'{t['error_message'][:40]}' -> {pred} {'OK' if ok else 'WRONG'}")
+                ok = pred == t["error_type"]
+                is_cn = _has_cjk(t["error_message"])
+                if is_cn:
+                    vt_cn_total += 1
+                    if ok: vt_cn_acc += 1
+                    vt_cn_details.append(f"'{t['error_message'][:40]}' -> {pred} {'OK' if ok else 'WRONG'}")
+                else:
+                    vt_en_total += 1
+                    if ok: vt_en_acc += 1
+                    vt_en_details.append(f"'{t['error_message'][:40]}' -> {pred} {'OK' if ok else 'WRONG'}")
             except Exception: pass
-    vt_result = {"accuracy": round(vt_acc / max(vt_total, 1), 3), "total": vt_total, "correct": vt_acc, "details": vt_details}
+    vt_result = {
+        "en_accuracy": round(vt_en_acc / max(vt_en_total, 1), 3), "en_total": vt_en_total, "en_correct": vt_en_acc,
+        "cn_accuracy": round(vt_cn_acc / max(vt_cn_total, 1), 3), "cn_total": vt_cn_total, "cn_correct": vt_cn_acc,
+        "en_details": vt_en_details, "cn_details": vt_cn_details,
+    }
 
     return {
         "n_traces": len(failed_rows),
@@ -988,12 +997,9 @@ async def main():
             if lb is None or ub is None: continue
             values = []
             for r in rows:
-                params = r.get("params", {})
-                if isinstance(params, str):
-                    try: params = json.loads(params)
-                    except Exception: continue
-                if pname in params and isinstance(params[pname], (int, float)):
-                    values.append(float(params[pname]))
+                pdict = r  # get_success_params returns parsed params dicts directly
+                if pname in pdict and isinstance(pdict[pname], (int, float)):
+                    values.append(float(pdict[pname]))
             if len(values) < 5: continue
             outside = sum(1 for v in values if v < lb or v > ub)
             pct = round(outside / len(values) * 100, 1)
@@ -1091,10 +1097,14 @@ async def main():
     print(f"  RF accuracy: {simplified['rf_accuracy']:.1%}  Rules accuracy: {simplified['rules_accuracy']:.1%}")
     print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
     vt = simplified.get("char_wb_variant_test", {})
-    if vt.get("total", 0) > 0:
-        print(f"\n  I-2: char_wb cross-spelling robustness ({vt['total']} variants):")
-        print(f"  Accuracy: {vt['accuracy']:.1%} ({vt['correct']}/{vt['total']})")
-        for d in vt.get("details", []): print(d)
+    if vt:
+        print(f"\n  I-2: char_wb cross-spelling robustness:")
+        if vt.get("en_total", 0) > 0:
+            print(f"  EN variants: {vt['en_accuracy']:.1%} ({vt['en_correct']}/{vt['en_total']})")
+            for d in vt.get("en_details", []): print(d)
+        if vt.get("cn_total", 0) > 0:
+            print(f"  CN variants: {vt['cn_accuracy']:.1%} ({vt['cn_correct']}/{vt['cn_total']}) [cross-lang limitation]")
+            for d in vt.get("cn_details", []): print(d)
     t_now = time.monotonic()
     stage_times["simplified"] = round(t_now - t_stage, 2)
 
