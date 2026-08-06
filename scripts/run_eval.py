@@ -31,6 +31,11 @@ DAG_PATTERNS = [
     ["search_law", "get_law_detail", "analyze_compliance", "generate_report"],
     ["search_law", "analyze_compliance"],
     ["github_api", "analyze_compliance"],
+    ["arxiv_api", "analyze_compliance", "generate_report"],
+    ["official_docs", "get_law_detail", "analyze_compliance"],
+    ["github_api", "search_law", "analyze_compliance"],
+    ["arxiv_api", "official_docs", "analyze_compliance"],
+    ["search_law", "generate_report"],
 ]
 
 # Realistic error messages that do NOT contain the error type literally
@@ -282,9 +287,16 @@ async def eval_dag(conn) -> dict:
 
     # Check which planted patterns were discovered
     discovered_names = {d["name"] for d in discovered}
-    planted_names = {"search_law → get_law_detail → analyze_compliance → generate_report",
-                     "search_law → analyze_compliance",
-                     "github_api → analyze_compliance"}
+    planted_names = {
+        "search_law → get_law_detail → analyze_compliance → generate_report",
+        "search_law → analyze_compliance",
+        "github_api → analyze_compliance",
+        "arxiv_api → analyze_compliance → generate_report",
+        "official_docs → get_law_detail → analyze_compliance",
+        "github_api → search_law → analyze_compliance",
+        "arxiv_api → official_docs → analyze_compliance",
+        "search_law → generate_report",
+    }
 
     matched = discovered_names & planted_names
     recall = len(matched) / max(len(planted_names), 1)
@@ -305,14 +317,40 @@ async def eval_governance(conn) -> dict:
     discoveries = await skill_mgr.list_discoveries()
 
     results = []
-    for disc in discoveries[:5]:
+    # I-6: track full canary promotion path for first 3 skills
+    promotion_history = {}
+
+    for i, disc in enumerate(discoveries[:5]):
         dep_id = await skill_mgr.promote_to_deployed(disc["id"])
         gov = SkillGovernor(conn)
 
-        # Simulate calls to build up credit
+        # Cycle 1: 60 calls
         for _ in range(60):
             success = random.random() > 0.15
             await gov.record_call(dep_id, success=success, latency_ms=random.randint(100, 800), tokens=random.randint(50, 200))
+        await gov.update_all_scores()
+
+        if i < 3:
+            name = disc["name"]
+            promotion_history[name] = []
+            dep = await skill_mgr.get_deployed(name)
+            promotion_history[name].append({"calls": 60, "score": dep["credit_score"], "status": dep["status"]})
+
+            # Cycle 2: 100 more calls → canary_15 → canary_50
+            for _ in range(100):
+                success = random.random() > 0.12
+                await gov.record_call(dep_id, success=success, latency_ms=random.randint(80, 600), tokens=random.randint(40, 180))
+            await gov.update_all_scores()
+            dep = await skill_mgr.get_deployed(name)
+            promotion_history[name].append({"calls": 160, "score": dep["credit_score"], "status": dep["status"]})
+
+            # Cycle 3: 150 more calls → canary_50 → active
+            for _ in range(150):
+                success = random.random() > 0.10
+                await gov.record_call(dep_id, success=success, latency_ms=random.randint(60, 500), tokens=random.randint(40, 160))
+            await gov.update_all_scores()
+            dep = await skill_mgr.get_deployed(name)
+            promotion_history[name].append({"calls": 310, "score": dep["credit_score"], "status": dep["status"]})
 
         score = await gov.score_skill(dep_id)
         dep = await skill_mgr.get_deployed(disc["name"])
@@ -325,7 +363,7 @@ async def eval_governance(conn) -> dict:
             "status": dep["status"] if dep else "unknown",
         })
 
-    # Trigger promotion via update_all_scores (F12 fix: was missing)
+    # Trigger promotion via update_all_scores on remaining skills
     gov2 = SkillGovernor(conn)
     await gov2.update_all_scores()
     promoted_results = []
@@ -342,7 +380,7 @@ async def eval_governance(conn) -> dict:
     else:
         ab_result = {"rollback": False}
 
-    return {"skills_scored": len(promoted_results), "skills": promoted_results, "ab_test": ab_result}
+    return {"skills_scored": len(promoted_results), "skills": promoted_results, "ab_test": ab_result, "promotion_history": promotion_history}
 
 
 async def _seed_kde_training_data(conn) -> None:
@@ -459,8 +497,31 @@ async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
                 token_count=call_tokens,
             )
             if not success:
-                report.error_type = ErrorType.PARAM_ERROR
-                report.error_message = f"parameter out of valid range: max_results={params.get('max_results')}"
+                err_type = rng.choice(list(ErrorType))
+                report.error_type = err_type
+                err_msgs = {
+                    ErrorType.PARAM_ERROR: [
+                        f"parameter out of valid range: max_results={params.get('max_results')}",
+                        "missing required parameter 'query'",
+                    ],
+                    ErrorType.PERMISSION_DENIED: [
+                        "403 Forbidden: insufficient scope",
+                        "token expired or revoked",
+                    ],
+                    ErrorType.QUOTA_EXHAUSTED: [
+                        "rate limit exceeded, try again in 60 seconds",
+                        "daily quota of 1000 requests reached",
+                    ],
+                    ErrorType.TIMEOUT: [
+                        "connection timed out after 30s",
+                        "upstream server did not respond in time",
+                    ],
+                    ErrorType.SERVICE_UNAVAILABLE: [
+                        "503 service temporarily unavailable",
+                        "backend server returned 502 Bad Gateway",
+                    ],
+                }
+                report.error_message = rng.choice(err_msgs.get(err_type, ["unknown error"]))
                 # Retry costs the same tokens again
                 retry = TraceReport(
                     trace_id=f"{root_id}-{j}-retry",
@@ -496,6 +557,13 @@ async def _query_pass_metrics(conn) -> dict:
     )
     retry_count = (await cursor.fetchone())[0]
 
+    cursor = await conn.execute(
+        "SELECT error_type, COUNT(*) as cnt FROM trajectories "
+        "WHERE success=0 AND trace_type='atomic' AND error_type IS NOT NULL "
+        "GROUP BY error_type ORDER BY cnt DESC"
+    )
+    failure_by_type = {row["error_type"]: row["cnt"] for row in await cursor.fetchall()}
+
     return {
         "total_calls": total,
         "failures": failures,
@@ -503,6 +571,7 @@ async def _query_pass_metrics(conn) -> dict:
         "retries": retry_count,
         "total_tokens": total_tokens,
         "avg_latency_ms": round(avg_latency, 1),
+        "failure_by_type": failure_by_type,
     }
 
 
@@ -696,12 +765,19 @@ async def eval_simplified_scenario(conn) -> dict:
         tool = rng.choice(tools)
         success = rng.random() > 0.35
         err_type = rng.choice(["param_error", "timeout", "permission_denied", "quota_exhausted", "service_unavailable"])
+        # I-2: Rich variants — spelling typos, cross-language, synonyms
         err_msgs = {
-            "param_error": ["missing required parameter 'query'", "expected int but got str", "value -1 out of range"],
-            "timeout": ["connection timed out after 30s", "upstream server did not respond", "request took too long"],
-            "permission_denied": ["403 Forbidden", "access denied", "token expired"],
-            "quota_exhausted": ["rate limit exceeded", "daily quota reached"],
-            "service_unavailable": ["503 unavailable", "502 Bad Gateway", "connection reset"],
+            "param_error": ["missing required parameter 'query'", "expected int but got str",
+                          "value -1 out of range", "缺少必需参数", "invalid type for 'timeout_ms'"],
+            "timeout": ["connection timed out after 30s", "upstream server did not respond",
+                       "conection timed out", "timed_out waiting", "请求超时：服务器未响应"],
+            "permission_denied": ["403 Forbidden", "access denied", "token expired",
+                                 "not authorized for this resource", "无权访问此资源"],
+            "quota_exhausted": ["rate limit exceeded", "daily quota reached",
+                               "too many requests", "API调用次数已达上限"],
+            "service_unavailable": ["503 unavailable", "502 Bad Gateway",
+                                    "connection reset", "service temporarily overloaded",
+                                    "上游服务暂时不可用"],
         }
         t = TraceReport(
             trace_id=f"simp-{i}",
@@ -785,6 +861,33 @@ async def eval_simplified_scenario(conn) -> dict:
         per_class_r[c] = round(2 * p * r / max(p + r, 0.01), 3)
     rules_f1 = round(sum(per_class_r.values()) / max(len(per_class_r), 1), 3)
 
+    # I-2: char_wb cross-spelling robustness test
+    variant_cases = {
+        "timeout": ["connection timed out", "conection timed out", "timed_out waiting",
+                     "请求超时：服务器未响应", "timeout after 30s", "request time out"],
+        "param_error": ["missing required param", "参数缺失", "expected int got str"],
+        "permission_denied": ["access denied", "not authorized", "permission denied",
+                              "token expired or revoked", "无权访问此API"],
+    }
+    variant_test = []
+    for err_type_str, msgs in variant_cases.items():
+        for msg in msgs:
+            variant_test.append({
+                "tool_name": "search_law", "error_message": msg,
+                "error_type": err_type_str, "params": json.dumps({}),
+                "created_at": "2026-08-06T12:00:00",
+            })
+    vt_acc = 0; vt_total = 0; vt_details = []
+    if len(train_set) >= 10:
+        for t in variant_test:
+            try:
+                pred = clf.predict(t).value
+                vt_total += 1; ok = pred == t["error_type"]
+                if ok: vt_acc += 1
+                vt_details.append(f"'{t['error_message'][:40]}' -> {pred} {'OK' if ok else 'WRONG'}")
+            except Exception: pass
+    vt_result = {"accuracy": round(vt_acc / max(vt_total, 1), 3), "total": vt_total, "correct": vt_acc, "details": vt_details}
+
     return {
         "n_traces": len(failed_rows),
         "train_size": len(train_set),
@@ -794,6 +897,7 @@ async def eval_simplified_scenario(conn) -> dict:
         "rules_accuracy": round(rules_acc, 3),
         "rules_f1": rules_f1,
         "rf_wins": rf_acc > rules_acc,
+        "char_wb_variant_test": vt_result,
     }
 
 
@@ -857,6 +961,44 @@ async def main():
     below = kde.get("below_min_samples", [])
     if below:
         print(f"  Below min_samples (no template): {below}")
+    # I-4: KDE mode vs median comparison
+    mode_vs_median = kde.get("mode_vs_median", {})
+    if mode_vs_median:
+        kde_wins = 0; total_cmp = 0
+        print(f"\n  I-4: KDE mode vs median MAE comparison:")
+        for tool, params in mode_vs_median.items():
+            for pname, data in params.items():
+                total_cmp += 1
+                if data["kde_better"]: kde_wins += 1
+                winner = "KDE" if data["kde_better"] else "median"
+                print(f"    {tool}.{pname}: KDE={data['kde_mae']} median={data['median_mae']} → {winner}")
+        if total_cmp > 0:
+            print(f"  KDE wins: {kde_wins}/{total_cmp} ({kde_wins/total_cmp*100:.0f}%)")
+    # I-5: KDE 95% CI boundary check
+    print(f"\n  I-5: KDE 95% CI boundary check:")
+    store_ci = TraceStore(conn)
+    for tool in EVAL_TOOLS:
+        tmpl = await mgr_kde.get_template(tool, "1.0.0")
+        if not tmpl: continue
+        rows = await store_ci.get_success_params(tool, "1.0.0", limit=200)
+        if not rows: continue
+        for pname, pinfo in tmpl.items():
+            if pinfo.get("param_type") not in ("int", "float"): continue
+            lb, ub = pinfo.get("lower_bound"), pinfo.get("upper_bound")
+            if lb is None or ub is None: continue
+            values = []
+            for r in rows:
+                params = r.get("params", {})
+                if isinstance(params, str):
+                    try: params = json.loads(params)
+                    except Exception: continue
+                if pname in params and isinstance(params[pname], (int, float)):
+                    values.append(float(params[pname]))
+            if len(values) < 5: continue
+            outside = sum(1 for v in values if v < lb or v > ub)
+            pct = round(outside / len(values) * 100, 1)
+            flag = " [>5%]" if pct > 5 else ""
+            print(f"    {tool}.{pname}: {outside}/{len(values)} outside CI = {pct}%{flag}")
     t_now = time.monotonic()
     stage_times["kde"] = round(t_now - t_stage, 2)
     t_stage = t_now
@@ -888,6 +1030,13 @@ async def main():
         print(f"    {s['name'][:50]}: score={s['credit_score']:.1f} success_rate={s['success_rate']:.1%} "
               f"calls={s['total_calls']} status={s['status']} -> after_update:{s.get('status_after_update','?')}")
     print(f"  A/B rollback test: rollback={gov['ab_test']['rollback']}")
+    # I-6: Full canary promotion path
+    promotion_history = gov.get("promotion_history", {})
+    if promotion_history:
+        print(f"\n  I-6: Full canary path (canary_5→15→50→active):")
+        for skill_name, history in promotion_history.items():
+            path = " → ".join(f"{h['status']}({h['calls']}c,{h['score']:.0f}pt)" for h in history)
+            print(f"    {skill_name[:50]}: {path}")
     # F6: weight sensitivity
     w_sensitivity = await eval_weight_sensitivity(conn)
     print(f"  Weight sensitivity (40/30/30 vs 50/25/25 vs 60/20/20):")
@@ -909,6 +1058,18 @@ async def main():
     print(f"  Retry reduction:   {ba['retry_reduction_pct']}%")
     print(f"  Token reduction:   {ba['token_reduction_pct']}%")
     print(f"  Latency reduction: {ba['latency_reduction_pct']}%")
+    # I-1: Failure type breakdown
+    bl_ft = ba["baseline"].get("failure_by_type", {})
+    op_ft = ba["optimized"].get("failure_by_type", {})
+    if bl_ft or op_ft:
+        all_types = sorted(set(list(bl_ft.keys()) + list(op_ft.keys())))
+        print(f"\n  I-1: Failure type breakdown (baseline → optimized):")
+        print(f"  {'Error Type':<25} {'Baseline':>8} {'Optimized':>8} {'Reduction':>10}")
+        for et in all_types:
+            bl = bl_ft.get(et, 0)
+            op = op_ft.get(et, 0)
+            red = round((1 - op / max(bl, 1)) * 100, 1) if bl > 0 else 0
+            print(f"  {et:<25} {bl:>8} {op:>8} {red:>9.1f}%")
     t_now = time.monotonic()
     stage_times["before_after"] = round(t_now - t_stage, 2)
     t_stage = t_now
@@ -929,6 +1090,11 @@ async def main():
     simplified = await eval_simplified_scenario(conn)
     print(f"  RF accuracy: {simplified['rf_accuracy']:.1%}  Rules accuracy: {simplified['rules_accuracy']:.1%}")
     print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
+    vt = simplified.get("char_wb_variant_test", {})
+    if vt.get("total", 0) > 0:
+        print(f"\n  I-2: char_wb cross-spelling robustness ({vt['total']} variants):")
+        print(f"  Accuracy: {vt['accuracy']:.1%} ({vt['correct']}/{vt['total']})")
+        for d in vt.get("details", []): print(d)
     t_now = time.monotonic()
     stage_times["simplified"] = round(t_now - t_stage, 2)
 
