@@ -29,7 +29,7 @@ Tool Evolution Engine 在 Agent 的工具层和 LLM 之间加了一个"运维+�
 # 1. 安装
 pip install -e ".[dev]"
 
-# 2. 生成演示数据（200 条轨迹，7 种工具，25% 失败率，3 种预埋 DAG 模式）
+# 2. 生成演示数据（200 条轨迹，7 种工具，25% 失败率，8 种预埋 DAG 模式）
 python scripts/seed_demo_data.py
 
 # 3. 跑完整演示管道（7 步：分类器→规则→KDE→DAG→治理→总结）
@@ -94,27 +94,28 @@ python scripts/run_mcp_server.py
 
 **用一致性哈希而非随机分流做 Canary 路由**。`MD5(request_hash) % 100` 保证同一用户的请求始终路由到同一个变体。随机分流会导致用户在两次请求间看到不同的工具行为，A/B 对比数据被污染。一致性哈希是基础设施层解决"确定性路由"的经典方案。
 
-**TF-IDF 字符级 n-gram(2,4) 而非词级分词做失败分类**。"timeout" vs "timed out" vs "超时"——这三个在词级别是完全不同的 token，但在字符级 n-gram 共享大量子串。在不依赖语言模型的条件下，字符级 n-gram 是最务实的跨语言文本特征方案。
+**TF-IDF 字符级 n-gram(2,4) + has_cjk 特征检测**。中文错误消息在字符级 n-gram 中与英文无共享子串，单独增加 CJK 字符检测特征位（0/1），给模型显式的语言区分信号。在不依赖语言模型的条件下，字符级 n-gram + CJK 检测是最务实的跨语言文本特征方案。
 
 ## 量化指标
 
-> 评测规模：1000 seed tasks + 400 benchmark tasks（50 基础 × 8 参数变体），2026-08-05 run_eval.py 实测（全链路 D→E→C→D-full→I→V 门禁验证）。
+> 评测规模：1000 seed tasks + 400 benchmark tasks（50 基础 × 8 参数变体），2026-08-07 run_eval.py 实测（全链路 D-light→E→C→D-full→I→E'→E"→E'''→V 门禁验证）。
 
 | 指标 | 值 | 说明 |
 |------|-----|------|
-| 分类器 Macro F1 | 1.00 | 5 分类，~560 训练 / ~260 测试，合成数据下每类全部分对 |
-| 失败率下降 | -60%（相对） | 20% baseline → 8% optimized，连续 2 次跑偏差 0pp |
-| Token 消耗下降 | -44.6% | KDE 默认值省略参数 + 规则前置校验减少重试 |
-| 重试次数下降 | -60.0% | 规则前置校验在调用前拦截参数错误 |
-| DAG 模式召回 | 100.0% | 3 预埋模式全找回（WL 图哈希升级后），额外发现 5-6 个高频子模式 |
-| 参数模板覆盖率 | 100%（7/7） | 7 种工具全部生成 KDE 模板（F13 时序修复后） |
-| 规则准确率 | 100% | 5 条规则全部有效，按错误类型硬编码映射 |
-| 吞吐量 | 57 traces/s | 批量写入 |
-| 治理动作 | 5 晋升 + 1 回滚 + 0 离线 | 60 次调用，信用分 92-95，all canary_5→canary_15 |
-| 测试覆盖 | 88 tests | 全部通过 |
-| 权重敏感性 | 默认 40/30/30 晋升最多（4P+1D vs 3P） | 三组权重对比验证 |
-| 退化曲线 | 200/500 seed 各档 F1=1.00, Recall=100% | 小规模下无退化 |
-| 简化场景 RF vs 规则 | RF 46.7% vs 规则 26.7%（5 类） | 复杂场景 RF 显著更优 |
+| 分类器 Macro F1 | 0.984 | 5 分类，633 训练 / 272 测试，505 维特征（含 has_cjk） |
+| 失败率下降 | -60.5%（相对） | 228→90 failures，400 benchmark，注入全部 5 种错误类型 |
+| Token 消耗下降 | -44.6% | 225,750→124,950 tokens，KDE 默认值省略参数 + 规则前置校验 |
+| 重试次数下降 | -60.5% | 228→90 retries，规则前置校验在调用前拦截参数错误 |
+| 失败类型拆分 | 全部 5 种有对比 | param_error -64%、permission -44%、quota -63%、service_unavail -65%、timeout -66% |
+| DAG 模式召回 | 100.0%（8/8） | 8 种预埋模式全找回，额外发现 10 个高频子模式 |
+| 参数模板覆盖率 | 100%（7/7） | 7 种工具 28 个参数全生成 KDE 模板，CI 边界外比例 ≤3% |
+| 规则准确率 | 100% | 5 条规则按错误类型确定性映射，非 ML 生成 |
+| 灰度上线 | 3/3 技能走通全路径 | canary_5→canary_15→canary_50→active，310 calls/skill |
+| 权重敏感性 | 40/30/30 最优（5P vs 3P） | 三组权重对比验证，默认权重晋升最多 |
+| 吞吐量 | 57 traces/s（批量写入）/ ~9 traces/s（全分析管道） | 前者纯 Collection 层，后者含分析+知识+治理 |
+| 简化场景 RF vs 规则 | RF 93.9% vs 规则 24.2%（300 traces/5 类变体） | 含拼写错误+中英混用+同义词，RF 显著优于规则 |
+| 跨语言分类 | EN 81.8% / CN 66.7% | has_cjk 特征改善中文分类，char_wb 跨语言仍有限 |
+| 测试覆盖 | 88 tests, 0 warnings | Pydantic V2 + pytest-asyncio 配置规范化 |
 
 ## 技术栈
 
@@ -152,7 +153,7 @@ src/tool_evolution/
 └── utils/            # Config（pydantic-settings）+ Database（DDL）
 
 scripts/
-├── seed_demo_data.py      # 生成 200 条模拟轨迹（7 工具 + 3 DAG 模式）
+├── seed_demo_data.py      # 生成 200 条模拟轨迹（7 工具 + 8 DAG 预埋模式）
 ├── run_demo.py            # 端到端 7 步演示
 ├── run_eval.py            # 完整评估（6 模块 + before/after 对比）
 ├── run_mcp_server.py      # MCP stdio 独立入口
