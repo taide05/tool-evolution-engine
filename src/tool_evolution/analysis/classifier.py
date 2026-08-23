@@ -25,7 +25,6 @@ class FailureClassifier:
             feat = {
                 "param_count": len(params),
                 "has_auth_header": 1 if any(k.lower() in ("auth", "token", "api_key") for k in params) else 0,
-                "hour_of_day": int(t.get("created_at", "T00:00:00").split("T")[1].split(":")[0]) if "T" in t.get("created_at", "") else 0,
                 "has_cjk": has_cjk,
             }
             X_data.append(feat)
@@ -47,7 +46,7 @@ class FailureClassifier:
     def train(self, traces: list[dict]) -> None:
         combined, labels = self._extract_features(traces)
         texts = [f"{c['tool_name']} {c['error_message']}" for c in combined]
-        num_features = np.array([[c[f"feat_{k}"] for k in ("param_count", "has_auth_header", "hour_of_day", "has_cjk")] for c in combined])
+        num_features = np.array([[c[f"feat_{k}"] for k in ("param_count", "has_auth_header", "has_cjk")] for c in combined])
 
         # TF-IDF on combined tool_name + error_message text
         # character n-grams capture sub-word patterns: "timeout" ~ "timed out"
@@ -83,7 +82,6 @@ class FailureClassifier:
         num = np.array([[
             len(params),
             1 if any(k.lower() in ("auth", "token", "api_key") for k in params) else 0,
-            0,           # hour_of_day (unknown at predict time)
             has_cjk,
         ]])
         X = np.hstack([tfidf_vec, num, np.array([[tool_enc]])])
@@ -95,7 +93,7 @@ class FailureClassifier:
         if self._clf is None:
             raise RuntimeError("Classifier not trained.")
         tfidf_names = self.pipeline.named_steps["tfidf"].get_feature_names_out()
-        all_names = list(tfidf_names) + ["param_count", "has_auth_header", "hour_of_day", "has_cjk", "tool_name"]
+        all_names = list(tfidf_names) + ["param_count", "has_auth_header", "has_cjk", "tool_name"]
         return dict(zip(all_names, self._clf.feature_importances_))
 
     def save(self, path: Path) -> None:

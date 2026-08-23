@@ -62,6 +62,15 @@ class TestFailureClassifier:
         assert len(importance) > 0
         assert "tool_name" in importance
 
+    def test_feature_importance_no_dead_features(self, sample_traces):
+        clf = FailureClassifier()
+        clf.train(sample_traces)
+        names = clf.feature_importance().keys()
+        assert "hour_of_day" not in names
+        assert "param_count" in names
+        assert "has_cjk" in names
+        assert "tool_name" in names
+
     def test_save_and_load(self, sample_traces):
         clf = FailureClassifier()
         clf.train(sample_traces)
