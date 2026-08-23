@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException, Request
+import aiosqlite
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from ...knowledge.skill_pack import SkillPackManager
 from ...governance.canary_router import CanaryRouter
 from ...governance.governor import SkillGovernor
+from ..deps import get_db
 
 router = APIRouter()
 
@@ -22,29 +24,28 @@ class InvokeRequest(BaseModel):
 
 
 @router.get("/discoveries")
-async def list_discoveries():
-    from ..app import _conn
-    mgr = SkillPackManager(_conn)
+async def list_discoveries(conn: aiosqlite.Connection = Depends(get_db)):
+    mgr = SkillPackManager(conn)
     return {"discoveries": await mgr.list_discoveries()}
 
 
 @router.get("/deployed")
-async def list_deployed(status: str | None = None):
-    from ..app import _conn
-    mgr = SkillPackManager(_conn)
+async def list_deployed(status: str | None = None,
+                        conn: aiosqlite.Connection = Depends(get_db)):
+    mgr = SkillPackManager(conn)
     return {"skills": await mgr.list_deployed(status)}
 
 
 @router.post("/{name}/invoke")
-async def invoke_skill(name: str, req: InvokeRequest):
+async def invoke_skill(name: str, req: InvokeRequest,
+                       conn: aiosqlite.Connection = Depends(get_db)):
     """Invoke a deployed skill with canary-aware routing.
 
     Uses consistent hashing on request_hash to deterministically route
     between stable (default behavior) and canary (optimized) variants.
     Records invocation metrics for subsequent A/B comparison.
     """
-    from ..app import _conn
-    router_inst = CanaryRouter(_conn)
+    router_inst = CanaryRouter(conn)
     skill = await router_inst.get_skill(name)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
@@ -66,7 +67,7 @@ async def invoke_skill(name: str, req: InvokeRequest):
     )
 
     # Also update the skill governor stats
-    gov = SkillGovernor(_conn)
+    gov = SkillGovernor(conn)
     await gov.record_call(skill["id"], success=True, latency_ms=100, tokens=200)
 
     return {
@@ -79,8 +80,7 @@ async def invoke_skill(name: str, req: InvokeRequest):
 
 
 @router.post("/{discovery_id}/promote")
-async def promote_skill(discovery_id: int):
-    from ..app import _conn
-    mgr = SkillPackManager(_conn)
+async def promote_skill(discovery_id: int, conn: aiosqlite.Connection = Depends(get_db)):
+    mgr = SkillPackManager(conn)
     deployed_id = await mgr.promote_to_deployed(discovery_id)
     return {"deployed_id": deployed_id, "status": "promoted"}

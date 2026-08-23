@@ -1,24 +1,25 @@
-from fastapi import APIRouter
+import aiosqlite
+from fastapi import APIRouter, Depends
+from ..deps import get_db
 
 router = APIRouter()
 
 
 @router.get("/summary")
-async def analytics_summary():
-    from ..app import _conn
-    cursor = await _conn.execute("SELECT COUNT(*) as total FROM trajectories")
+async def analytics_summary(conn: aiosqlite.Connection = Depends(get_db)):
+    cursor = await conn.execute("SELECT COUNT(*) as total FROM trajectories")
     total = (await cursor.fetchone())[0]
 
-    cursor = await _conn.execute("SELECT COUNT(*) FROM trajectories WHERE success=0")
+    cursor = await conn.execute("SELECT COUNT(*) FROM trajectories WHERE success=0")
     failures = (await cursor.fetchone())[0]
 
-    cursor = await _conn.execute("SELECT AVG(latency_ms) FROM trajectories")
+    cursor = await conn.execute("SELECT AVG(latency_ms) FROM trajectories")
     avg_lat = (await cursor.fetchone())[0]
 
-    cursor = await _conn.execute("SELECT AVG(token_count) FROM trajectories")
+    cursor = await conn.execute("SELECT AVG(token_count) FROM trajectories")
     avg_tok = (await cursor.fetchone())[0]
 
-    cursor = await _conn.execute("SELECT COUNT(*) FROM deployed_skills WHERE status='active'")
+    cursor = await conn.execute("SELECT COUNT(*) FROM deployed_skills WHERE status='active'")
     active_skills = (await cursor.fetchone())[0]
 
     return {

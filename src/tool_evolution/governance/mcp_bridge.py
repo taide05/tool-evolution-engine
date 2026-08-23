@@ -75,8 +75,8 @@ class MCPBridge:
 
 # ── MCP tool registration ────────────────────────────────────────────
 # These tools are what AI agents see when they connect via MCP protocol.
-# The actual DB connection is injected per-call via the REST server's _conn
-# or by the standalone stdio entry point.
+# The actual DB connection is injected per-call via FastAPI dependency (REST)
+# or by the standalone stdio entry point (run_mcp_server.py).
 
 _bridge_instance: MCPBridge | None = None
 
