@@ -27,6 +27,42 @@ async def transaction(conn: aiosqlite.Connection):
         raise
 
 
+CURRENT_SCHEMA_VERSION = 2
+
+# version: (ddl, table_to_check, column_to_check)
+MIGRATIONS: dict[int, tuple[str, str, str]] = {
+    2: ("ALTER TABLE trajectories ADD COLUMN source TEXT NOT NULL DEFAULT 'synthetic'",
+        "trajectories", "source"),
+}
+
+
+async def _column_exists(conn: aiosqlite.Connection, table: str, column: str) -> bool:
+    cursor = await conn.execute(f"PRAGMA table_info({table})")
+    return any(row["name"] == column for row in await cursor.fetchall())
+
+
+async def run_migrations(conn: aiosqlite.Connection) -> None:
+    await conn.execute("CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER NOT NULL)")
+    cursor = await conn.execute("SELECT version FROM schema_meta")
+    row = await cursor.fetchone()
+    if row is None:
+        current = 1  # 无版本记录的库按 v1 处理
+        await conn.execute("INSERT INTO schema_meta (version) VALUES (1)")
+        await conn.commit()
+    else:
+        current = row["version"]
+    if current > CURRENT_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Database schema v{current} is newer than supported v{CURRENT_SCHEMA_VERSION}"
+        )
+    for version in range(current + 1, CURRENT_SCHEMA_VERSION + 1):
+        ddl, table, column = MIGRATIONS[version]
+        async with transaction(conn):
+            if not await _column_exists(conn, table, column):
+                await conn.execute(ddl)
+            await conn.execute("UPDATE schema_meta SET version=?", (version,))
+
+
 async def init_db(conn: aiosqlite.Connection) -> None:
     await conn.executescript("""
         CREATE TABLE IF NOT EXISTS trajectories (
@@ -43,7 +79,8 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             error_message TEXT,
             latency_ms INTEGER NOT NULL,
             token_count INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            source TEXT NOT NULL DEFAULT 'synthetic'
         );
         CREATE INDEX IF NOT EXISTS idx_traj_tool ON trajectories(tool_name, tool_version);
         CREATE INDEX IF NOT EXISTS idx_traj_parent ON trajectories(parent_trace_id);
@@ -124,6 +161,10 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            version INTEGER NOT NULL
         );
     """)
     await conn.commit()
