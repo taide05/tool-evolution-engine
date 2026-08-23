@@ -44,3 +44,7 @@ class TestInvokeRouting:
     async def test_invoke_missing_skill_404(self, client):
         r = await client.post("/api/skills/nope/invoke", json={})
         assert r.status_code == 404
+
+    async def test_compare_endpoint_gone(self, client):
+        r = await client.post("/api/canary/1/compare", params={"old_rate": 0.9, "new_rate": 0.5})
+        assert r.status_code == 404

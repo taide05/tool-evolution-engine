@@ -165,25 +165,3 @@ class SkillGovernor:
         )
         await self.conn.commit()
         return "deprecated"
-
-    async def ab_compare(
-        self,
-        skill_id: int,
-        old_success: float | None = None,
-        new_success: float | None = None,
-    ) -> dict:
-        """Compare A/B success rates and trigger rollback if B underperforms.
-
-        When new_success < old_success - ab_rollback_margin (default 10pp),
-        demotes the skill to deprecated and returns rollback=True.
-        Otherwise returns rollback=False.
-        """
-        if new_success is not None and old_success is not None:
-            margin = old_success - new_success
-            if margin > settings.ab_rollback_margin:
-                await self.demote(
-                    skill_id,
-                    f"A/B rollback: new={new_success:.2f} < old={old_success:.2f}",
-                )
-                return {"rollback": True, "reason": f"Success rate dropped by {margin:.1%}"}
-        return {"rollback": False, "reason": None}

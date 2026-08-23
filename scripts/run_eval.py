@@ -368,14 +368,35 @@ async def eval_governance(conn) -> dict:
         r["credit_score_after"] = dep["credit_score"] if dep else 0
         promoted_results.append(r)
 
-    # A/B test simulation
-    if results:
-        gov3 = SkillGovernor(conn)
-        ab_result = await gov3.ab_compare(1, old_success=0.85, new_success=0.72)
-    else:
-        ab_result = {"rollback": False}
+    # A/B 实测：种入 canary_invocations → compare_variants 唯一比较入口
+    from tool_evolution.governance.canary_router import CanaryRouter
+    router_ab = CanaryRouter(conn)
+    ab_test = {"rollback": False, "promote": False, "canary_rate": None,
+               "stable_rate": None, "note": "insufficient samples"}
+    if promoted_results:
+        target_dep = await skill_mgr.get_deployed(promoted_results[0]["name"])
+        if target_dep:
+            dep_id = target_dep["id"]
+            # canary 60% 成功 vs stable 90% 成功 → 应触发 rollback
+            for _ in range(40):
+                await router_ab.record_invocation(dep_id, "canary", success=True, latency_ms=100, tokens=50)
+            for _ in range(26):
+                await router_ab.record_invocation(dep_id, "canary", success=False, latency_ms=100, tokens=50)
+            for _ in range(40):
+                await router_ab.record_invocation(dep_id, "stable", success=True, latency_ms=100, tokens=50)
+            for _ in range(5):
+                await router_ab.record_invocation(dep_id, "stable", success=False, latency_ms=100, tokens=50)
+            cmp_result = await router_ab.compare_variants(dep_id, min_samples=30)
+            if cmp_result:
+                ab_test = cmp_result
+    # 样本不足路径：对另一技能只记 1 条 → compare_variants 返回 None
+    if promoted_results and len(promoted_results) > 1:
+        other = await skill_mgr.get_deployed(promoted_results[1]["name"])
+        if other:
+            await router_ab.record_invocation(other["id"], "canary", success=True, latency_ms=100, tokens=50)
+            ab_test["insufficient_samples"] = await router_ab.compare_variants(other["id"], min_samples=30) is None
 
-    return {"skills_scored": len(promoted_results), "skills": promoted_results, "ab_test": ab_result, "promotion_history": promotion_history}
+    return {"skills_scored": len(promoted_results), "skills": promoted_results, "ab_test": ab_test, "promotion_history": promotion_history}
 
 
 async def _seed_kde_training_data(conn) -> None:

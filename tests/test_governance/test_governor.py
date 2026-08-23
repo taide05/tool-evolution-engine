@@ -78,17 +78,8 @@ class TestSkillGovernor:
         new_status = await governor.demote(5, "low score")
         assert new_status == "deprecated"
 
-    async def test_ab_compare_rollback_triggered(self, governor):
-        await _insert_discovery(governor, 6)
-        await governor.conn.execute(
-            """INSERT INTO deployed_skills (id, discovery_id, name, dag_definition, param_template,
-               success_count, total_calls, total_latency_ms, total_tokens, status)
-               VALUES (6, 6, 'ABSkill', '{}', '{}', 30, 100, 50000, 100000, 'canary_5')"""
-        )
-        await governor.conn.commit()
-        result = await governor.ab_compare(6, old_success=0.90, new_success=0.30)
-        assert result["rollback"] is True
-        assert result["reason"] is not None
+    async def test_ab_compare_removed(self, governor):
+        assert not hasattr(governor, "ab_compare")
 
     async def test_idle_decay(self, governor):
         await _insert_discovery(governor, 7)
