@@ -73,6 +73,8 @@ ERROR_MESSAGES = {
 }
 
 
+_MAIN_RNG = random.Random(42)  # 主链固定种子——评测可复现（增量零 I 修复#1）
+
 async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
     """Seed labeled evaluation data with known ground truth patterns."""
     await init_db(conn)
@@ -90,7 +92,7 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
     error_labels = []  # (trace_id, error_type) for ground truth
 
     for i in range(n_tasks):
-        pattern = random.choice(DAG_PATTERNS)
+        pattern = _MAIN_RNG.choice(DAG_PATTERNS)
         root_id = f"eval-root-{i}"
         pattern_name = "->".join(pattern)
         planted_patterns[root_id] = pattern_name
@@ -99,14 +101,14 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
             trace_id=root_id, agent_id="orchestrator",
             tool_name="run_compliance_check", tool_version="1.0.0",
             trace_type=TraceType.TASK_ROOT, success=True,
-            latency_ms=random.randint(2000, 15000),
-            token_count=random.randint(500, 3000),
+            latency_ms=_MAIN_RNG.randint(2000, 15000),
+            token_count=_MAIN_RNG.randint(500, 3000),
             source="synthetic_demo",
         )
         traces.append(root)
 
         for j, tool in enumerate(pattern):
-            success = random.random() > 0.30
+            success = _MAIN_RNG.random() > 0.30
             report = TraceReport(
                 trace_id=f"eval-{i}-{j}",
                 parent_trace_id=root_id,
@@ -115,19 +117,19 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
                 trace_type=TraceType.ATOMIC,
                 success=success,
                 params={
-                    "query": f"劳动合同法 第{random.randint(1, 100)}条",
-                    "max_results": random.randint(5, 20),
-                    "lang": random.choice(["zh", "zh", "zh", "en", "ja"]),
-                    "timeout_ms": random.choice([5000, 10000, 15000]),
+                    "query": f"劳动合同法 第{_MAIN_RNG.randint(1, 100)}条",
+                    "max_results": _MAIN_RNG.randint(5, 20),
+                    "lang": _MAIN_RNG.choice(["zh", "zh", "zh", "en", "ja"]),
+                    "timeout_ms": _MAIN_RNG.choice([5000, 10000, 15000]),
                 },
-                latency_ms=random.randint(50, 5000),
-                token_count=random.randint(50, 500),
+                latency_ms=_MAIN_RNG.randint(50, 5000),
+                token_count=_MAIN_RNG.randint(50, 500),
                 source="synthetic_demo",
             )
             if not success:
-                err = random.choice(ERRORS)
+                err = _MAIN_RNG.choice(ERRORS)
                 report.error_type = err
-                report.error_message = random.choice(ERROR_MESSAGES[err])
+                report.error_message = _MAIN_RNG.choice(ERROR_MESSAGES[err])
                 error_labels.append((report.trace_id, err.value))
             traces.append(report)
 
@@ -151,7 +153,7 @@ async def eval_classifier(conn) -> dict:
         return {"error": "Not enough failure data"}
 
     # Train on 70%, test on 30%
-    random.shuffle(failed_rows)
+    _MAIN_RNG.shuffle(failed_rows)
     split = int(len(failed_rows) * 0.7)
     train_set = failed_rows[:split]
     test_set = failed_rows[split:]
@@ -271,7 +273,6 @@ async def eval_dag(conn) -> dict:
     all_traces = await store.get_all_traces(limit=50000)
 
     # Count planted patterns
-    planted_count = {}
     for t in all_traces:
         if t.get("trace_type") == "task_root" and t.get("parent_trace_id") is None:
             pass  # Would need access to planted_patterns from seed
@@ -321,8 +322,8 @@ async def eval_governance(conn) -> dict:
 
         # Cycle 1: 60 calls
         for _ in range(60):
-            success = random.random() > 0.15
-            await gov.record_call(dep_id, success=success, latency_ms=random.randint(100, 800), tokens=random.randint(50, 200))
+            success = _MAIN_RNG.random() > 0.15
+            await gov.record_call(dep_id, success=success, latency_ms=_MAIN_RNG.randint(100, 800), tokens=_MAIN_RNG.randint(50, 200))
         await gov.update_all_scores()
 
         if i < 3:
@@ -333,16 +334,16 @@ async def eval_governance(conn) -> dict:
 
             # Cycle 2: 100 more calls → canary_15 → canary_50
             for _ in range(100):
-                success = random.random() > 0.12
-                await gov.record_call(dep_id, success=success, latency_ms=random.randint(80, 600), tokens=random.randint(40, 180))
+                success = _MAIN_RNG.random() > 0.12
+                await gov.record_call(dep_id, success=success, latency_ms=_MAIN_RNG.randint(80, 600), tokens=_MAIN_RNG.randint(40, 180))
             await gov.update_all_scores()
             dep = await skill_mgr.get_deployed(name)
             promotion_history[name].append({"calls": 160, "score": dep["credit_score"], "status": dep["status"]})
 
             # Cycle 3: 150 more calls → canary_50 → active
             for _ in range(150):
-                success = random.random() > 0.10
-                await gov.record_call(dep_id, success=success, latency_ms=random.randint(60, 500), tokens=random.randint(40, 160))
+                success = _MAIN_RNG.random() > 0.10
+                await gov.record_call(dep_id, success=success, latency_ms=_MAIN_RNG.randint(60, 500), tokens=_MAIN_RNG.randint(40, 160))
             await gov.update_all_scores()
             dep = await skill_mgr.get_deployed(name)
             promotion_history[name].append({"calls": 310, "score": dep["credit_score"], "status": dep["status"]})
@@ -574,7 +575,6 @@ async def _query_pass_metrics(conn) -> dict:
     total_tokens = (await cursor.fetchone())[0] or 0
     cursor = await conn.execute("SELECT AVG(latency_ms) FROM trajectories WHERE trace_type='atomic'")
     avg_latency = (await cursor.fetchone())[0] or 0
-    retries = total - (total - failures)  # Number of retry traces
 
     cursor = await conn.execute(
         "SELECT COUNT(*) FROM trajectories WHERE trace_type='atomic' AND trace_id LIKE '%-retry'"
@@ -744,10 +744,10 @@ async def eval_weight_sensitivity(conn) -> dict:
         dep_rows = await cursor.fetchall()
         for row in dep_rows:
             for _ in range(60):
-                success = random.random() > 0.15
+                success = _MAIN_RNG.random() > 0.15
                 await gov.record_call(row["id"], success=success,
-                                      latency_ms=random.randint(100, 800),
-                                      tokens=random.randint(50, 200))
+                                      latency_ms=_MAIN_RNG.randint(100, 800),
+                                      tokens=_MAIN_RNG.randint(50, 200))
 
         await gov.update_all_scores()
         gov.score_skill = original_score
@@ -775,8 +775,6 @@ async def eval_simplified_scenario(conn) -> dict:
 
     Simplified = 3 tools, 50 tasks, 2 error types per tool.
     """
-    import hashlib as _hashlib
-
     store = TraceStore(conn)
     await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'simp-%'")
     await conn.commit()
@@ -825,7 +823,7 @@ async def eval_simplified_scenario(conn) -> dict:
     )).fetchall()]
 
     # RF classifier
-    random.shuffle(failed_rows)
+    _MAIN_RNG.shuffle(failed_rows)
     split = int(len(failed_rows) * 0.7)
     train_set = failed_rows[:split]
     test_set = failed_rows[split:]

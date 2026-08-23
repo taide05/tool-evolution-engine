@@ -1,4 +1,3 @@
-import pytest
 from tool_evolution.collection.schemas import TraceReport, TraceSnapshot, TraceType, ErrorType
 
 

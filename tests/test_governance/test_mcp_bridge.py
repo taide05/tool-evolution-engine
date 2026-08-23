@@ -1,4 +1,3 @@
-import json
 import pytest
 from tool_evolution.governance.mcp_bridge import MCPBridge, mcp, set_bridge
 

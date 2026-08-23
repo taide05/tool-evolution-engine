@@ -1,7 +1,5 @@
-import pytest
 import pytest_asyncio
 import aiosqlite
-from pathlib import Path
 from tool_evolution.utils.database import init_db
 
 
