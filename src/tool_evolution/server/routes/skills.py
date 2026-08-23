@@ -1,9 +1,10 @@
 import aiosqlite
+import hashlib
+import json
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from ...knowledge.skill_pack import SkillPackManager
 from ...governance.canary_router import CanaryRouter
-from ...governance.governor import SkillGovernor
 from ..deps import get_db
 
 router = APIRouter()
@@ -39,43 +40,33 @@ async def list_deployed(status: str | None = None,
 @router.post("/{name}/invoke")
 async def invoke_skill(name: str, req: InvokeRequest,
                        conn: aiosqlite.Connection = Depends(get_db)):
-    """Invoke a deployed skill with canary-aware routing.
+    """Route a request between stable and canary variants via consistent hashing.
 
-    Uses consistent hashing on request_hash to deterministically route
-    between stable (default behavior) and canary (optimized) variants.
-    Records invocation metrics for subsequent A/B comparison.
+    Pure routing decision — no execution, no metric writes. Real invocation
+    receipts are recorded by the executor closed loop (increment 3).
     """
     router_inst = CanaryRouter(conn)
     skill = await router_inst.get_skill(name)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
-    request_hash = req.request_hash or str(hash(frozenset(req.params.items())))
+    if req.request_hash:
+        request_hash = req.request_hash
+    else:
+        try:
+            request_hash = hashlib.md5(
+                json.dumps(req.params, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="params must be JSON-serializable")
+
     variant = router_inst.decide(request_hash, skill["status"])
-
-    # Simulate execution — in production this would call the actual tool DAG.
-    # For benchmarking, the caller supplies the outcome via a follow-up report.
-    simulated_success = True
-    simulated_latency = 100
-    simulated_tokens = 200
-
-    await router_inst.record_invocation(
-        skill["id"], variant,
-        success=simulated_success,
-        latency_ms=simulated_latency,
-        tokens=simulated_tokens,
-    )
-
-    # Also update the skill governor stats
-    gov = SkillGovernor(conn)
-    await gov.record_call(skill["id"], success=True, latency_ms=100, tokens=200)
-
     return {
         "skill": name,
         "status": skill["status"],
         "variant": variant,
         "canary_pct": CanaryRouter.canary_pct(skill["status"]),
-        "result": {"status": "ok"},
+        "result": {"status": "routed"},
     }
 
 
