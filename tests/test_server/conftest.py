@@ -3,6 +3,7 @@ import aiosqlite
 from httpx import AsyncClient, ASGITransport
 from tool_evolution.server.app import app
 from tool_evolution.server.deps import get_db
+from tool_evolution.utils.config import settings
 from tool_evolution.utils.database import init_db
 
 
@@ -22,7 +23,13 @@ async def setup_db():
     await conn.close()
 
 
+@pytest.fixture(autouse=True)
+def auth_key(monkeypatch):
+    monkeypatch.setattr(settings, "api_key", "test-key")
+
+
 @pytest.fixture
 async def client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                           headers={"X-API-Key": "test-key"}) as ac:
         yield ac

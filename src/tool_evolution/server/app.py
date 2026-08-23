@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from ..utils.database import get_connection, init_db, run_migrations
 from ..utils.config import settings
+from .auth import require_api_key, api_key_middleware
 from .routes import traces, skills, rules, analytics, canary, mcp_routes
 
 _scoring_task: asyncio.Task | None = None
@@ -42,6 +43,7 @@ async def _periodic_scoring(conn):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _scoring_task
+    require_api_key()
     conn = await get_connection()
     await init_db(conn)
     await run_migrations(conn)
@@ -65,3 +67,6 @@ app.include_router(mcp_routes.router, prefix="/api", tags=["memory"])
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+app.middleware("http")(api_key_middleware)
