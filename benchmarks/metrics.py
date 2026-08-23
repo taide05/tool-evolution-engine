@@ -22,7 +22,6 @@ Goal 4: Safely deploys optimizations
 from __future__ import annotations
 
 import json
-import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -256,6 +255,17 @@ def compute_all_metrics(
             gv.get("canary_total", 0), gv.get("promoted", 0),
             gv.get("demoted", 0), gv.get("rolled_back", 0),
         )
+
+    if "data_composition" in eval_data:
+        comp = eval_data["data_composition"]
+        total = sum(comp.values())
+        report["data_composition"] = {
+            "sources": comp,
+            "total": total,
+            "pct": {k: round(v / max(total, 1), 4) for k, v in comp.items()},
+        }
+    if "schema_version" in eval_data:
+        report["schema_version"] = eval_data["schema_version"]
 
     # Summary
     s: dict[str, Any] = {}
