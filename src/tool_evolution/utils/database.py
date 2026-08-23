@@ -1,5 +1,6 @@
 import aiosqlite
 from pathlib import Path
+from contextlib import asynccontextmanager
 from .config import settings
 
 
@@ -10,7 +11,20 @@ async def get_connection() -> aiosqlite.Connection:
     conn.row_factory = aiosqlite.Row
     await conn.execute("PRAGMA journal_mode=WAL")
     await conn.execute("PRAGMA foreign_keys=ON")
+    await conn.execute("PRAGMA busy_timeout=5000")
+    await conn.execute("PRAGMA synchronous=NORMAL")
     return conn
+
+
+@asynccontextmanager
+async def transaction(conn: aiosqlite.Connection):
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+        await conn.commit()
+    except BaseException:
+        await conn.rollback()
+        raise
 
 
 async def init_db(conn: aiosqlite.Connection) -> None:
