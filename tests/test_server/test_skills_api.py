@@ -48,3 +48,8 @@ class TestInvokeRouting:
     async def test_compare_endpoint_gone(self, client):
         r = await client.post("/api/canary/1/compare", params={"old_rate": 0.9, "new_rate": 0.5})
         assert r.status_code == 404
+
+    async def test_promote_missing_skill_400(self, client):
+        r = await client.post("/api/canary/999/promote")
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Skill 999 not found"

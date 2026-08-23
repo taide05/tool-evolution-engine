@@ -1,10 +1,17 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+import aiosqlite
+from fastapi import FastAPI, Depends
+from fastapi.responses import JSONResponse
 from ..utils.database import get_connection, init_db, run_migrations
 from ..utils.config import settings
+from ..utils.logging import setup_logging
 from .auth import require_api_key, api_key_middleware
+from .deps import get_db
 from .routes import traces, skills, rules, analytics, canary, mcp_routes
+
+logger = logging.getLogger(__name__)
 
 _scoring_task: asyncio.Task | None = None
 
@@ -21,7 +28,7 @@ async def _periodic_scoring(conn):
         try:
             await gov.update_all_scores()
         except Exception:
-            pass
+            logger.exception("scoring task failed")
         try:
             deployed = await skill_mgr.list_deployed()
             for skill in deployed:
@@ -37,12 +44,13 @@ async def _periodic_scoring(conn):
                 elif comparison["promote"]:
                     await gov.promote(skill["id"])
         except Exception:
-            pass
+            logger.exception("canary comparison failed")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _scoring_task
+    setup_logging(settings.log_level)
     require_api_key()
     conn = await get_connection()
     await init_db(conn)
@@ -65,8 +73,30 @@ app.include_router(mcp_routes.router, prefix="/api", tags=["memory"])
 
 
 @app.get("/health")
-async def health():
+async def health(conn: aiosqlite.Connection = Depends(get_db)):
+    try:
+        await conn.execute("SELECT 1")
+    except Exception:
+        logger.exception("health check failed")
+        return JSONResponse(status_code=503, content={"status": "degraded"})
     return {"status": "ok"}
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request, exc: ValueError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(aiosqlite.Error)
+async def db_error_handler(request, exc: aiosqlite.Error):
+    logger.exception("database error")
+    return JSONResponse(status_code=503, content={"detail": "database error"})
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request, exc: Exception):
+    logger.exception("unhandled error")
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
 
 app.middleware("http")(api_key_middleware)
