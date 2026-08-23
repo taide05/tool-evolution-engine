@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+import aiosqlite
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.collection.schemas import TraceReport, ErrorType, TraceType
 
@@ -84,3 +85,35 @@ class TestTraceStore:
         params = await store.get_success_params("search", "1.0.0", limit=10)
         assert len(params) == 5
         assert "max_results" in params[0]
+
+    async def test_insert_stores_source(self, store):
+        r = TraceReport(
+            trace_id="src-1", agent_id="a", tool_name="search",
+            success=True, latency_ms=100, source="synthetic_demo"
+        )
+        await store.insert(r)
+        rows = await store.get_by_tool("search", limit=10)
+        assert rows[0]["source"] == "synthetic_demo"
+
+    async def test_insert_atomic_rolls_back_on_fts_failure(self, store):
+        await store.conn.execute("DROP TABLE trajectories_fts")
+        await store.conn.commit()
+        r = TraceReport(trace_id="atomic-1", agent_id="a", tool_name="t",
+                        success=True, latency_ms=10)
+        with pytest.raises(aiosqlite.OperationalError):
+            await store.insert(r)
+        rows = await store.get_by_tool("t", limit=10)
+        assert rows == []
+
+    async def test_search_escapes_fts_syntax(self, store):
+        r = TraceReport(
+            trace_id="esc-1", agent_id="a", tool_name="github_api",
+            success=False, latency_ms=1000,
+            error_type=ErrorType.QUOTA_EXHAUSTED,
+            error_message="API rate limit exceeded"
+        )
+        await store.insert(r)
+        results = await store.search('" OR 1=1 --')
+        assert results == []
+        results2 = await store.search("rate limit")
+        assert len(results2) >= 1

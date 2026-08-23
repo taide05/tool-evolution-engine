@@ -31,6 +31,7 @@ class TraceReport(BaseModel):
     error_message: str | None = None
     latency_ms: int
     token_count: int = 0
+    source: str = "synthetic"
 
 
 class TraceSnapshot(TraceReport):

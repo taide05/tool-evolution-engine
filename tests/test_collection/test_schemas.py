@@ -47,6 +47,20 @@ class TestTraceReport:
         assert r.params == {}
         assert r.token_count == 0
 
+    def test_source_default(self):
+        r = TraceReport(
+            trace_id="t1", agent_id="a", tool_name="t",
+            success=True, latency_ms=10
+        )
+        assert r.source == "synthetic"
+
+    def test_source_explicit(self):
+        r = TraceReport(
+            trace_id="t2", agent_id="a", tool_name="t",
+            success=True, latency_ms=10, source="canary_measurement"
+        )
+        assert r.source == "canary_measurement"
+
 
 class TestTraceSnapshot:
     def test_snapshot_extends_report(self):

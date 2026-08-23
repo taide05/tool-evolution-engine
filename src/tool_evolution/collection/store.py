@@ -1,6 +1,7 @@
 import json
 import aiosqlite
 from .schemas import TraceReport, ErrorType
+from ..utils.database import transaction
 
 
 class TraceStore:
@@ -8,24 +9,25 @@ class TraceStore:
         self.conn = conn
 
     async def insert(self, report: TraceReport) -> None:
-        cursor = await self.conn.execute(
-            """INSERT INTO trajectories
-               (trace_id, parent_trace_id, agent_id, tool_name, tool_version,
-                trace_type, params, success, result, error_type, error_message,
-                latency_ms, token_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (report.trace_id, report.parent_trace_id, report.agent_id,
-             report.tool_name, report.tool_version, report.trace_type.value,
-             json.dumps(report.params), int(report.success),
-             json.dumps(report.result) if report.result else None,
-             report.error_type.value if report.error_type else None,
-             report.error_message, report.latency_ms, report.token_count)
-        )
-        await self.conn.execute(
-            "INSERT INTO trajectories_fts(rowid, tool_name, error_message) VALUES (?, ?, ?)",
-            (cursor.lastrowid, report.tool_name, report.error_message or "")
-        )
-        await self.conn.commit()
+        async with transaction(self.conn):
+            cursor = await self.conn.execute(
+                """INSERT INTO trajectories
+                   (trace_id, parent_trace_id, agent_id, tool_name, tool_version,
+                    trace_type, params, success, result, error_type, error_message,
+                    latency_ms, token_count, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (report.trace_id, report.parent_trace_id, report.agent_id,
+                 report.tool_name, report.tool_version, report.trace_type.value,
+                 json.dumps(report.params), int(report.success),
+                 json.dumps(report.result) if report.result else None,
+                 report.error_type.value if report.error_type else None,
+                 report.error_message, report.latency_ms, report.token_count,
+                 report.source)
+            )
+            await self.conn.execute(
+                "INSERT INTO trajectories_fts(rowid, tool_name, error_message) VALUES (?, ?, ?)",
+                (cursor.lastrowid, report.tool_name, report.error_message or "")
+            )
 
     async def get_by_tool(self, tool_name: str, limit: int = 100) -> list[dict]:
         cursor = await self.conn.execute(
@@ -47,9 +49,10 @@ class TraceStore:
         return [dict(row) for row in await cursor.fetchall()]
 
     async def search(self, fts_query: str) -> list[dict]:
+        escaped = fts_query.replace('"', '""')
         cursor = await self.conn.execute(
             "SELECT * FROM trajectories_fts WHERE trajectories_fts MATCH ?",
-            (fts_query,)
+            (f'"{escaped}"',)
         )
         return [dict(row) for row in await cursor.fetchall()]
 
