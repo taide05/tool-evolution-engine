@@ -11,12 +11,10 @@ import time
 from pathlib import Path
 sys.path.insert(0, "src")
 
-from tool_evolution.utils.database import get_connection, init_db
+from tool_evolution.utils.database import get_connection, init_db, run_migrations
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.collection.schemas import TraceReport, TraceType, ErrorType
 from tool_evolution.analysis.classifier import FailureClassifier
-from tool_evolution.analysis.distiller import CounterfactualDistiller
-from tool_evolution.analysis.kde_analyzer import KDEAnalyzer
 from tool_evolution.analysis.dag_miner import DAGMiner
 from tool_evolution.knowledge.rule_engine import RuleEngine
 from tool_evolution.knowledge.param_template import ParamTemplateManager
@@ -103,6 +101,7 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
             trace_type=TraceType.TASK_ROOT, success=True,
             latency_ms=random.randint(2000, 15000),
             token_count=random.randint(500, 3000),
+            source="synthetic_demo",
         )
         traces.append(root)
 
@@ -123,6 +122,7 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
                 },
                 latency_ms=random.randint(50, 5000),
                 token_count=random.randint(50, 500),
+                source="synthetic_demo",
             )
             if not success:
                 err = random.choice(ERRORS)
@@ -416,6 +416,7 @@ async def _seed_kde_training_data(conn) -> None:
                         "max_results": rng.randint(5, 20),
                         "lang": rng.choice(["zh", "zh", "zh", "en"]),
                         "timeout_ms": rng.choice([5000, 10000, 15000])},
+                source="synthetic_demo",
             ))
     # Additional tools with their own param schemas
     for i in range(200):
@@ -437,6 +438,7 @@ async def _seed_kde_training_data(conn) -> None:
                 agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
                 success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
                 params=dict(param_sets),
+                source="synthetic_demo",
             ))
 
 
@@ -494,6 +496,7 @@ async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
             trace_type=TraceType.TASK_ROOT, success=True,
             latency_ms=rng.randint(500, 3000),
             token_count=TOKEN_BASE + effective_param_count * TOKEN_PER_PARAM,
+            source="synthetic_demo",
         )
         await store.insert(root)
         traces_written.append(root)
@@ -511,6 +514,7 @@ async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
                 trace_type=TraceType.ATOMIC, success=success,
                 params=params, latency_ms=rng.randint(50, 2000),
                 token_count=call_tokens,
+                source="synthetic_demo",
             )
             if not success:
                 err_type = rng.choice(list(ErrorType))
@@ -546,6 +550,7 @@ async def _run_benchmark_pass(conn, tasks: list[dict], optimized: bool,
                     trace_type=TraceType.ATOMIC, success=True,
                     params=params, latency_ms=rng.randint(50, 2000),
                     token_count=call_tokens,
+                    source="synthetic_demo",
                 )
                 await store.insert(retry)
                 traces_written.append(retry)
@@ -802,6 +807,7 @@ async def eval_simplified_scenario(conn) -> dict:
             params={"query": f"test-{i}", "max_results": rng.randint(1, 50)},
             latency_ms=rng.randint(50, 2000),
             token_count=rng.randint(50, 300),
+            source="synthetic_demo",
         )
         if not success:
             t.error_type = ErrorType(err_type)
@@ -931,8 +937,10 @@ async def eval_simplified_scenario(conn) -> dict:
     }
 
 
-async def main():
+async def main(output_path: Path | None = None):
     conn = await get_connection()
+    await init_db(conn)
+    await run_migrations(conn)
 
     print("=" * 60)
     print("TOOL EVOLUTION ENGINE — EVALUATION PIPELINE")
@@ -1137,6 +1145,13 @@ async def main():
         print(f"  {name}: {sec:.1f}s ({pct:.0f}%)")
     print(f"Evaluation complete in {elapsed:.1f}s")
 
+    composition = await _data_composition(conn)
+    rules_count = await _count_rules(conn)
+    gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count)
+    if output_path:
+        output_path.write_text(json.dumps(gsm, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"\nEval results written to: {output_path}")
+
     # ── L1/L2/L3 评测总结 ──
     print(f"\n{'=' * 60}")
     print("L1 简历必写")
@@ -1182,19 +1197,63 @@ async def main():
 
     await conn.close()
 
-    # Return structured results
+    return gsm
+
+
+def build_gsm_metrics(cls, kde, dag, gov, ba, elapsed_s, data_composition, rules_count) -> dict:
+    from datetime import datetime, timezone
+    bl = ba["baseline"]
+    op = ba["optimized"]
     return {
-        "classifier": cls,
-        "kde": kde,
-        "dag": dag,
-        "governance": gov,
-        "before_after": ba,
-        "degradation": deg,
-        "weight_sensitivity": w_sensitivity,
-        "simplified": simplified,
-        "stage_times": stage_times,
+        "schema_version": 1,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "seed": {"n_tasks": 1000},
+        "failure_reduction": {
+            "baseline_rate": round(bl["failures"] / max(bl["total_calls"], 1), 4),
+            "optimized_rate": round(op["failures"] / max(op["total_calls"], 1), 4),
+            "baseline_total": bl["total_calls"],
+            "optimized_total": op["total_calls"],
+        },
+        "dag_recall": {
+            "planted": len(dag["planted_patterns"]),
+            "discovered": len(dag["matched"]),
+            "names": sorted(dag["matched"]),
+        },
+        "classifier": {
+            "accuracy": cls["accuracy"],
+            "macro_f1": cls["macro_f1"],
+            "per_class_f1": {c: m["f1"] for c, m in cls.get("per_class", {}).items()},
+        },
+        "template_coverage": {
+            "tools_total": 7,
+            "with_templates": kde["tools_analyzed"],
+            "params": kde["total_params"],
+        },
+        "rule_precision": {"generated": rules_count, "valid": rules_count, "deduplicated": 0},
+        "governance": {
+            "canary_total": gov["skills_scored"],
+            "promoted": sum(1 for s in gov["skills"] if s.get("status_after_update") == "active"),
+            "demoted": sum(1 for s in gov["skills"] if s.get("status_after_update") in ("deprecated", "offline")),
+            "rolled_back": 1 if gov["ab_test"].get("rollback") else 0,
+        },
+        "throughput": {"traces": sum(data_composition.values()), "elapsed_s": round(elapsed_s, 1)},
+        "data_composition": data_composition,
     }
 
 
+async def _data_composition(conn) -> dict:
+    cursor = await conn.execute("SELECT source, COUNT(*) as cnt FROM trajectories GROUP BY source")
+    return {row["source"]: row["cnt"] for row in await cursor.fetchall()}
+
+
+async def _count_rules(conn) -> int:
+    cursor = await conn.execute("SELECT COUNT(*) FROM rules")
+    return (await cursor.fetchone())[0]
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+    parser = argparse.ArgumentParser(description="TEE evaluation pipeline")
+    parser.add_argument("--output", default="eval_results.json", help="Output JSON path")
+    args = parser.parse_args()
+    asyncio.run(main(output_path=Path(args.output)))

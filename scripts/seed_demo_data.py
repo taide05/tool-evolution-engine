@@ -5,7 +5,7 @@ import random
 import sys
 sys.path.insert(0, "src")
 
-from tool_evolution.utils.database import get_connection, init_db
+from tool_evolution.utils.database import get_connection, init_db, run_migrations
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.collection.schemas import TraceReport, TraceType, ErrorType
 
@@ -23,6 +23,7 @@ DAG_PATTERNS = [
 async def main():
     conn = await get_connection()
     await init_db(conn)
+    await run_migrations(conn)
     store = TraceStore(conn)
 
     traces = []
@@ -34,6 +35,7 @@ async def main():
             tool_name="run_compliance_check", tool_version="1.0.0",
             trace_type=TraceType.TASK_ROOT, success=True, latency_ms=random.randint(2000, 15000),
             token_count=random.randint(500, 3000),
+            source="synthetic_demo",
         )
         traces.append(root)
         for j, tool in enumerate(pattern):
@@ -49,6 +51,7 @@ async def main():
                         "max_results": random.randint(5, 20)},
                 latency_ms=random.randint(50, 5000),
                 token_count=random.randint(50, 500),
+                source="synthetic_demo",
             )
             if not success:
                 report.error_type = random.choice(ERRORS)
