@@ -390,13 +390,16 @@ async def eval_governance(conn) -> dict:
             if cmp_result:
                 ab_test = cmp_result
     # 样本不足路径：对另一技能只记 1 条 → compare_variants 返回 None
+    insufficient_samples = None
     if promoted_results and len(promoted_results) > 1:
         other = await skill_mgr.get_deployed(promoted_results[1]["name"])
         if other:
             await router_ab.record_invocation(other["id"], "canary", success=True, latency_ms=100, tokens=50)
-            ab_test["insufficient_samples"] = await router_ab.compare_variants(other["id"], min_samples=30) is None
+            insufficient_samples = await router_ab.compare_variants(other["id"], min_samples=30) is None
 
-    return {"skills_scored": len(promoted_results), "skills": promoted_results, "ab_test": ab_test, "promotion_history": promotion_history}
+    return {"skills_scored": len(promoted_results), "skills": promoted_results,
+            "ab_test": ab_test, "insufficient_samples": insufficient_samples,
+            "promotion_history": promotion_history}
 
 
 async def _seed_kde_training_data(conn) -> None:

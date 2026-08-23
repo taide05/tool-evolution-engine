@@ -96,6 +96,7 @@ class TestTraceStore:
         assert rows[0]["source"] == "synthetic_demo"
 
     async def test_insert_atomic_rolls_back_on_fts_failure(self, store):
+        from tool_evolution.utils.database import init_db
         await store.conn.execute("DROP TABLE trajectories_fts")
         await store.conn.commit()
         r = TraceReport(trace_id="atomic-1", agent_id="a", tool_name="t",
@@ -104,6 +105,12 @@ class TestTraceStore:
             await store.insert(r)
         rows = await store.get_by_tool("t", limit=10)
         assert rows == []
+        # 正向对照：重建 FTS 后同一报告可成功插入——锁定"失败即回滚"而非"失败即永久拒插"
+        await init_db(store.conn)
+        await store.insert(TraceReport(trace_id="atomic-1", agent_id="a", tool_name="t",
+                                       success=True, latency_ms=10))
+        rows = await store.get_by_tool("t", limit=10)
+        assert len(rows) == 1
 
     async def test_search_escapes_fts_syntax(self, store):
         r = TraceReport(
