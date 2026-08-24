@@ -17,9 +17,11 @@ from tool_evolution.collection.schemas import TraceReport, TraceType, ErrorType
 from tool_evolution.analysis.classifier import FailureClassifier
 from tool_evolution.analysis.dag_miner import DAGMiner
 from tool_evolution.knowledge.rule_engine import RuleEngine
-from tool_evolution.knowledge.param_template import ParamTemplateManager
+from tool_evolution.knowledge.param_template import ParamTemplateManager, flatten_user_prefs
 from tool_evolution.knowledge.skill_pack import SkillPackManager
 from tool_evolution.governance.governor import SkillGovernor
+from tool_evolution.governance.relation_store import RelationStore
+from tool_evolution.analysis.preference_learner import PreferenceLearner
 
 
 EVAL_TOOLS = ["search_law", "get_law_detail", "analyze_compliance", "generate_report",
@@ -938,6 +940,113 @@ async def eval_simplified_scenario(conn) -> dict:
     }
 
 
+async def _seed_relation_tasks(conn, n_tasks: int = 10) -> list[str]:
+    """每个任务预埋两实体：ent_{i} 与 topic_{i}（trace b 附带 shared 实体）。"""
+    await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'rel-%'")
+    await conn.commit()  # R14: run_eval 文件库重复运行防护（主键冲突）
+    ts = TraceStore(conn)
+    root_ids = []
+    for i in range(n_tasks):
+        root_id = f"rel-root-{i}"
+        await ts.insert(TraceReport(trace_id=root_id, agent_id="seed", tool_name="task",
+                                    trace_type=TraceType.TASK_ROOT, success=True, latency_ms=0))
+        await ts.insert(TraceReport(trace_id=f"rel-a-{i}", parent_trace_id=root_id,
+                                    agent_id="seed", tool_name="search_api", success=True,
+                                    latency_ms=5, result={"entity": f"ent_{i}"}))
+        await ts.insert(TraceReport(trace_id=f"rel-b-{i}", parent_trace_id=root_id,
+                                    agent_id="seed", tool_name="faq_api", success=True,
+                                    latency_ms=5, result={"title": f"topic_{i}",
+                                                          "subject": "shared"}))
+        root_ids.append(root_id)
+    return root_ids
+
+
+async def eval_relations(conn) -> dict:
+    store = RelationStore(conn)
+    root_ids = await _seed_relation_tasks(conn)
+    built = 0
+    for rid in root_ids:
+        built += await store.build_for_task(rid)
+    # 全量召回检查：每任务预埋 3 对（ent_i-topic_i、ent_i-shared、topic_i-shared），共 30 对
+    expected_pairs = []
+    for i in range(len(root_ids)):
+        expected_pairs += [(f"ent_{i}", f"topic_{i}"),
+                           (f"ent_{i}", "shared"),
+                           (f"topic_{i}", "shared")]
+    recalled = 0
+    for a, b in expected_pairs:
+        rows = await store.search_relations(a)
+        if any({r["source_entity"], r["target_entity"]} == {a, b} for r in rows):
+            recalled += 1
+    shared_rows = await store.search_relations("shared")
+    before = (await store.search_relations("ent_0"))[0]["strength"]
+    await store.build_for_task("rel-root-0")
+    after = (await store.search_relations("ent_0"))[0]["strength"]
+    return {
+        "relation_tasks": len(root_ids),
+        "relation_pairs_built": built,
+        "recalled_premise_pairs": recalled,
+        "recall_total": len(expected_pairs),
+        "shared_entity_degree": len(shared_rows),
+        "idempotent_rebuild": before == after,
+    }
+
+
+async def eval_preference_loop(conn) -> dict:
+    # R6: 隔离——learn() 全库扫描，先清空 trajectories/fts 再种 pref-* 种子，
+    # 防止 degradation 残留的 eval-*/simp-* 轨迹污染学习（如 lang zh ~60% 阈值边界）
+    await conn.execute("DELETE FROM trajectories")
+    await conn.execute("DELETE FROM trajectories_fts")
+    await conn.commit()
+    mgr = ParamTemplateManager(conn)
+    await mgr.save("search_api", "1.0.0", {
+        "max_results": {"param_type": "int", "default_value": 10,
+                        "lower_bound": 0, "upper_bound": 100, "sample_count": 200},
+    })
+    ts = TraceStore(conn)
+    for i in range(36):
+        await ts.insert(TraceReport(trace_id=f"pref-a-{i}", agent_id="agent_p1",
+                                    tool_name="search_api", success=True, latency_ms=5,
+                                    params={"max_results": 20}))
+    for i in range(4):
+        await ts.insert(TraceReport(trace_id=f"pref-a2-{i}", agent_id="agent_p1",
+                                    tool_name="search_api", success=True, latency_ms=5,
+                                    params={"max_results": 10}))
+    for i in range(40):
+        await ts.insert(TraceReport(trace_id=f"pref-b-{i}", agent_id="agent_p2",
+                                    tool_name="search_api", success=True, latency_ms=5,
+                                    params={"max_results": 10}))
+    await ts.insert(TraceReport(trace_id="pref-c-0", agent_id="agent_p3",
+                                tool_name="search_api", success=True, latency_ms=5,
+                                params={"max_results": 15}))
+
+    learner = PreferenceLearner(conn)
+    prefs = await learner.learn()
+    await learner.save_to_cache(prefs)
+    flat = flatten_user_prefs(prefs, "search_api")
+    tmpl = await mgr.generate("search_api", "1.0.0", user_prefs=flat)
+    learned_val = prefs.get("search_api", {}).get("max_results")
+    injected = bool(tmpl) and tmpl.get("max_results", {}).get("default_value") == 20
+    source_ok = bool(tmpl) and tmpl.get("max_results", {}).get("source") == "user_preference"
+
+    # 重试率模拟：agent_p1 后续 100 次调用按历史分布采样（90% 用 20、10% 用 10），
+    # 默认值与实际用法不一致即产生一次重试；对比全局默认（10）与注入偏好（20）
+    calls = [20 if _MAIN_RNG.random() < 0.9 else 10 for _ in range(100)]  # R5: 复用模块级种子
+    mismatches_before = sum(1 for c in calls if c != 10)
+    mismatches_after = sum(1 for c in calls if c != 20)
+    retry_reduction = round((mismatches_before - mismatches_after) / 100 * 100, 1)
+    return {
+        "learned_max_results": learned_val,
+        "expected_learned_value": 20,
+        "learned_correct": learned_val == 20,
+        "injected_default": injected,
+        "injected_source_ok": source_ok,
+        "retry_reduction_pct": retry_reduction,
+        "mismatches_before": mismatches_before,
+        "mismatches_after": mismatches_after,
+    }
+
+
 async def main(output_path: Path | None = None):
     conn = await get_connection()
     await init_db(conn)
@@ -973,11 +1082,11 @@ async def main(output_path: Path | None = None):
     stage_times = {}  # per-stage timing (F3 fix)
     t_stage = t0
     info = await seed_eval_data(conn, n_tasks=1000)
-    print(f"\n[1/8] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
+    print(f"\n[1/10] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
           f"{len(info['error_labels'])} labeled failures")
 
     # 1. Classifier evaluation
-    print("\n[2/8] Classifier Evaluation")
+    print("\n[2/10] Classifier Evaluation")
     cls = await eval_classifier(conn)
     print(f"  Train/Test: {cls['train_size']}/{cls['test_size']}")
     print(f"  Accuracy: {cls['accuracy']:.1%}  Macro F1: {cls['macro_f1']:.3f}")
@@ -988,7 +1097,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # F13 fix: seed KDE training data BEFORE eval_kde so all 7 tools have data
-    print("\n[3/8] KDE Parameter Analysis (with F13 timing fix)")
+    print("\n[3/10] KDE Parameter Analysis (with F13 timing fix)")
     await _seed_kde_training_data(conn)
     mgr_kde = ParamTemplateManager(conn)
     for tool in EVAL_TOOLS:
@@ -1040,7 +1149,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # 3. DAG mining
-    print("\n[4/8] DAG Pattern Mining")
+    print("\n[4/10] DAG Pattern Mining")
     dag = await eval_dag(conn)
     print(f"  Planted: {len(dag['planted_patterns'])}  Discovered: {dag['n_discovered']}  Matched: {len(dag['matched'])}")
     print(f"  Pattern Recall: {dag['pattern_recall']:.1%}")
@@ -1059,7 +1168,7 @@ async def main(output_path: Path | None = None):
         await skill_mgr.add_discovery(d)
 
     # 4. Governance (with F6 weight sensitivity)
-    print("\n[5/8] Skill Governance + Weight Sensitivity (F6)")
+    print("\n[5/10] Skill Governance + Weight Sensitivity (F6)")
     gov = await eval_governance(conn)
     print(f"  Skills scored: {gov['skills_scored']}")
     for s in gov["skills"]:
@@ -1083,7 +1192,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # 5. Before/After
-    print("\n[6/8] Before/After Optimization Comparison")
+    print("\n[6/10] Before/After Optimization Comparison")
     ba = await eval_before_after(conn, tasks=expanded_tasks)
     print(f"  Tasks: {ba['n_tasks']}")
     print(f"  BASELINE  | failures={ba['baseline']['failures']} retries={ba['baseline']['retries']} "
@@ -1111,7 +1220,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # F4: degradation curve (small=200, large=500)
-    print("\n[7/8] Degradation Curve (F4 — 200/500 seed)")
+    print("\n[7/10] Degradation Curve (F4 — 200/500 seed)")
     deg = await eval_degradation_curve(conn)
     for scale, m in deg.items():
         print(f"  {scale}: n={m['n_traces']} cls_acc={m['classifier_accuracy']:.1%} "
@@ -1122,7 +1231,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # F8: simplified scenario — RF vs pure rules
-    print("\n[8/8] Simplified Scenario: RF vs Rules (F8)")
+    print("\n[8/10] Simplified Scenario: RF vs Rules (F8)")
     simplified = await eval_simplified_scenario(conn)
     print(f"  RF accuracy: {simplified['rf_accuracy']:.1%}  Rules accuracy: {simplified['rules_accuracy']:.1%}")
     print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
@@ -1138,6 +1247,28 @@ async def main(output_path: Path | None = None):
     t_now = time.monotonic()
     stage_times["simplified"] = round(t_now - t_stage, 2)
 
+    # R6: 阶段 9/10 会清 trajectories，gsm 基线数据须提前采集
+    composition = await _data_composition(conn)
+    rules_count = await _count_rules(conn)
+
+    # 9. Relations (增量一)
+    t_stage = time.monotonic()
+    rel = await eval_relations(conn)
+    stage_times["relations"] = time.monotonic() - t_stage
+    print(f"\n[9/10] Relations: {rel['recalled_premise_pairs']}/{rel['recall_total']} premise pairs recalled, "
+          f"{rel['relation_pairs_built']} pairs built from {rel['relation_tasks']} tasks, "
+          f"shared degree {rel['shared_entity_degree']}, idempotent rebuild: {rel['idempotent_rebuild']}")
+
+    # 10. Preference loop (增量一)
+    t_stage = time.monotonic()
+    pref = await eval_preference_loop(conn)
+    stage_times["preference_loop"] = time.monotonic() - t_stage
+    print(f"[10/10] Preference loop: learned={pref['learned_correct']} "
+          f"(expected {pref['expected_learned_value']}, got {pref['learned_max_results']}), "
+          f"injected default={pref['injected_default']}, source ok={pref['injected_source_ok']}, "
+          f"retry reduction={pref['retry_reduction_pct']}% "
+          f"(mismatches {pref['mismatches_before']}→{pref['mismatches_after']})")
+
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")
     print(f"Stage timing breakdown (F3):")
@@ -1146,8 +1277,6 @@ async def main(output_path: Path | None = None):
         print(f"  {name}: {sec:.1f}s ({pct:.0f}%)")
     print(f"Evaluation complete in {elapsed:.1f}s")
 
-    composition = await _data_composition(conn)
-    rules_count = await _count_rules(conn)
     gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count)
     if output_path:
         output_path.write_text(json.dumps(gsm, indent=2, ensure_ascii=False), encoding="utf-8")
