@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     ab_rollback_margin: float = 0.10
     canary_check_interval_s: int = 300
     canary_min_samples: int = 30
+    min_pref_samples: int = 20
+    pref_share_threshold: float = 0.6
     api_key: str | None = None
     log_level: str = "INFO"
 
