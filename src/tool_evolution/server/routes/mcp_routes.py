@@ -32,3 +32,9 @@ async def update_memory(req: UpdateRequest, conn: aiosqlite.Connection = Depends
 async def get_preferences(conn: aiosqlite.Connection = Depends(get_db)):
     prefs = await MCPBridge(conn).get_user_preferences()
     return {"preferences": prefs}
+
+
+@router.get("/memory/relations")
+async def get_relations(entity: str, conn: aiosqlite.Connection = Depends(get_db)):
+    rels = await MCPBridge(conn).search_relations(entity)
+    return {"entity": entity, "relations": rels, "count": len(rels)}
