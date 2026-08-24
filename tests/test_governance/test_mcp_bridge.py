@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from tool_evolution.governance.mcp_bridge import MCPBridge, mcp, set_bridge
 from tool_evolution.collection.store import TraceStore
@@ -62,6 +64,33 @@ class TestMCPBridge:
         names = {t.name for t in tools.values()}
         assert {"search_memory", "update_memory", "get_user_preferences",
                 "search_relations"} <= names
+
+
+class TestMCPToolLatency:
+    async def test_four_tools_under_1s(self, bridge, db_conn):
+        # I#3: 4 个 MCP 工具桥方法级耗时实测（in-process；stdio 传输开销为协议层不计）
+        ts = TraceStore(db_conn)
+        await ts.insert(TraceReport(trace_id="lat-root", agent_id="a", tool_name="task",
+                                    trace_type=TraceType.TASK_ROOT, success=True, latency_ms=0))
+        await ts.insert(TraceReport(trace_id="lat-c0", parent_trace_id="lat-root",
+                                    agent_id="a", tool_name="t", success=True,
+                                    latency_ms=1, result={"entity": "LatA"}))
+        await ts.insert(TraceReport(trace_id="lat-c1", parent_trace_id="lat-root",
+                                    agent_id="a", tool_name="t", success=True,
+                                    latency_ms=1, result={"title": "LatB"}))
+        await bridge.extract_relations("lat-root")
+        calls = {
+            "search_memory": lambda: bridge.search_memory("LatA"),
+            "update_memory": lambda: bridge.update_memory("LatA", ["LatB"]),
+            "get_user_preferences": lambda: bridge.get_user_preferences(),
+            "search_relations": lambda: bridge.search_relations("LatA"),
+        }
+        timings = {}
+        for name, call in calls.items():
+            t0 = time.perf_counter()
+            await call()
+            timings[name] = round(time.perf_counter() - t0, 4)
+        assert all(t < 1.0 for t in timings.values()), f"工具耗时超限: {timings}"
 
 
 class TestMCPBridgeRelations:
