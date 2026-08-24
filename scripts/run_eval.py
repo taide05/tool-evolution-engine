@@ -615,7 +615,6 @@ async def eval_before_after(conn, tasks: list[dict] | None = None) -> dict:
         tasks_path = _Path(__file__).parent / "benchmark_tasks.json"
         tasks = _json.loads(tasks_path.read_text(encoding="utf-8"))
 
-    store = TraceStore(conn)
     mgr = ParamTemplateManager(conn)
     engine = RuleEngine(conn)
 
@@ -1060,7 +1059,6 @@ async def main(output_path: Path | None = None):
     tasks_path = Path(__file__).parent / "benchmark_tasks.json"
     base_tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
     expanded_tasks = []
-    rng = random.Random(42)
     max_results_variants = [5, 8, 10, 12, 15, 18, 20, 25]
     lang_variants = ["zh", "zh", "zh", "zh", "en", "ja", "zh", "zh"]
     for i, task in enumerate(base_tasks):
@@ -1113,7 +1111,7 @@ async def main(output_path: Path | None = None):
     mode_vs_median = kde.get("mode_vs_median", {})
     if mode_vs_median:
         kde_wins = 0; total_cmp = 0
-        print(f"\n  I-4: KDE mode vs median MAE comparison:")
+        print("\n  I-4: KDE mode vs median MAE comparison:")
         for tool, params in mode_vs_median.items():
             for pname, data in params.items():
                 total_cmp += 1
@@ -1123,7 +1121,7 @@ async def main(output_path: Path | None = None):
         if total_cmp > 0:
             print(f"  KDE wins: {kde_wins}/{total_cmp} ({kde_wins/total_cmp*100:.0f}%)")
     # I-5: KDE 95% CI boundary check
-    print(f"\n  I-5: KDE 95% CI boundary check:")
+    print("\n  I-5: KDE 95% CI boundary check:")
     store_ci = TraceStore(conn)
     for tool in EVAL_TOOLS:
         tmpl = await mgr_kde.get_template(tool, "1.0.0")
@@ -1178,13 +1176,13 @@ async def main(output_path: Path | None = None):
     # I-6: Full canary promotion path
     promotion_history = gov.get("promotion_history", {})
     if promotion_history:
-        print(f"\n  I-6: Full canary path (canary_5→15→50→active):")
+        print("\n  I-6: Full canary path (canary_5→15→50→active):")
         for skill_name, history in promotion_history.items():
             path = " → ".join(f"{h['status']}({h['calls']}c,{h['score']:.0f}pt)" for h in history)
             print(f"    {skill_name[:50]}: {path}")
     # F6: weight sensitivity
     w_sensitivity = await eval_weight_sensitivity(conn)
-    print(f"  Weight sensitivity (40/30/30 vs 50/25/25 vs 60/20/20):")
+    print("  Weight sensitivity (40/30/30 vs 50/25/25 vs 60/20/20):")
     for w_name, w_data in w_sensitivity.items():
         print(f"    {w_name}: {w_data['promotions']} promotions, {w_data['demotions']} demotions, {w_data['offlines']} offlines")
     t_now = time.monotonic()
@@ -1208,7 +1206,7 @@ async def main(output_path: Path | None = None):
     op_ft = ba["optimized"].get("failure_by_type", {})
     if bl_ft or op_ft:
         all_types = sorted(set(list(bl_ft.keys()) + list(op_ft.keys())))
-        print(f"\n  I-1: Failure type breakdown (baseline → optimized):")
+        print("\n  I-1: Failure type breakdown (baseline → optimized):")
         print(f"  {'Error Type':<25} {'Baseline':>8} {'Optimized':>8} {'Reduction':>10}")
         for et in all_types:
             bl = bl_ft.get(et, 0)
@@ -1237,7 +1235,7 @@ async def main(output_path: Path | None = None):
     print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
     vt = simplified.get("char_wb_variant_test", {})
     if vt:
-        print(f"\n  I-2: char_wb cross-spelling robustness:")
+        print("\n  I-2: char_wb cross-spelling robustness:")
         if vt.get("en_total", 0) > 0:
             print(f"  EN variants: {vt['en_accuracy']:.1%} ({vt['en_correct']}/{vt['en_total']})")
             for d in vt.get("en_details", []): print(d)
@@ -1271,7 +1269,7 @@ async def main(output_path: Path | None = None):
 
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")
-    print(f"Stage timing breakdown (F3):")
+    print("Stage timing breakdown (F3):")
     for name, sec in stage_times.items():
         pct = sec / elapsed * 100 if elapsed > 0 else 0
         print(f"  {name}: {sec:.1f}s ({pct:.0f}%)")
@@ -1313,7 +1311,7 @@ async def main(output_path: Path | None = None):
     print(f"\n{'=' * 60}")
     print("L3 内部参考")
     print(f"{'=' * 60}")
-    print(f"  评测规模:       1000 seed + 400 benchmark")
+    print("  评测规模:       1000 seed + 400 benchmark")
     print(f"  全管道耗时:     {elapsed:.0f}s (离线批量统计,非产品延迟)")
     per_module = []
     if elapsed > 0:
