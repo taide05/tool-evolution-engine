@@ -1,7 +1,7 @@
 import uuid
 import asyncio
 import aiosqlite
-from .schemas import TraceReport
+from .schemas import TraceReport, TraceType
 from .store import TraceStore
 
 
@@ -63,14 +63,19 @@ class Tracer:
                 break
         for report in batch:
             await self.store.insert(report)
-            if self._mcp_bridge and report.success and report.result:
-                await self._mcp_bridge.extract_and_update({
-                    "success": True,
-                    "result": report.result,
-                    "tool_name": report.tool_name,
-                })
-                if report.parent_trace_id:
-                    await self._mcp_bridge.extract_relations(report.parent_trace_id)
+            if self._mcp_bridge and report.success:
+                if report.result:
+                    await self._mcp_bridge.extract_and_update({
+                        "success": True,
+                        "result": report.result,
+                        "tool_name": report.tool_name,
+                    })
+                    if report.parent_trace_id:
+                        await self._mcp_bridge.extract_relations(report.parent_trace_id)
+                elif (report.parent_trace_id is None
+                      and report.trace_type == TraceType.TASK_ROOT):
+                    # root 侧兜底：子 report 先于 root flush 时，root 落地后重建任务树（裁决②5）
+                    await self._mcp_bridge.extract_relations(report.trace_id)
 
     async def close(self) -> None:
         await self.flush()

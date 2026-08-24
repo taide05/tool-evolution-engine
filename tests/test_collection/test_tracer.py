@@ -82,3 +82,22 @@ class TestTracerRelationsHook:
         rows = await bridge.search_relations("Alpha")
         assert len(rows) == 1
         assert rows[0]["target_entity"] == "TopicA"
+
+    async def test_root_flush_after_child_builds_relations(self, db_conn):
+        # 设计修订（裁决②5）：子 report 先于 root flush 时，root 落地后由 root 侧兜底重建
+        from tool_evolution.governance.mcp_bridge import MCPBridge
+        bridge = MCPBridge(db_conn)
+        tracer = Tracer(db_conn, mcp_bridge=bridge)
+        child = TraceReport(trace_id="order-c0", parent_trace_id="order-root",
+                            agent_id="a", tool_name="t", success=True, latency_ms=1,
+                            result={"entities": ["Gamma", "Delta"]})
+        await tracer.report(child)
+        await tracer.flush()
+        assert await bridge.search_relations("Gamma") == []  # root 未入库，任务树为空
+        root = TraceReport(trace_id="order-root", agent_id="a", tool_name="task",
+                           trace_type=TraceType.TASK_ROOT, success=True, latency_ms=0)
+        await tracer.report(root)
+        await tracer.flush()
+        rows = await bridge.search_relations("Gamma")
+        assert len(rows) == 1
+        assert {rows[0]["source_entity"], rows[0]["target_entity"]} == {"Gamma", "Delta"}
