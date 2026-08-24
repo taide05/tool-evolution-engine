@@ -72,3 +72,8 @@ class ParamTemplateManager:
                     template[param_name]["default_value"] = pref_value
                     template[param_name]["source"] = "user_preference"
         return template
+
+
+def flatten_user_prefs(user_prefs: dict, tool_name: str) -> dict:
+    """Unpack nested {tool: {param: value}} preferences to flat {param: value} for one tool."""
+    return {k: v for k, v in (user_prefs.get(tool_name) or {}).items()}

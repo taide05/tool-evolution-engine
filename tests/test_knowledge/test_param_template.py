@@ -64,3 +64,11 @@ class TestParamTemplateManager:
         assert tmpl is not None
         assert tmpl["max_results"]["default_value"] == 99
         assert tmpl["max_results"]["source"] == "user_preference"
+
+
+class TestFlattenUserPrefs:
+    def test_unpacks_nested_by_tool(self):
+        from tool_evolution.knowledge.param_template import flatten_user_prefs
+        prefs = {"search": {"temperature": 0.7}, "other": {"x": 1}}
+        assert flatten_user_prefs(prefs, "search") == {"temperature": 0.7}
+        assert flatten_user_prefs(prefs, "missing") == {}
