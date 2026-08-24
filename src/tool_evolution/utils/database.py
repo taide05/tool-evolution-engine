@@ -27,12 +27,24 @@ async def transaction(conn: aiosqlite.Connection):
         raise
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # version: (ddl, table_to_check, column_to_check)
 MIGRATIONS: dict[int, tuple[str, str, str]] = {
     2: ("ALTER TABLE trajectories ADD COLUMN source TEXT NOT NULL DEFAULT 'synthetic'",
         "trajectories", "source"),
+    3: ("""CREATE TABLE IF NOT EXISTS entity_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_entity TEXT NOT NULL,
+            target_entity TEXT NOT NULL,
+            relation_type TEXT NOT NULL DEFAULT 'co_occur',
+            strength INTEGER NOT NULL DEFAULT 1,
+            evidence_trace_ids TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relations(source_entity);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_er_pair ON entity_relations(source_entity, target_entity, relation_type);""",
+        "entity_relations", "source_entity"),
 }
 
 
@@ -59,7 +71,9 @@ async def run_migrations(conn: aiosqlite.Connection) -> None:
         ddl, table, column = MIGRATIONS[version]
         async with transaction(conn):
             if not await _column_exists(conn, table, column):
-                await conn.execute(ddl)
+                for stmt in ddl.split(";"):
+                    if stmt.strip():
+                        await conn.execute(stmt)
             await conn.execute("UPDATE schema_meta SET version=?", (version,))
 
 
@@ -162,6 +176,18 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS entity_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_entity TEXT NOT NULL,
+            target_entity TEXT NOT NULL,
+            relation_type TEXT NOT NULL DEFAULT 'co_occur',
+            strength INTEGER NOT NULL DEFAULT 1,
+            evidence_trace_ids TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relations(source_entity);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_er_pair ON entity_relations(source_entity, target_entity, relation_type);
 
         CREATE TABLE IF NOT EXISTS schema_meta (
             version INTEGER NOT NULL
