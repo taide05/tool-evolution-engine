@@ -23,7 +23,9 @@ Tool Evolution Engine 在 Agent 的工具层和 LLM 之间加了一个"运维+�
 - **频繁子图技能挖掘**：networkx 构建每任务 DiGraph → Weisfeiler-Lehman 图哈希做同构去重 → 按最小支持度过滤高频工具调用 DAG 链路。比如自动发现"查法规→审合规→出报告"是高频任务的公共模式
 - **3D 信用评分 + 自动升降级**：成功率(0.4) + 延迟(0.3) + Token 消耗(0.3)，< 20 分自动下线，> 80 分自动晋升，闲置 > 7 天按 0.95^days 衰减
 - **一致哈希灰度路由 + A/B 回滚**：canary_5 → canary_15 → canary_50 → active 四段放量，每段要求 min 30 样本才决策。canary < stable - 10pp 自动回滚
-- **MCP 协议记忆桥接**：3 个 MCP Tools（search_memory / update_memory / get_user_preferences），stdio transport 供 Claude Code 等客户端直连。Trace 采集成功后自动抽取实体更新记忆
+- **MCP 协议记忆桥接**：4 个 MCP Tools（search_memory / update_memory / get_user_preferences / search_relations），stdio transport 供 Claude Code 等客户端直连。Trace 采集成功后自动抽取实体更新记忆
+- **实体共现关系建模**（增量一）：从任务树的成功轨迹中跨 trace 池化挖掘实体共现对（0 LLM，确定性两两成对），evidence_trace_ids 全量溯源 + 幂等重建，relation_type 当前仅 co_occur（语义层是规划中的扩展点）
+- **用户偏好学习闭环**（增量一）：直方图判定个人参数偏好（样本量 ≥20 + 占比 >60% 严格大于 + 偏离全局 KDE mode），executor: 前缀轨迹隔离，偏好经 MCP 缓存反向注入模板生成（source=user_preference）
 
 ## 快速开始
 
@@ -67,6 +69,7 @@ python scripts/run_mcp_server.py
 │  CounterfactualDistiller  失败 → 前置校验规则（5 类→5 种规则） │
 │  KDEAnalyzer          scipy gaussian_kde 参数分布学习       │
 │  DAGMiner             WL 图哈希 + 频繁子图挖掘              │
+│  PreferenceLearner    直方图偏好判定 + executor 轨迹隔离（增量一） │
 └────────────────────────┬─────────────────────────────────┘
                          │
                          ▼
@@ -82,7 +85,8 @@ python scripts/run_mcp_server.py
 │  Layer 4: Governance（治理层）                             │
 │  SkillGovernor        3D 信用评分 + 自动升降级 + 闲置衰减    │
 │  CanaryRouter         一致性哈希分流 + A/B 对比 + 自动回滚   │
-│  MCPBridge            3 MCP Tools + 实体自动抽取            │
+│  MCPBridge            4 MCP Tools + 实体自动抽取            │
+│  RelationStore        实体共现挖掘 + 全量证据幂等（增量一）  │
 └──────────────────────────────────────────────────────────┘
                          │
                          ▼
@@ -99,30 +103,31 @@ python scripts/run_mcp_server.py
 
 **TF-IDF 字符级 n-gram(2,4) + has_cjk 特征检测**。中文错误消息在字符级 n-gram 中与英文无共享子串，单独增加 CJK 字符检测特征位（0/1），给模型显式的语言区分信号。在不依赖语言模型的条件下，字符级 n-gram + CJK 检测是最务实的跨语言文本特征方案。
 
-**离线批处理架构，不做实时拦截**。TEE 设计为离线分析管道——轨迹采集后批量处理，不是 Agent 每次工具调用前的同步拦截器。原因：KDE 参数学习、DAG 子图枚举、信用评分更新都是统计计算，需要足够样本量才有意义（`min_samples=30`）。对实时性要求高的场景（如每次工具调用前必须校验参数），应该在 Agent 代码中直接嵌入 `CounterfactualDistiller` 产出的规则——这些规则是纯确定性逻辑，可以同步执行。全管道耗时 ~52-74s（1000 seed + 400 benchmark，2026-08-23 种子固化后两次运行实测），适合小时级/日级调度，不适合毫秒级在线决策。
+**离线批处理架构，不做实时拦截**。TEE 设计为离线分析管道——轨迹采集后批量处理，不是 Agent 每次工具调用前的同步拦截器。原因：KDE 参数学习、DAG 子图枚举、信用评分更新都是统计计算，需要足够样本量才有意义（`min_samples=30`）。对实时性要求高的场景（如每次工具调用前必须校验参数），应该在 Agent 代码中直接嵌入 `CounterfactualDistiller` 产出的规则——这些规则是纯确定性逻辑，可以同步执行。全管道耗时 ~47-54s（1000 seed + 400 benchmark + 2 个增量阶段，2026-08-24 种子固化后三次运行实测），适合小时级/日级调度，不适合毫秒级在线决策。
 
 **4 层架构 + 0 Agent + 参数上限的复杂度约束**。为什么是 4 层？采集→分析→知识→治理，每层对应数据加工的一个独立阶段，层间通过 Pydantic 模型传递，接口明确。拆成 5 层会把分析和知识割裂（比如 Classifier 的产出直接被 RuleEngine 消费，拆开只增加序列化开销），合并成 3 层会把存储和部署混在一起（知识库和灰度路由的职责完全不同）。为什么 0 Agent？失败分类（RF）、参数学习（KDE）、模式挖掘（WL 哈希）、规则蒸馏（确定性映射）——每一个都是确定性或统计方法能解决的子问题，引入 LLM 只会增加延迟和不确定性。`max_dag_nodes=10` 的根因是子图枚举的计算复杂度 O(2^n)：在 n=10 时最坏情况 ~1024 个子图/任务，在 n=15 时 ~32768——10 是保证枚举在百毫秒级完成的工程上限，同时覆盖了实际 Agent 工作流中 90%+ 的工具调用链路长度。
 
 ## 量化指标
 
-> 评测规模：1000 seed tasks + 400 benchmark tasks（50 基础 × 8 参数变体），2026-08-23 run_eval.py 实测（增量零全链路 D-light→E→C→D-full→I→E'→C'→D-full'→V 门禁验证，种子固化 _MAIN_RNG=42 两次运行逐字段一致）。指标来源：template-data/metrics-snapshot.md（2026-08-23 快照）。
+> 评测规模：1000 seed tasks + 400 benchmark tasks（50 基础 × 8 参数变体）+ 2 个增量一阶段（关系召回 + 偏好闭环），2026-08-24 run_eval.py 实测（增量一链路 D-light→E→C→D-full→I→复评→V 门禁验证，种子固化 _MAIN_RNG=42 三次运行逐字段一致，阶段 10 轨迹隔离）。指标来源：template-data/metrics-snapshot.md（2026-08-24 快照）。
 
 | 指标 | 值 | 说明 |
 |------|-----|------|
-| 分类器 Macro F1 | 0.982 | 5 分类，690 训练 / 297 测试，504 维特征（含 has_cjk） |
+| 分类器 Macro F1 | 1.000 | 5 分类，574 训练 / 247 测试，504 维特征（含 has_cjk）；**纯种子口径**（阶段 10 隔离后只吃 eval-* 种子，旧 0.982 为混简化场景残留口径） |
 | 失败率下降 | -56.2%（率口径）/ -60.5%（次数口径） | 失败率 0.1624→0.0711；228→90 failures，400 benchmark，注入全部 5 种错误类型 |
 | Token 消耗下降 | -44.6% | 225,500→124,950 tokens，KDE 默认值省略参数 + 规则前置校验 |
 | 重试次数下降 | -60.5% | 228→90 retries，规则前置校验在调用前拦截参数错误 |
 | 失败类型拆分 | 全部 5 种有对比 | param_error -64%、permission -44%、quota -63%、service_unavail -65%、timeout -66% |
 | DAG 模式召回 | 100.0%（8/8） | 8 种预埋模式全找回，额外发现 10 个高频子模式 |
 | 参数模板覆盖率 | 100%（7/7） | 7 种工具 28 个参数全生成 KDE 模板，CI 边界外比例 0.0% |
-| 规则准确率 | 0%（如实披露） | 评测管道当前不产 rules（distiller 仅接 run_demo 演示路径）——接入 run_eval 属增量一后计划 |
+| 规则准确率 | 0%（如实披露） | 评测管道当前不产 rules（distiller 仅接 run_demo 演示路径）——接入 run_eval 仍属路线图（增量一未接） |
 | 灰度上线 | 3/3 技能走通全路径 | canary_5→canary_15→canary_50→active，310 calls/skill；A/B 实测回滚 True |
 | 权重敏感性 | 40/30/30 最优（5P vs 3P vs 3P） | 三组权重对比验证，默认权重晋升最多 |
 | 简化场景 RF vs 规则 | RF 84.8% vs 规则 33.3%（F1 0.809 vs 0.252） | 含拼写错误+中英混用+同义词，RF 显著优于规则 |
 | 跨语言分类 | EN 100.0% / CN 33.3% | has_cjk 特征改善中文分类，char_wb 跨语言仍有限 |
-| 测试覆盖 | 128 tests | 生产就绪修复 10 条全部测试锁死（鉴权/迁移/并发/容器） |
-| 评测复现性 | 两次运行逐字段一致 | 种子固化（增量零新增保证） |
+| 测试覆盖 | 160 tests | 增量零 10 条生产就绪修复 + 增量一 16 commits 全部测试锁死（含鉴权/迁移/关系/偏好/端点） |
+| 评测复现性 | 三次运行逐字段一致 | 种子固化（增量零建立、增量一延续） |
+| 记忆联动（增量一） | 关系召回 30/30、幂等重建 True；偏好闭环 learned/injected/source 全 True、重试再降 78.0%（89→11） | 共现挖掘 + 直方图偏好判定，0 LLM；阈值敏感性实测 20/60 为平衡点（15/50 放过 60% 边际噪声、30/70 漏掉 25 样本强偏好） |
 
 ## 技术栈
 
@@ -146,16 +151,18 @@ Python 3.13 · SQLite + FTS5 · Pydantic v2 · FastAPI · scikit-learn（RandomF
 | POST | `/api/memory/search` | MCP 记忆搜索 |
 | POST | `/api/memory/update` | MCP 记忆更新 |
 | GET | `/api/memory/preferences` | 用户偏好查询 |
+| GET | `/api/memory/relations` | 实体共现关系查询（增量一） |
+| POST | `/api/templates/generate` | 参数模板生成 + 用户偏好注入（增量一） |
 
 ## 项目结构
 
 ```
 src/tool_evolution/
 ├── collection/       # TraceReport + TraceStore + Tracer（采集层）
-├── analysis/         # Classifier + Distiller + KDEAnalyzer + DAGMiner（分析层）
+├── analysis/         # Classifier + Distiller + KDEAnalyzer + DAGMiner + PreferenceLearner（分析层）
 ├── knowledge/        # RuleEngine + ParamTemplateManager + SkillPackManager（知识层）
-├── governance/       # SkillGovernor + CanaryRouter + MCPBridge（治理层）
-├── server/           # FastAPI app + 6 路由模块
+├── governance/       # SkillGovernor + CanaryRouter + MCPBridge + RelationStore（治理层）
+├── server/           # FastAPI app + 7 路由模块
 └── utils/            # Config（pydantic-settings）+ Database（DDL）
 
 scripts/
