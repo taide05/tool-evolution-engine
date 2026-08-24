@@ -27,7 +27,7 @@ async def transaction(conn: aiosqlite.Connection):
         raise
 
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # version: (ddl, table_to_check, column_to_check)
 MIGRATIONS: dict[int, tuple[str, str, str]] = {
@@ -45,6 +45,18 @@ MIGRATIONS: dict[int, tuple[str, str, str]] = {
         CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relations(source_entity);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_er_pair ON entity_relations(source_entity, target_entity, relation_type);""",
         "entity_relations", "source_entity"),
+    4: ("""CREATE TABLE IF NOT EXISTS repair_hints (
+            rule_id INTEGER PRIMARY KEY REFERENCES rules(id) ON DELETE CASCADE,
+            content_hash TEXT NOT NULL,
+            suggestion TEXT NOT NULL,
+            fix TEXT,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );""",
+        "repair_hints", "rule_id"),
 }
 
 
@@ -188,6 +200,18 @@ async def init_db(conn: aiosqlite.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_er_source ON entity_relations(source_entity);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_er_pair ON entity_relations(source_entity, target_entity, relation_type);
+
+        CREATE TABLE IF NOT EXISTS repair_hints (
+            rule_id INTEGER PRIMARY KEY REFERENCES rules(id) ON DELETE CASCADE,
+            content_hash TEXT NOT NULL,
+            suggestion TEXT NOT NULL,
+            fix TEXT,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
 
         CREATE TABLE IF NOT EXISTS schema_meta (
             version INTEGER NOT NULL
