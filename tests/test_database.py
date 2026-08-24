@@ -120,12 +120,14 @@ async def test_newer_db_rejected(tmp_path, monkeypatch):
     from tool_evolution.utils.config import settings
     monkeypatch.setattr(settings, "db_path", tmp_path / "engine.db")
     conn = await get_connection()
-    await conn.execute("CREATE TABLE schema_meta (version INTEGER NOT NULL)")
-    await conn.execute("INSERT INTO schema_meta (version) VALUES (99)")
-    await conn.commit()
-    with pytest.raises(RuntimeError, match="newer"):
-        await run_migrations(conn)
-    await conn.close()
+    try:
+        await conn.execute("CREATE TABLE schema_meta (version INTEGER NOT NULL)")
+        await conn.execute("INSERT INTO schema_meta (version) VALUES (99)")
+        await conn.commit()
+        with pytest.raises(RuntimeError, match="newer"):
+            await run_migrations(conn)
+    finally:
+        await conn.close()
 
 
 @pytest.mark.asyncio
