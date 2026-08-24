@@ -1,6 +1,5 @@
 """Generate 200 simulated traces covering 7 tools, 5 error types, 3 common DAG patterns."""
 import asyncio
-import uuid
 import random
 import sys
 sys.path.insert(0, "src")
