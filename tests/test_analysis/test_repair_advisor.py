@@ -170,6 +170,49 @@ class TestRepairAdvisorQuery:
         assert await advisor.get_hint(9999) is None
 
 
+class TestRepairAdvisorStringParams:
+    async def test_template_fallback_with_json_string_params(self, db_conn, monkeypatch):
+        # 跨批接口回归：run_demo/eval 的 examples 来自 trajectories 表（params 为 JSON 字符串），
+        # 非 param_error 规则（timeout_rule 等）无 param_names 时走兜底——必须解析字符串而非 .keys() 崩溃
+        monkeypatch.setattr(settings, "deepseek_api_key", None)
+        cursor = await db_conn.execute(
+            """INSERT INTO rules (tool_name, tool_version, rule_type, condition, action)
+               VALUES ('repair_fetch', '1.0.0', 'timeout_rule', '{"on_error": "timeout"}', '{}')""")
+        rule_id = cursor.lastrowid
+        await db_conn.commit()
+        advisor = RepairAdvisor(db_conn)
+        hint = await advisor.generate_for_rule(
+            _rule(row_id=rule_id, tool="repair_fetch", rule_type="timeout_rule",
+                  condition={"on_error": "timeout"}, action={}),
+            examples=[{"params": '{"timeout_ms": 1000}',
+                       "error_message": "timeout_ms must be at least 5000, got 1000"}])
+        assert hint["fix"] is None
+        assert "timeout_ms" in hint["suggestion"]
+
+    async def test_call_llm_parses_string_params_for_prompt(self, db_conn, monkeypatch):
+        monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+        calls = []
+        client = _mock_client({"suggestion": "s",
+                               "fix": {"param": "timeout_ms", "suggested_value": 6000},
+                               "reason": "r"}, calls)
+        cursor = await db_conn.execute(
+            """INSERT INTO rules (tool_name, tool_version, rule_type, condition, action)
+               VALUES ('repair_fetch', '1.0.0', 'timeout_rule', '{"on_error": "timeout"}', '{}')""")
+        rule_id = cursor.lastrowid
+        await db_conn.commit()
+        advisor = RepairAdvisor(db_conn, client=client)
+        hint = await advisor.generate_for_rule(
+            _rule(row_id=rule_id, tool="repair_fetch", rule_type="timeout_rule",
+                  condition={"on_error": "timeout"}, action={}),
+            examples=[{"params": '{"timeout_ms": 1000}',
+                       "error_message": "timeout_ms must be at least 5000, got 1000"}])
+        body = json.loads(calls[0].content)
+        payload = json.loads(body["messages"][1]["content"])
+        assert payload["param_names"] == ["timeout_ms"]
+        assert payload["example_params"] == [{"timeout_ms": 1000}]
+        assert json.loads(hint["fix"])["param"] == "timeout_ms"
+
+
 class TestRepairAdvisorBatch:
     async def test_concurrency_limited(self, db_conn, monkeypatch):
         monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")

@@ -25,6 +25,16 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _coerce_params(params) -> dict | None:
+    """params 可能是 dict（内存轨迹）或 JSON 字符串（trajectories 表行）——统一解析为 dict。"""
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return params if isinstance(params, dict) else None
+
+
 class RepairAdvisor:
     """Offline batch repair-suggestion generator backed by a DeepSeek-compatible LLM.
 
@@ -71,8 +81,10 @@ class RepairAdvisor:
         names = condition.get("param_names") or []
         if names:
             return names
-        if examples and examples[0].get("params"):
-            return list(examples[0]["params"].keys())
+        if examples:
+            params = _coerce_params(examples[0].get("params"))
+            if params:
+                return list(params.keys())
         return []
 
     def _template_hint(self, rule: dict, examples: list[dict] | None, reason: str) -> dict:
@@ -104,7 +116,7 @@ class RepairAdvisor:
         param_snapshots = []
         if examples:
             for ex in examples[:3]:
-                params = ex.get("params")
+                params = _coerce_params(ex.get("params"))
                 if params:
                     param_snapshots.append(params)
         error_type = _ERROR_TYPE_BY_RULE.get(rule["rule_type"], rule["rule_type"])
