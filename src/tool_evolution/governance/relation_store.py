@@ -59,6 +59,32 @@ class RelationStore:
             )
         await self.conn.commit()
 
+    async def build_for_task(self, root_id: str) -> int:
+        """Build co-occurrence pairs from all successful atomic traces of a task tree.
+
+        跨 trace 实体池化：收集任务内全部成功 atomic trace 的实体为一个池，
+        池内所有实体两两成对（同 trace 或跨 trace），evidence 为贡献实体的 trace id。
+        """
+        from ..collection.store import TraceStore
+        traces = await TraceStore(self.conn).get_task_tree(root_id)
+        entity_locations: list[tuple[str, str]] = []  # (trace_id, entity)
+        for t in traces:
+            if t["trace_type"] != "atomic" or not t["success"] or not t["result"]:
+                continue
+            for entity in extract_entities(json.loads(t["result"])):
+                entity_locations.append((t["trace_id"], entity))
+        pair_map: dict[tuple[str, str], list[str]] = {}
+        for i in range(len(entity_locations)):
+            for j in range(i + 1, len(entity_locations)):
+                (ti, a), (tj, b) = entity_locations[i], entity_locations[j]
+                if a == b:
+                    continue
+                pair = tuple(sorted((a, b)))
+                pair_map.setdefault(pair, []).extend([ti, tj])
+        for (a, b), trace_ids in pair_map.items():
+            await self.upsert_cooccurrence(a, b, trace_ids)
+        return len(pair_map)
+
     async def search_relations(self, entity: str) -> list[dict]:
         cursor = await self.conn.execute(
             """SELECT source_entity, target_entity, relation_type, strength, evidence_trace_ids
