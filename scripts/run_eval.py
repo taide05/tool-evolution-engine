@@ -148,7 +148,10 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
 
 async def eval_classifier(conn) -> dict:
     """Train classifier and measure per-class precision/recall/F1."""
-    cursor = await conn.execute("SELECT * FROM trajectories WHERE success=0")
+    # I#1: 显式声明扫描范围——只吃 eval-* 种子失败，不依赖 DB 历史状态
+    cursor = await conn.execute(
+        "SELECT * FROM trajectories WHERE success=0 AND trace_id LIKE 'eval-%'"
+    )
     failed_rows = [dict(r) for r in await cursor.fetchall()]
 
     if len(failed_rows) < 20:
@@ -1034,6 +1037,30 @@ async def eval_preference_loop(conn) -> dict:
     mismatches_before = sum(1 for c in calls if c != 10)
     mismatches_after = sum(1 for c in calls if c != 20)
     retry_reduction = round((mismatches_before - mismatches_after) / 100 * 100, 1)
+
+    # I#4: 阈值敏感性——20/60 vs 30/70 vs 15/50 对两个边际 agent 的学出差异
+    async def _sens_probe(agent_id, n_hi, n_lo, min_samples, share_threshold):
+        await conn.execute("DELETE FROM trajectories")
+        await conn.execute("DELETE FROM trajectories_fts")
+        await conn.commit()
+        for i in range(n_hi):
+            await ts.insert(TraceReport(trace_id=f"{agent_id}-hi-{i}", agent_id=agent_id,
+                                        tool_name="search_api", success=True, latency_ms=5,
+                                        params={"max_results": 20}))
+        for i in range(n_lo):
+            await ts.insert(TraceReport(trace_id=f"{agent_id}-lo-{i}", agent_id=agent_id,
+                                        tool_name="search_api", success=True, latency_ms=5,
+                                        params={"max_results": 10}))
+        prefs = await PreferenceLearner(conn, min_samples=min_samples,
+                                        share_threshold=share_threshold).learn()
+        return prefs.get("search_api", {}).get("max_results") == 20
+
+    sensitivity = {}
+    for m, s in [(20, 0.6), (30, 0.7), (15, 0.5)]:
+        sens_a = await _sens_probe("sens_a", 16, 9, m, s)    # 25 样本 64% 占比
+        sens_b = await _sens_probe("sens_b", 21, 14, m, s)   # 35 样本 60% 占比
+        sensitivity[f"{m}/{s}"] = {"sens_a_64pct": sens_a, "sens_b_60pct": sens_b}
+
     return {
         "learned_max_results": learned_val,
         "expected_learned_value": 20,
@@ -1043,6 +1070,7 @@ async def eval_preference_loop(conn) -> dict:
         "retry_reduction_pct": retry_reduction,
         "mismatches_before": mismatches_before,
         "mismatches_after": mismatches_after,
+        "sensitivity": sensitivity,
     }
 
 
@@ -1266,6 +1294,8 @@ async def main(output_path: Path | None = None):
           f"injected default={pref['injected_default']}, source ok={pref['injected_source_ok']}, "
           f"retry reduction={pref['retry_reduction_pct']}% "
           f"(mismatches {pref['mismatches_before']}→{pref['mismatches_after']})")
+    for combo, r in pref["sensitivity"].items():
+        print(f"  sensitivity {combo}: 64pct={r['sens_a_64pct']} 60pct={r['sens_b_60pct']}")
 
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")
