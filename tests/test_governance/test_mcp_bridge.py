@@ -1,5 +1,7 @@
 import pytest
 from tool_evolution.governance.mcp_bridge import MCPBridge, mcp, set_bridge
+from tool_evolution.collection.store import TraceStore
+from tool_evolution.collection.schemas import TraceReport, TraceType
 
 
 @pytest.fixture
@@ -57,7 +59,24 @@ class TestMCPBridge:
     async def test_mcp_tools_registered(self, bridge):
         set_bridge(bridge)
         tools = mcp._tool_manager._tools
-        tool_names = {name for name in tools if not name.startswith("_")}
-        assert "search_memory" in tool_names
-        assert "update_memory" in tool_names
-        assert "get_user_preferences" in tool_names
+        names = {t.name for t in tools.values()}
+        assert {"search_memory", "update_memory", "get_user_preferences",
+                "search_relations"} <= names
+
+
+class TestMCPBridgeRelations:
+    async def test_extract_relations_delegates(self, bridge, db_conn):
+        ts = TraceStore(db_conn)
+        await ts.insert(TraceReport(trace_id="r1", agent_id="a", tool_name="task",
+                                    trace_type=TraceType.TASK_ROOT, success=True, latency_ms=0))
+        await ts.insert(TraceReport(trace_id="x1", parent_trace_id="r1", agent_id="a",
+                                    tool_name="t", success=True, latency_ms=1,
+                                    result={"entity": "E1"}))
+        await ts.insert(TraceReport(trace_id="x2", parent_trace_id="r1", agent_id="a",
+                                    tool_name="t", success=True, latency_ms=1,
+                                    result={"title": "E2"}))
+        count = await bridge.extract_relations("r1")
+        assert count == 1
+        rows = await bridge.search_relations("E1")
+        assert len(rows) == 1
+        assert rows[0]["target_entity"] == "E2"

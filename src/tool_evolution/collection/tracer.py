@@ -69,6 +69,8 @@ class Tracer:
                     "result": report.result,
                     "tool_name": report.tool_name,
                 })
+                if report.parent_trace_id:
+                    await self._mcp_bridge.extract_relations(report.parent_trace_id)
 
     async def close(self) -> None:
         await self.flush()

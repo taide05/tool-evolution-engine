@@ -1,6 +1,7 @@
 import json
 import aiosqlite
 from mcp.server.fastmcp import FastMCP
+from .relation_store import RelationStore, extract_entities
 
 mcp = FastMCP("Tool Evolution Engine - Memory Bridge")
 
@@ -14,6 +15,7 @@ class MCPBridge:
 
     def __init__(self, conn: aiosqlite.Connection):
         self.conn = conn
+        self.relations = RelationStore(conn)
 
     # ── public API (callable from REST or programmatically) ──────────
 
@@ -35,14 +37,7 @@ class MCPBridge:
         if not result or not isinstance(result, dict):
             return
         # Extract entity names from result keys and known fields
-        entities = []
-        for field in ("entity", "entities", "law_name", "title", "subject"):
-            val = result.get(field)
-            if isinstance(val, str) and val:
-                entities.append(val)
-            elif isinstance(val, list):
-                entities.extend(str(v) for v in val if isinstance(v, str))
-        for entity in entities:
+        for entity in extract_entities(result):
             await self._set_cache(
                 f"entity:{entity}",
                 {"entity": entity, "source": trace_result.get("tool_name", "unknown"), "relations": []},
@@ -71,6 +66,13 @@ class MCPBridge:
         )
         rows = await cursor.fetchall()
         return [json.loads(row["value"]) for row in rows if row["key"].startswith("entity:")]
+
+    async def extract_relations(self, root_id: str) -> int:
+        """Build co-occurrence relations for all successful traces of a task."""
+        return await self.relations.build_for_task(root_id)
+
+    async def search_relations(self, entity: str) -> list[dict]:
+        return await self.relations.search_relations(entity)
 
 
 # ── MCP tool registration ────────────────────────────────────────────
@@ -126,3 +128,15 @@ async def get_user_preferences() -> dict:
         User preferences dict, or empty dict if none set.
     """
     return await _get_bridge().get_user_preferences()
+
+
+@mcp.tool()
+async def search_relations(entity: str) -> list[dict]:
+    """Search co-occurrence relations of an entity in the memory graph.
+
+    Args:
+        entity: Entity name to look up relations for.
+    Returns:
+        List of relation records with source_entity/target_entity/relation_type/strength.
+    """
+    return await _get_bridge().search_relations(entity)

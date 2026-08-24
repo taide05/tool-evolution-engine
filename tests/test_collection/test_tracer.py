@@ -1,7 +1,8 @@
 import pytest
 import asyncio
 from tool_evolution.collection.tracer import Tracer
-from tool_evolution.collection.schemas import ErrorType
+from tool_evolution.collection.schemas import ErrorType, TraceReport, TraceType
+from tool_evolution.collection.store import TraceStore
 
 
 @pytest.fixture
@@ -60,3 +61,24 @@ class TestTracer:
             r = tracer.start_trace("a", "t", params={})
             ids.add(r.trace_id)
         assert len(ids) == 100
+
+
+class TestTracerRelationsHook:
+    async def test_flush_builds_relations(self, db_conn):
+        from tool_evolution.governance.mcp_bridge import MCPBridge
+        bridge = MCPBridge(db_conn)
+        tracer = Tracer(db_conn, mcp_bridge=bridge)
+        ts = TraceStore(db_conn)
+        await ts.insert(TraceReport(trace_id="hook-root", agent_id="a", tool_name="task",
+                                    trace_type=TraceType.TASK_ROOT, success=True, latency_ms=0))
+        await ts.insert(TraceReport(trace_id="hook-c0", parent_trace_id="hook-root",
+                                    agent_id="a", tool_name="t", success=True,
+                                    latency_ms=1, result={"entity": "Alpha"}))
+        report = TraceReport(trace_id="hook-c1", parent_trace_id="hook-root", agent_id="a",
+                             tool_name="t", success=True, latency_ms=1,
+                             result={"title": "TopicA"})
+        await tracer.report(report)
+        await tracer.flush()
+        rows = await bridge.search_relations("Alpha")
+        assert len(rows) == 1
+        assert rows[0]["target_entity"] == "TopicA"
