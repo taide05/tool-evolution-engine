@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     canary_min_samples: int = 30
     min_pref_samples: int = 20
     pref_share_threshold: float = 0.6
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    repair_llm_model: str = "deepseek-chat"
+    repair_concurrency: int = 4
+    repair_timeout_s: float = 30.0
+    repair_retries: int = 2
     api_key: str | None = None
     log_level: str = "INFO"
 
