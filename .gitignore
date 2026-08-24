@@ -20,3 +20,5 @@ data/
 # Env
 .env
 benchmarks/runs/
+
+eval_results.json
