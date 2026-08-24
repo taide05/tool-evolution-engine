@@ -69,12 +69,20 @@ class TestRelationStoreUpsert:
         rows = await store.search_relations("A")
         assert rows[0]["strength"] == 2
 
-    async def test_evidence_capped_at_20(self, store):
+    async def test_evidence_stores_all_ids(self, store):
         ids = [f"t{i}" for i in range(25)]
         await store.upsert_cooccurrence("A", "B", ids)
         row = (await store.search_relations("A"))[0]
         assert row["strength"] == 25
-        assert len(json.loads(row["evidence_trace_ids"])) == 20
+        assert len(json.loads(row["evidence_trace_ids"])) == 25
+
+    async def test_rebuild_beyond_old_cap_is_idempotent(self, store):
+        # 设计修订（裁决②5）：证据全量存后，>20 条 trace 的重建不再重计数
+        ids = [f"t{i}" for i in range(25)]
+        await store.upsert_cooccurrence("A", "B", ids)
+        await store.upsert_cooccurrence("A", "B", ids)
+        row = (await store.search_relations("A"))[0]
+        assert row["strength"] == 25
 
     async def test_duplicate_trace_ids_deduped(self, store):
         await store.upsert_cooccurrence("A", "B", ["t1", "t1"])

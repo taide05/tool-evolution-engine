@@ -2,7 +2,6 @@ import json
 import aiosqlite
 
 ENTITY_FIELDS = ("entity", "entities", "law_name", "title", "subject")
-EVIDENCE_LIMIT = 20
 
 
 def extract_entities(result: dict) -> list[str]:
@@ -42,7 +41,8 @@ class RelationStore:
         new_ids = list(dict.fromkeys(t for t in trace_ids if t not in old_evidence))
         if not new_ids:
             return
-        evidence = (old_evidence + new_ids)[-EVIDENCE_LIMIT:]
+        # 全量存证据：去重基于完整 id 集，重建幂等精确（无截断重计数边界）
+        evidence = old_evidence + new_ids
         if existing:
             await self.conn.execute(
                 """UPDATE entity_relations
