@@ -1088,6 +1088,12 @@ _REPAIR_VALIDITY = {
                                              and 1 <= p["max_results"] <= 20),
     ("repair_fetch", "timeout_rule"): lambda p: (isinstance(p.get("timeout_ms"), int)
                                                  and p["timeout_ms"] >= 5000),
+    # I#2 修复：模糊错误信息组（无范围描述）——同模拟工具语义，仅错误信息隐去有效范围，
+    # 测量修复下界（上界组=repair_api/repair_fetch 含范围描述）
+    ("repair_vague_api", "range_rule"): lambda p: (isinstance(p.get("max_results"), int)
+                                                   and 1 <= p["max_results"] <= 20),
+    ("repair_vague_fetch", "timeout_rule"): lambda p: (isinstance(p.get("timeout_ms"), int)
+                                                       and p["timeout_ms"] >= 5000),
 }
 
 
@@ -1097,7 +1103,9 @@ async def _cleanup_repair(conn) -> None:
         "DELETE FROM trajectories_fts WHERE rowid IN "
         "(SELECT rowid FROM trajectories WHERE trace_id LIKE 'rep-%')")
     await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'rep-%'")
-    await conn.execute("DELETE FROM rules WHERE tool_name IN ('repair_api','repair_fetch')")
+    await conn.execute(
+        "DELETE FROM rules WHERE tool_name IN "
+        "('repair_api','repair_fetch','repair_vague_api','repair_vague_fetch')")
     await conn.commit()
 
 
@@ -1114,6 +1122,16 @@ async def _seed_repair_cases(conn) -> list[dict]:
         cases.append({"tool": "repair_fetch", "error_type": ErrorType.TIMEOUT,
                       "params": {"url": f"https://api.example.com/{i}", "timeout_ms": 1000},
                       "error": "timeout_ms must be at least 5000, got 1000"})
+    # I#2: 模糊错误信息组——无有效范围描述，测量修复下界
+    for i in range(15):
+        v = _MAIN_RNG.choice([30, 50, 100])
+        cases.append({"tool": "repair_vague_api", "error_type": ErrorType.PARAM_ERROR,
+                      "params": {"query": f"rep vague q{i}", "max_results": v},
+                      "error": "invalid parameter value"})
+    for i in range(15):
+        cases.append({"tool": "repair_vague_fetch", "error_type": ErrorType.TIMEOUT,
+                      "params": {"url": f"https://api.example.com/vague/{i}", "timeout_ms": 1000},
+                      "error": "request failed"})
     for i, c in enumerate(cases):
         await store.insert(TraceReport(
             trace_id=f"rep-fail-{i}", agent_id="repair_eval", tool_name=c["tool"],
@@ -1151,7 +1169,9 @@ async def eval_repair_advisor(conn) -> dict:
     param_covered = sum(1 for h in hints if h["fix"] is not None
                         and json.loads(h["fix"])["param"] in h["suggestion"])
     # 重放：每条失败 case 找触发规则 → hint → fix 应用 → 有效条件模拟
+    # I#2: 上界组（含范围描述）与下界组（模糊错误信息）分开统计
     replay_fixable = replay_success = degraded = 0
+    vague_fixable = vague_success = 0
     for c in cases:
         triggered = await engine.check(c["tool"], "1.0.0", c["params"])
         applied = False
@@ -1163,12 +1183,16 @@ async def eval_repair_advisor(conn) -> dict:
             new_params = {**c["params"], fix["param"]: fix["suggested_value"]}
             applied = True
             valid = _REPAIR_VALIDITY[(c["tool"], rule_row["rule_type"])](new_params)
-            if valid:
-                replay_success += 1
+            if c["tool"].startswith("repair_vague"):
+                vague_fixable += 1
+                if valid:
+                    vague_success += 1
+            else:
+                replay_fixable += 1
+                if valid:
+                    replay_success += 1
             break
-        if applied:
-            replay_fixable += 1
-        else:
+        if not applied:
             degraded += 1
     tok_in = sum(h["input_tokens"] for h in hints)
     tok_out = sum(h["output_tokens"] for h in hints)
@@ -1186,6 +1210,9 @@ async def eval_repair_advisor(conn) -> dict:
         "replay_fixable_cases": replay_fixable,
         "replay_success": replay_success,
         "replay_improvement_pct": round(replay_success / max(replay_fixable, 1) * 100, 1),
+        "vague_fixable_cases": vague_fixable,
+        "vague_replay_success": vague_success,
+        "vague_improvement_pct": round(vague_success / max(vague_fixable, 1) * 100, 1),
         "degraded_cases": degraded,
         "input_tokens": tok_in,
         "output_tokens": tok_out,
@@ -1424,8 +1451,11 @@ async def main(output_path: Path | None = None):
           f"hints={repair['hints_total']} fix非空={repair['fix_non_null']} "
           f"参数覆盖={repair['suggestion_param_coverage']:.0%} "
           f"reused_round2={repair['reused_round2']} "
-          f"重放 {repair['replay_success']}/{repair['replay_fixable_cases']} "
-          f"({repair['replay_improvement_pct']}%) tokens in/out={repair['input_tokens']}/{repair['output_tokens']}")
+          f"重放(含范围) {repair['replay_success']}/{repair['replay_fixable_cases']} "
+          f"({repair['replay_improvement_pct']}%) "
+          f"重放(模糊) {repair['vague_replay_success']}/{repair['vague_fixable_cases']} "
+          f"({repair['vague_improvement_pct']}%) "
+          f"tokens in/out={repair['input_tokens']}/{repair['output_tokens']}")
 
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")
@@ -1537,6 +1567,9 @@ def build_gsm_metrics(cls, kde, dag, gov, ba, elapsed_s, data_composition, rules
             "replay_fixable_cases": repair["replay_fixable_cases"],
             "replay_success": repair["replay_success"],
             "replay_improvement_pct": repair["replay_improvement_pct"],
+            "vague_fixable_cases": repair["vague_fixable_cases"],
+            "vague_replay_success": repair["vague_replay_success"],
+            "vague_improvement_pct": repair["vague_improvement_pct"],
             "degraded_cases": repair["degraded_cases"],
             "input_tokens": repair["input_tokens"],
             "output_tokens": repair["output_tokens"],
