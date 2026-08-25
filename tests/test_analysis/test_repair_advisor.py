@@ -115,6 +115,23 @@ class TestRepairAdvisorGenerate:
                                               condition={"b": 1, "a": 2}))
         assert len(calls) == 1  # 键序不同但内容同 → 同 hash
 
+    async def test_content_hash_includes_tool_name(self, db_conn, seeded_rule, monkeypatch):
+        # 裁决⑤：同 condition+action 不同工具 → 不同 hash → 各自生成（跨工具不复用建议）
+        monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+        calls = []
+        client = _mock_client({"suggestion": "s", "fix": {"param": "p", "suggested_value": 1},
+                               "reason": "r"}, calls)
+        advisor = RepairAdvisor(db_conn, client=client)
+        cursor = await db_conn.execute(
+            """INSERT INTO rules (tool_name, tool_version, rule_type, condition, action)
+               VALUES ('repair_fetch', '1.0.0', 'range_rule', ?, ?)""",
+            (_rule()["condition"], _rule()["action"]))
+        rule2 = cursor.lastrowid
+        await db_conn.commit()
+        await advisor.generate_for_rule(_rule(row_id=seeded_rule))
+        await advisor.generate_for_rule(_rule(row_id=rule2, tool="repair_fetch"))
+        assert len(calls) == 2
+
     async def test_no_api_key_template_fallback(self, db_conn, seeded_rule, monkeypatch):
         monkeypatch.setattr(settings, "deepseek_api_key", None)
         calls = []

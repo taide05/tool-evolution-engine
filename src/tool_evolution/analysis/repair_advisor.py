@@ -71,7 +71,9 @@ class RepairAdvisor:
             action = json.dumps(action, sort_keys=True, ensure_ascii=False)
         else:
             action = json.dumps(json.loads(action), sort_keys=True, ensure_ascii=False)
-        canonical = f"{condition}|{action}"
+        # 裁决⑤：tool_name 纳入 hash——timeout/retry/circuit 类规则的 condition+action
+        # 不含 error_msg_template，跨工具完全相同，不纳入会跨工具复制错误建议
+        canonical = f"{condition}|{action}|{rule['tool_name']}"
         return hashlib.md5(canonical.encode()).hexdigest()
 
     def _param_names(self, rule: dict, examples: list[dict] | None) -> list[str]:
