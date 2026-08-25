@@ -4,10 +4,12 @@ import sys
 sys.path.insert(0, "src")
 
 from tool_evolution.utils.database import get_connection, init_db
+from tool_evolution.utils.config import settings
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.analysis.classifier import FailureClassifier
 from tool_evolution.analysis.distiller import CounterfactualDistiller
 from tool_evolution.analysis.dag_miner import DAGMiner
+from tool_evolution.analysis.repair_advisor import RepairAdvisor
 from tool_evolution.knowledge.rule_engine import RuleEngine
 from tool_evolution.knowledge.param_template import ParamTemplateManager
 from tool_evolution.knowledge.skill_pack import SkillPackManager
@@ -37,14 +39,28 @@ async def main():
         top3 = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:3]
         print(f"Top 3 features: {top3}")
 
-    # 3. Distill rules
-    print("\n=== Step 3: Counterfactual distillation ===")
+    # 3. Distill rules + repair hints (增量二)
+    print("\n=== Step 3: Counterfactual distillation + repair hints ===")
     distiller = CounterfactualDistiller()
-    rules = distiller.distill_batch(failed_rows[:20])
+    groups = {}
+    for trace in failed_rows[:20]:
+        rule = distiller.distill(trace)
+        groups.setdefault(rule["_hash"], {"rule": rule, "examples": []})["examples"].append(trace)
     engine = RuleEngine(conn)
-    for rule in rules:
-        await engine.add_rule(rule)
-    print(f"Generated {len(rules)} fix rules")
+    advisor = RepairAdvisor(conn)
+    rule_rows = []
+    examples_by_hash = {}
+    for g in groups.values():
+        rule_id = await engine.add_rule(g["rule"])
+        rule_rows.append({"id": rule_id, **g["rule"]})
+        examples_by_hash[g["rule"]["_hash"]] = g["examples"]
+    stats = await advisor.generate_for_rules(rule_rows, examples_by_hash=examples_by_hash)
+    with_fix = sum(1 for h in stats["hints"] if h["fix"] is not None)
+    await advisor.aclose()
+    print(f"Generated {len(groups)} fix rules, {with_fix} repair hints with fix, "
+          f"{stats['reused']} reused, {stats['degraded']} degraded")
+    if not settings.deepseek_api_key:
+        print("  (repair hints degraded: no TOOLEVO_DEEPSEEK_API_KEY)")
 
     # 4. KDE parameter analysis
     print("\n=== Step 4: KDE parameter analysis ===")
