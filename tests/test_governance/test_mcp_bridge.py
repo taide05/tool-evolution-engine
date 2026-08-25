@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -63,12 +64,12 @@ class TestMCPBridge:
         tools = mcp._tool_manager._tools
         names = {t.name for t in tools.values()}
         assert {"search_memory", "update_memory", "get_user_preferences",
-                "search_relations"} <= names
+                "search_relations", "get_repair_hint"} <= names
 
 
 class TestMCPToolLatency:
-    async def test_four_tools_under_1s(self, bridge, db_conn):
-        # I#3: 4 个 MCP 工具桥方法级耗时实测（in-process；stdio 传输开销为协议层不计）
+    async def test_five_tools_under_1s(self, bridge, db_conn):
+        # I#3: MCP 工具桥方法级耗时实测（in-process；stdio 传输开销为协议层不计）
         ts = TraceStore(db_conn)
         await ts.insert(TraceReport(trace_id="lat-root", agent_id="a", tool_name="task",
                                     trace_type=TraceType.TASK_ROOT, success=True, latency_ms=0))
@@ -79,11 +80,21 @@ class TestMCPToolLatency:
                                     agent_id="a", tool_name="t", success=True,
                                     latency_ms=1, result={"title": "LatB"}))
         await bridge.extract_relations("lat-root")
+        cur = await db_conn.execute(
+            """INSERT INTO rules (tool_name, tool_version, rule_type, condition, action)
+               VALUES ('lat_api', '1.0.0', 'range_rule', '{}', '{}')""")
+        rule_id = cur.lastrowid
+        await db_conn.execute(
+            """INSERT INTO repair_hints (rule_id, content_hash, suggestion, fix, model)
+               VALUES (?, 'lat-hash', '检查参数', ?, 'deepseek-v4-flash')""",
+            (rule_id, json.dumps({"param": "max_results", "suggested_value": 10})))
+        await db_conn.commit()
         calls = {
             "search_memory": lambda: bridge.search_memory("LatA"),
             "update_memory": lambda: bridge.update_memory("LatA", ["LatB"]),
             "get_user_preferences": lambda: bridge.get_user_preferences(),
             "search_relations": lambda: bridge.search_relations("LatA"),
+            "get_repair_hint": lambda: bridge.get_repair_hint(rule_id),
         }
         timings = {}
         for name, call in calls.items():
@@ -91,6 +102,24 @@ class TestMCPToolLatency:
             await call()
             timings[name] = round(time.perf_counter() - t0, 4)
         assert all(t < 1.0 for t in timings.values()), f"工具耗时超限: {timings}"
+
+
+class TestMCPBridgeRepairHint:
+    async def test_get_repair_hint_parses_fix(self, bridge, db_conn):
+        cur = await db_conn.execute(
+            """INSERT INTO rules (tool_name, tool_version, rule_type, condition, action)
+               VALUES ('repair_api', '1.0.0', 'range_rule', '{}', '{}')""")
+        rule_id = cur.lastrowid
+        await db_conn.execute(
+            """INSERT INTO repair_hints (rule_id, content_hash, suggestion, fix, model)
+               VALUES (?, 'abc', '检查 max_results 取值范围', ?, 'deepseek-v4-flash')""",
+            (rule_id, json.dumps({"param": "max_results", "suggested_value": 10})))
+        await db_conn.commit()
+        hint = await bridge.get_repair_hint(rule_id)
+        assert hint["fix"] == {"param": "max_results", "suggested_value": 10}
+
+    async def test_get_repair_hint_missing(self, bridge, db_conn):
+        assert await bridge.get_repair_hint(9999) is None
 
 
 class TestMCPBridgeRelations:

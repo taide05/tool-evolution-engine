@@ -2,6 +2,7 @@ import json
 import aiosqlite
 from mcp.server.fastmcp import FastMCP
 from .relation_store import RelationStore, extract_entities
+from ..analysis.repair_advisor import RepairAdvisor
 
 mcp = FastMCP("Tool Evolution Engine - Memory Bridge")
 
@@ -74,6 +75,13 @@ class MCPBridge:
     async def search_relations(self, entity: str) -> list[dict]:
         return await self.relations.search_relations(entity)
 
+    async def get_repair_hint(self, rule_id: int) -> dict | None:
+        """查询拦截规则的 LLM 修复建议（增量二；advisor 为单源，fix 解析为 dict）。"""
+        hint = await RepairAdvisor(self.conn).get_hint(rule_id)
+        if hint is not None and hint["fix"] is not None:
+            hint["fix"] = json.loads(hint["fix"])
+        return hint
+
 
 # ── MCP tool registration ────────────────────────────────────────────
 # These tools are what AI agents see when they connect via MCP protocol.
@@ -140,3 +148,16 @@ async def search_relations(entity: str) -> list[dict]:
         List of relation records with source_entity/target_entity/relation_type/strength.
     """
     return await _get_bridge().search_relations(entity)
+
+
+@mcp.tool()
+async def get_repair_hint(rule_id: int) -> dict:
+    """Get the LLM-generated repair suggestion for an interception rule (增量二).
+
+    Args:
+        rule_id: The rules.id of the rule whose repair hint to fetch.
+    Returns:
+        Repair hint dict (suggestion/fix/model/tokens), or empty dict if none exists.
+    """
+    hint = await _get_bridge().get_repair_hint(rule_id)
+    return hint or {}
