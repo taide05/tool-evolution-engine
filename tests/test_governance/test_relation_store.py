@@ -38,7 +38,7 @@ async def store(db_conn):
 
 class TestExtractEntities:
     def test_extracts_known_fields(self):
-        result = {"entity": "A", "entities": ["B", "C"], "law_name": "D",
+        result = {"entity": "A", "entities": ["B", "C"], "doc_name": "D",
                   "title": "E", "subject": "F", "other": "ignored"}
         assert set(extract_entities(result)) == {"A", "B", "C", "D", "E", "F"}
 

@@ -15,13 +15,13 @@ async def tracer(db_conn):
 class TestTracer:
     async def test_start_trace_returns_report(self, tracer):
         report = tracer.start_trace(
-            agent_id="researcher", tool_name="search_law",
-            params={"query": "劳动合同法"}
+            agent_id="researcher", tool_name="search_api",
+            params={"query": "产品文档 使用说明"}
         )
         assert report.trace_id is not None
         assert report.agent_id == "researcher"
-        assert report.tool_name == "search_law"
-        assert report.params == {"query": "劳动合同法"}
+        assert report.tool_name == "search_api"
+        assert report.params == {"query": "产品文档 使用说明"}
 
     async def test_report_success_flushes(self, tracer):
         report = tracer.start_trace("a", "t", params={})

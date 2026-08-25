@@ -65,7 +65,7 @@ async def main():
     # 4. KDE parameter analysis
     print("\n=== Step 4: KDE parameter analysis ===")
     mgr = ParamTemplateManager(conn)
-    for tool in ["search_law", "get_law_detail"]:
+    for tool in ["search_api", "detail_api"]:
         tmpl = await mgr.generate(tool, "1.0.0")
         if tmpl:
             print(f"  {tool}: discovered {len(tmpl)} param distributions")

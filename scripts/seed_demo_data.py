@@ -9,13 +9,13 @@ from tool_evolution.collection.store import TraceStore
 from tool_evolution.collection.schemas import TraceReport, TraceType, ErrorType
 
 
-TOOLS = ["search_law", "get_law_detail", "analyze_compliance", "generate_report",
+TOOLS = ["search_api", "detail_api", "analyze_api", "report_api",
          "github_api", "arxiv_api", "official_docs"]
 ERRORS = list(ErrorType)
 DAG_PATTERNS = [
-    ["search_law", "get_law_detail", "analyze_compliance", "generate_report"],
-    ["search_law", "analyze_compliance"],
-    ["github_api", "analyze_compliance"],
+    ["search_api", "detail_api", "analyze_api", "report_api"],
+    ["search_api", "analyze_api"],
+    ["github_api", "analyze_api"],
 ]
 
 
@@ -31,7 +31,7 @@ async def main():
         root_id = f"demo-root-{i}"
         root = TraceReport(
             trace_id=root_id, agent_id="orchestrator",
-            tool_name="run_compliance_check", tool_version="1.0.0",
+            tool_name="run_analysis_task", tool_version="1.0.0",
             trace_type=TraceType.TASK_ROOT, success=True, latency_ms=random.randint(2000, 15000),
             token_count=random.randint(500, 3000),
             source="synthetic_demo",
@@ -46,7 +46,7 @@ async def main():
                 tool_name=tool, tool_version="1.0.0",
                 trace_type=TraceType.ATOMIC,
                 success=success,
-                params={"query": f"劳动合同法 第{random.randint(1,100)}条",
+                params={"query": f"产品文档 第{random.randint(1,100)}节",
                         "max_results": random.randint(5, 20)},
                 latency_ms=random.randint(50, 5000),
                 token_count=random.randint(50, 500),

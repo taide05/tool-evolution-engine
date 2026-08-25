@@ -5,7 +5,7 @@ class TestTraceReport:
     def test_minimal_success_report(self):
         r = TraceReport(
             trace_id="abc-123", agent_id="researcher",
-            tool_name="search_law", success=True, latency_ms=42
+            tool_name="search_api", success=True, latency_ms=42
         )
         assert r.trace_id == "abc-123"
         assert r.success is True
@@ -14,7 +14,7 @@ class TestTraceReport:
     def test_failure_report_with_error(self):
         r = TraceReport(
             trace_id="abc-456", agent_id="researcher",
-            tool_name="search_law", success=False, latency_ms=5000,
+            tool_name="search_api", success=False, latency_ms=5000,
             error_type=ErrorType.TIMEOUT, error_message="Request timed out after 5s"
         )
         assert r.error_type == ErrorType.TIMEOUT
@@ -23,12 +23,12 @@ class TestTraceReport:
     def test_parent_trace_chain(self):
         root = TraceReport(
             trace_id="root-1", agent_id="orchestrator",
-            tool_name="run_compliance_check", trace_type=TraceType.TASK_ROOT,
+            tool_name="run_analysis_task", trace_type=TraceType.TASK_ROOT,
             success=True, latency_ms=10000
         )
         child = TraceReport(
             trace_id="child-1", parent_trace_id="root-1", agent_id="researcher",
-            tool_name="search_law", trace_type=TraceType.ATOMIC,
+            tool_name="search_api", trace_type=TraceType.ATOMIC,
             success=True, latency_ms=200
         )
         assert root.trace_type == TraceType.TASK_ROOT

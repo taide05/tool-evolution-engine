@@ -27,18 +27,18 @@ from tool_evolution.governance.relation_store import RelationStore
 from tool_evolution.analysis.preference_learner import PreferenceLearner
 
 
-EVAL_TOOLS = ["search_law", "get_law_detail", "analyze_compliance", "generate_report",
+EVAL_TOOLS = ["search_api", "detail_api", "analyze_api", "report_api",
               "github_api", "arxiv_api", "official_docs"]
 ERRORS = list(ErrorType)
 DAG_PATTERNS = [
-    ["search_law", "get_law_detail", "analyze_compliance", "generate_report"],
-    ["search_law", "analyze_compliance"],
-    ["github_api", "analyze_compliance"],
-    ["arxiv_api", "analyze_compliance", "generate_report"],
-    ["official_docs", "get_law_detail", "analyze_compliance"],
-    ["github_api", "search_law", "analyze_compliance"],
-    ["arxiv_api", "official_docs", "analyze_compliance"],
-    ["search_law", "generate_report"],
+    ["search_api", "detail_api", "analyze_api", "report_api"],
+    ["search_api", "analyze_api"],
+    ["github_api", "analyze_api"],
+    ["arxiv_api", "analyze_api", "report_api"],
+    ["official_docs", "detail_api", "analyze_api"],
+    ["github_api", "search_api", "analyze_api"],
+    ["arxiv_api", "official_docs", "analyze_api"],
+    ["search_api", "report_api"],
 ]
 
 # Realistic error messages that do NOT contain the error type literally
@@ -110,7 +110,7 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
 
         root = TraceReport(
             trace_id=root_id, agent_id="orchestrator",
-            tool_name="run_compliance_check", tool_version="1.0.0",
+            tool_name="run_analysis_task", tool_version="1.0.0",
             trace_type=TraceType.TASK_ROOT, success=True,
             latency_ms=_MAIN_RNG.randint(2000, 15000),
             token_count=_MAIN_RNG.randint(500, 3000),
@@ -128,7 +128,7 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
                 trace_type=TraceType.ATOMIC,
                 success=success,
                 params={
-                    "query": f"劳动合同法 第{_MAIN_RNG.randint(1, 100)}条",
+                    "query": f"产品文档 第{_MAIN_RNG.randint(1, 100)}节",
                     "max_results": _MAIN_RNG.randint(5, 20),
                     "lang": _MAIN_RNG.choice(["zh", "zh", "zh", "en", "ja"]),
                     "timeout_ms": _MAIN_RNG.choice([5000, 10000, 15000]),
@@ -218,7 +218,7 @@ async def eval_kde(conn) -> dict:
     mgr = ParamTemplateManager(conn)
 
     # Check all 7 tools, not just 3
-    all_tools = ["search_law", "get_law_detail", "analyze_compliance", "generate_report",
+    all_tools = ["search_api", "detail_api", "analyze_api", "report_api",
                  "github_api", "arxiv_api", "official_docs"]
     results = {}
     below_threshold = []
@@ -298,14 +298,14 @@ async def eval_dag(conn) -> dict:
     # Check which planted patterns were discovered
     discovered_names = {d["name"] for d in discovered}
     planted_names = {
-        "search_law → get_law_detail → analyze_compliance → generate_report",
-        "search_law → analyze_compliance",
-        "github_api → analyze_compliance",
-        "arxiv_api → analyze_compliance → generate_report",
-        "official_docs → get_law_detail → analyze_compliance",
-        "github_api → search_law → analyze_compliance",
-        "arxiv_api → official_docs → analyze_compliance",
-        "search_law → generate_report",
+        "search_api → detail_api → analyze_api → report_api",
+        "search_api → analyze_api",
+        "github_api → analyze_api",
+        "arxiv_api → analyze_api → report_api",
+        "official_docs → detail_api → analyze_api",
+        "github_api → search_api → analyze_api",
+        "arxiv_api → official_docs → analyze_api",
+        "search_api → report_api",
     }
 
     matched = discovered_names & planted_names
@@ -425,12 +425,12 @@ async def _seed_kde_training_data(conn) -> None:
     import uuid as _uuid
     _batch_id = _uuid.uuid4().hex[:8]
     for i in range(200):
-        for tool in ["search_law", "get_law_detail", "analyze_compliance", "generate_report"]:
+        for tool in ["search_api", "detail_api", "analyze_api", "report_api"]:
             await store.insert(TraceReport(
                 trace_id=f"kde-{_batch_id}-{tool}-{i}",
                 agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
                 success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
-                params={"query": f"劳动法 第{rng.randint(1, 100)}条",
+                params={"query": f"技术手册 第{rng.randint(1, 100)}节",
                         "max_results": rng.randint(5, 20),
                         "lang": rng.choice(["zh", "zh", "zh", "en"]),
                         "timeout_ms": rng.choice([5000, 10000, 15000])},
@@ -632,7 +632,7 @@ async def eval_before_after(conn, tasks: list[dict] | None = None) -> dict:
 
     # Phase 0: seed KDE training data and generate templates, then clear
     await _seed_kde_training_data(conn)
-    for tool in ["search_law", "get_law_detail", "analyze_compliance", "generate_report"]:
+    for tool in ["search_api", "detail_api", "analyze_api", "report_api"]:
         await mgr.generate(tool, "1.0.0")
     await _clear_traces(conn)
 
@@ -792,7 +792,7 @@ async def eval_simplified_scenario(conn) -> dict:
     await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'simp-%'")
     await conn.commit()
 
-    tools = ["search_law", "get_law_detail", "analyze_compliance"]
+    tools = ["search_api", "detail_api", "analyze_api"]
     rng = random.Random(99)
 
     traces = []
@@ -911,7 +911,7 @@ async def eval_simplified_scenario(conn) -> dict:
     for err_type_str, msgs in variant_cases.items():
         for msg in msgs:
             variant_test.append({
-                "tool_name": "search_law", "error_message": msg,
+                "tool_name": "search_api", "error_message": msg,
                 "error_type": err_type_str, "params": json.dumps({}),
                 "created_at": "2026-08-06T12:00:00",
             })

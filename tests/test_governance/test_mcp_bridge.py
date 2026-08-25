@@ -14,12 +14,12 @@ async def bridge(db_conn):
 
 class TestMCPBridge:
     async def test_update_and_search_memory(self, bridge):
-        await bridge.update_memory("劳动合同法", ["经济补偿", "解除劳动关系"])
-        result = await bridge.search_memory("劳动合同法")
+        await bridge.update_memory("产品手册", ["配置说明", "依赖关系"])
+        result = await bridge.search_memory("产品手册")
         assert len(result) >= 1
-        item = next((e for e in result if e["entity"] == "劳动合同法"), None)
+        item = next((e for e in result if e["entity"] == "产品手册"), None)
         assert item is not None
-        assert "经济补偿" in item["relations"]
+        assert "配置说明" in item["relations"]
 
     async def test_get_user_preferences_empty(self, bridge):
         prefs = await bridge.get_user_preferences()
@@ -45,7 +45,7 @@ class TestMCPBridge:
         trace = {
             "success": True,
             "result": {"entity": "entity-a", "title": "Title B"},
-            "tool_name": "search_law",
+            "tool_name": "search_api",
         }
         await bridge.extract_and_update(trace)
         results = await bridge.search_memory("entity-a")

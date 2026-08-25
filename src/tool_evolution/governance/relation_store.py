@@ -1,7 +1,7 @@
 import json
 import aiosqlite
 
-ENTITY_FIELDS = ("entity", "entities", "law_name", "title", "subject")
+ENTITY_FIELDS = ("entity", "entities", "doc_name", "title", "subject")
 
 
 def extract_entities(result: dict) -> list[str]:
