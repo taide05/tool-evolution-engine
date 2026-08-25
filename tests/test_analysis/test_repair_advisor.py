@@ -61,6 +61,9 @@ class TestRepairAdvisorGenerate:
         assert "max_results" in hint["suggestion"]
         assert hint["input_tokens"] == 100 and hint["output_tokens"] == 30
         assert len(calls) == 1
+        # I#1 修复锁定：请求体必须显式关闭 v4 思考模式（默认开启时输出 token ~8x 且 temperature 失效）
+        sent = json.loads(calls[0].content)
+        assert sent["thinking"] == {"type": "disabled"}
 
     async def test_idempotent_copy_on_hit(self, db_conn, seeded_rule, monkeypatch):
         monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
@@ -147,7 +150,7 @@ class TestRepairAdvisorGenerate:
         calls = []
         client = _mock_client({"suggestion": "s", "fix": {"param": "p", "suggested_value": 1},
                                "reason": "r"}, calls, fail_times=3)
-        advisor = RepairAdvisor(db_conn, client=client)
+        advisor = RepairAdvisor(db_conn, client=client, retries=2)  # 显式传参，环境隔离
         hint = await advisor.generate_for_rule(_rule(row_id=seeded_rule))
         assert hint["fix"] is None
         assert len(calls) == 3  # 1 + 2 次重试全部失败 → 降级

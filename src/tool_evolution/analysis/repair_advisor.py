@@ -132,6 +132,8 @@ class RepairAdvisor:
         body = {
             "model": settings.repair_llm_model,
             "temperature": 0.1,
+            # v4 默认开启思考模式（实测输出 token ~8x、temperature 失效）——显式关闭
+            "thinking": {"type": "disabled"},
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -147,18 +149,15 @@ class RepairAdvisor:
             self._client = client
             self._owns_client = True
 
-        last_exc: Exception | None = None
         for attempt in range(1 + self._retries):
             if attempt > 0:
                 await asyncio.sleep(2 ** (attempt - 1))
             try:
                 resp = await client.post(url, json=body, headers=headers,
                                          timeout=self._timeout)
-            except httpx.HTTPError as exc:
-                last_exc = exc
+            except httpx.HTTPError:
                 continue
             if resp.status_code != 200:
-                last_exc = RuntimeError(f"llm http {resp.status_code}")
                 continue
             data = resp.json()
             usage = data.get("usage", {}) or {}
@@ -169,8 +168,6 @@ class RepairAdvisor:
             parsed["input_tokens"] = usage.get("prompt_tokens", 0)
             parsed["output_tokens"] = usage.get("completion_tokens", 0)
             return parsed
-        if last_exc is not None:
-            return None
         return None
 
     def _parse_content(self, content: str) -> dict | None:
