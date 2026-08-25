@@ -43,3 +43,17 @@ class TestEvalContractStatic:
             called = {n.func.id for n in ast.walk(tree)
                       if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
             assert "run_migrations" in called, f"{path.name} 未接线 run_migrations"
+
+    def test_eval_repair_advisor_defined(self):
+        # 注意：eval_repair_advisor 是 async def → AsyncFunctionDef 节点
+        tree = _parse(RUN_EVAL)
+        funcs = {n.name for n in ast.walk(tree)
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        assert "eval_repair_advisor" in funcs
+        assert "_seed_repair_cases" in funcs
+
+    def test_gsm_has_repair_key(self):
+        tree = _parse(RUN_EVAL)
+        found = [n.value for n in ast.walk(tree)
+                 if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        assert "repair_advisor" in found

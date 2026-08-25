@@ -12,10 +12,13 @@ from pathlib import Path
 sys.path.insert(0, "src")
 
 from tool_evolution.utils.database import get_connection, init_db, run_migrations
+from tool_evolution.utils.config import settings
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.collection.schemas import TraceReport, TraceType, ErrorType
 from tool_evolution.analysis.classifier import FailureClassifier
 from tool_evolution.analysis.dag_miner import DAGMiner
+from tool_evolution.analysis.distiller import CounterfactualDistiller
+from tool_evolution.analysis.repair_advisor import RepairAdvisor
 from tool_evolution.knowledge.rule_engine import RuleEngine
 from tool_evolution.knowledge.param_template import ParamTemplateManager, flatten_user_prefs
 from tool_evolution.knowledge.skill_pack import SkillPackManager
@@ -87,6 +90,12 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
     await conn.execute("DELETE FROM deployed_skills")
     await conn.execute("DELETE FROM discovered_skills")
     await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'eval-%'")
+    # 崩溃残留防护（审阅发现）：run 1 在 stage 11 中途崩溃会留 rep-% 残留，
+    # 污染 run 2 的 stage 4 DAG 挖掘——stage 1 即归零
+    await conn.execute(
+        "DELETE FROM trajectories_fts WHERE rowid IN "
+        "(SELECT rowid FROM trajectories WHERE trace_id LIKE 'rep-%')")
+    await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'rep-%'")
     await conn.commit()
 
     traces = []
@@ -1074,6 +1083,116 @@ async def eval_preference_loop(conn) -> dict:
     }
 
 
+_REPAIR_VALIDITY = {
+    ("repair_api", "range_rule"): lambda p: (isinstance(p.get("max_results"), int)
+                                             and 1 <= p["max_results"] <= 20),
+    ("repair_fetch", "timeout_rule"): lambda p: (isinstance(p.get("timeout_ms"), int)
+                                                 and p["timeout_ms"] >= 5000),
+}
+
+
+async def _cleanup_repair(conn) -> None:
+    """清 rep-% 轨迹与 rep 规则（级联 hints）——stage 11 开始（重入安全）与结束（留库复原）都调用。"""
+    await conn.execute(
+        "DELETE FROM trajectories_fts WHERE rowid IN "
+        "(SELECT rowid FROM trajectories WHERE trace_id LIKE 'rep-%')")
+    await conn.execute("DELETE FROM trajectories WHERE trace_id LIKE 'rep-%'")
+    await conn.execute("DELETE FROM rules WHERE tool_name IN ('repair_api','repair_fetch')")
+    await conn.commit()
+
+
+async def _seed_repair_cases(conn) -> list[dict]:
+    await _cleanup_repair(conn)
+    store = TraceStore(conn)
+    cases = []
+    for i in range(45):
+        v = _MAIN_RNG.choice([30, 50, 100])
+        cases.append({"tool": "repair_api", "error_type": ErrorType.PARAM_ERROR,
+                      "params": {"query": f"rep q{i}", "max_results": v},
+                      "error": f"parameter out of valid range: max_results must be between 1 and 20, got {v}"})
+    for i in range(45):
+        cases.append({"tool": "repair_fetch", "error_type": ErrorType.TIMEOUT,
+                      "params": {"url": f"https://api.example.com/{i}", "timeout_ms": 1000},
+                      "error": "timeout_ms must be at least 5000, got 1000"})
+    for i, c in enumerate(cases):
+        await store.insert(TraceReport(
+            trace_id=f"rep-fail-{i}", agent_id="repair_eval", tool_name=c["tool"],
+            tool_version="1.0.0", trace_type=TraceType.ATOMIC, success=False,
+            params=c["params"], error_type=c["error_type"],
+            error_message=c["error"], latency_ms=100, source="synthetic_demo"))
+    return cases
+
+
+async def eval_repair_advisor(conn) -> dict:
+    cases = await _seed_repair_cases(conn)
+    cursor = await conn.execute(
+        "SELECT * FROM trajectories WHERE trace_id LIKE 'rep-%'")
+    failed_rows = [dict(r) for r in await cursor.fetchall()]
+    distiller = CounterfactualDistiller()
+    groups = {}
+    for t in failed_rows:
+        rule = distiller.distill(t)
+        groups.setdefault(rule["_hash"], {"rule": rule, "examples": []})["examples"].append(t)
+    engine = RuleEngine(conn)
+    advisor = RepairAdvisor(conn)
+    llm_mode = "live" if settings.deepseek_api_key else "degraded_no_key"
+    hints = []
+    for g in groups.values():
+        rule_id = await engine.add_rule(g["rule"])
+        hints.append(await advisor.generate_for_rule({"id": rule_id, **g["rule"]},
+                                                     examples=g["examples"]))
+    # 幂等复验：第二轮应 0 API 调用（同 id 同 hash 直接返回）
+    round2_hints = []
+    for g, h in zip(groups.values(), hints):
+        round2_hints.append(await advisor.generate_for_rule(
+            {"id": h["rule_id"], **g["rule"]}, examples=g["examples"]))
+    reused = len(round2_hints)
+    fix_non_null = sum(1 for h in hints if h["fix"] is not None)
+    param_covered = sum(1 for h in hints if h["fix"] is not None
+                        and json.loads(h["fix"])["param"] in h["suggestion"])
+    # 重放：每条失败 case 找触发规则 → hint → fix 应用 → 有效条件模拟
+    replay_fixable = replay_success = degraded = 0
+    for c in cases:
+        triggered = await engine.check(c["tool"], "1.0.0", c["params"])
+        applied = False
+        for rule_row in triggered:
+            hint = await advisor.get_hint(rule_row["id"])
+            if hint is None or hint["fix"] is None:
+                continue
+            fix = json.loads(hint["fix"])
+            new_params = {**c["params"], fix["param"]: fix["suggested_value"]}
+            applied = True
+            valid = _REPAIR_VALIDITY[(c["tool"], rule_row["rule_type"])](new_params)
+            if valid:
+                replay_success += 1
+            break
+        if applied:
+            replay_fixable += 1
+        else:
+            degraded += 1
+    tok_in = sum(h["input_tokens"] for h in hints)
+    tok_out = sum(h["output_tokens"] for h in hints)
+    await advisor.aclose()
+    # 自清理：留库状态回到 stage 11 之前（run 2 逐字段复现保障）
+    await _cleanup_repair(conn)
+    return {
+        "planted_failures": len(cases),
+        "rules_distilled": len(groups),
+        "hints_total": len(hints),
+        "reused_round2": reused,
+        "fix_non_null": fix_non_null,
+        "structured_success_rate": round(fix_non_null / max(len(hints), 1), 4),
+        "suggestion_param_coverage": round(param_covered / max(fix_non_null, 1), 4),
+        "replay_fixable_cases": replay_fixable,
+        "replay_success": replay_success,
+        "replay_improvement_pct": round(replay_success / max(replay_fixable, 1) * 100, 1),
+        "degraded_cases": degraded,
+        "input_tokens": tok_in,
+        "output_tokens": tok_out,
+        "llm_mode": llm_mode,
+    }
+
+
 async def main(output_path: Path | None = None):
     conn = await get_connection()
     await init_db(conn)
@@ -1108,11 +1227,11 @@ async def main(output_path: Path | None = None):
     stage_times = {}  # per-stage timing (F3 fix)
     t_stage = t0
     info = await seed_eval_data(conn, n_tasks=1000)
-    print(f"\n[1/10] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
+    print(f"\n[1/11] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
           f"{len(info['error_labels'])} labeled failures")
 
     # 1. Classifier evaluation
-    print("\n[2/10] Classifier Evaluation")
+    print("\n[2/11] Classifier Evaluation")
     cls = await eval_classifier(conn)
     print(f"  Train/Test: {cls['train_size']}/{cls['test_size']}")
     print(f"  Accuracy: {cls['accuracy']:.1%}  Macro F1: {cls['macro_f1']:.3f}")
@@ -1123,7 +1242,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # F13 fix: seed KDE training data BEFORE eval_kde so all 7 tools have data
-    print("\n[3/10] KDE Parameter Analysis (with F13 timing fix)")
+    print("\n[3/11] KDE Parameter Analysis (with F13 timing fix)")
     await _seed_kde_training_data(conn)
     mgr_kde = ParamTemplateManager(conn)
     for tool in EVAL_TOOLS:
@@ -1175,7 +1294,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # 3. DAG mining
-    print("\n[4/10] DAG Pattern Mining")
+    print("\n[4/11] DAG Pattern Mining")
     dag = await eval_dag(conn)
     print(f"  Planted: {len(dag['planted_patterns'])}  Discovered: {dag['n_discovered']}  Matched: {len(dag['matched'])}")
     print(f"  Pattern Recall: {dag['pattern_recall']:.1%}")
@@ -1194,7 +1313,7 @@ async def main(output_path: Path | None = None):
         await skill_mgr.add_discovery(d)
 
     # 4. Governance (with F6 weight sensitivity)
-    print("\n[5/10] Skill Governance + Weight Sensitivity (F6)")
+    print("\n[5/11] Skill Governance + Weight Sensitivity (F6)")
     gov = await eval_governance(conn)
     print(f"  Skills scored: {gov['skills_scored']}")
     for s in gov["skills"]:
@@ -1218,7 +1337,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # 5. Before/After
-    print("\n[6/10] Before/After Optimization Comparison")
+    print("\n[6/11] Before/After Optimization Comparison")
     ba = await eval_before_after(conn, tasks=expanded_tasks)
     print(f"  Tasks: {ba['n_tasks']}")
     print(f"  BASELINE  | failures={ba['baseline']['failures']} retries={ba['baseline']['retries']} "
@@ -1246,7 +1365,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # F4: degradation curve (small=200, large=500)
-    print("\n[7/10] Degradation Curve (F4 — 200/500 seed)")
+    print("\n[7/11] Degradation Curve (F4 — 200/500 seed)")
     deg = await eval_degradation_curve(conn)
     for scale, m in deg.items():
         print(f"  {scale}: n={m['n_traces']} cls_acc={m['classifier_accuracy']:.1%} "
@@ -1257,7 +1376,7 @@ async def main(output_path: Path | None = None):
     t_stage = t_now
 
     # F8: simplified scenario — RF vs pure rules
-    print("\n[8/10] Simplified Scenario: RF vs Rules (F8)")
+    print("\n[8/11] Simplified Scenario: RF vs Rules (F8)")
     simplified = await eval_simplified_scenario(conn)
     print(f"  RF accuracy: {simplified['rf_accuracy']:.1%}  Rules accuracy: {simplified['rules_accuracy']:.1%}")
     print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
@@ -1281,7 +1400,7 @@ async def main(output_path: Path | None = None):
     t_stage = time.monotonic()
     rel = await eval_relations(conn)
     stage_times["relations"] = time.monotonic() - t_stage
-    print(f"\n[9/10] Relations: {rel['recalled_premise_pairs']}/{rel['recall_total']} premise pairs recalled, "
+    print(f"\n[9/11] Relations: {rel['recalled_premise_pairs']}/{rel['recall_total']} premise pairs recalled, "
           f"{rel['relation_pairs_built']} pairs built from {rel['relation_tasks']} tasks, "
           f"shared degree {rel['shared_entity_degree']}, idempotent rebuild: {rel['idempotent_rebuild']}")
 
@@ -1289,13 +1408,24 @@ async def main(output_path: Path | None = None):
     t_stage = time.monotonic()
     pref = await eval_preference_loop(conn)
     stage_times["preference_loop"] = time.monotonic() - t_stage
-    print(f"[10/10] Preference loop: learned={pref['learned_correct']} "
+    print(f"[10/11] Preference loop: learned={pref['learned_correct']} "
           f"(expected {pref['expected_learned_value']}, got {pref['learned_max_results']}), "
           f"injected default={pref['injected_default']}, source ok={pref['injected_source_ok']}, "
           f"retry reduction={pref['retry_reduction_pct']}% "
           f"(mismatches {pref['mismatches_before']}→{pref['mismatches_after']})")
     for combo, r in pref["sensitivity"].items():
         print(f"  sensitivity {combo}: 64pct={r['sens_a_64pct']} 60pct={r['sens_b_60pct']}")
+
+    # 11. Repair advisor (增量二)
+    t_stage = time.monotonic()
+    repair = await eval_repair_advisor(conn)
+    stage_times["repair_advisor"] = time.monotonic() - t_stage
+    print(f"[11/11] Repair advisor: mode={repair['llm_mode']} rules={repair['rules_distilled']} "
+          f"hints={repair['hints_total']} fix非空={repair['fix_non_null']} "
+          f"参数覆盖={repair['suggestion_param_coverage']:.0%} "
+          f"reused_round2={repair['reused_round2']} "
+          f"重放 {repair['replay_success']}/{repair['replay_fixable_cases']} "
+          f"({repair['replay_improvement_pct']}%) tokens in/out={repair['input_tokens']}/{repair['output_tokens']}")
 
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")
@@ -1305,7 +1435,7 @@ async def main(output_path: Path | None = None):
         print(f"  {name}: {sec:.1f}s ({pct:.0f}%)")
     print(f"Evaluation complete in {elapsed:.1f}s")
 
-    gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count)
+    gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count, repair)
     if output_path:
         output_path.write_text(json.dumps(gsm, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"\nEval results written to: {output_path}")
@@ -1358,11 +1488,12 @@ async def main(output_path: Path | None = None):
     return gsm
 
 
-def build_gsm_metrics(cls, kde, dag, gov, ba, elapsed_s, data_composition, rules_count) -> dict:
+def build_gsm_metrics(cls, kde, dag, gov, ba, elapsed_s, data_composition, rules_count,
+                      repair=None) -> dict:
     from datetime import datetime, timezone
     bl = ba["baseline"]
     op = ba["optimized"]
-    return {
+    gsm = {
         "schema_version": 1,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "seed": {"n_tasks": 1000},
@@ -1397,6 +1528,21 @@ def build_gsm_metrics(cls, kde, dag, gov, ba, elapsed_s, data_composition, rules
         "throughput": {"traces": sum(data_composition.values()), "elapsed_s": round(elapsed_s, 1)},
         "data_composition": data_composition,
     }
+    if repair is not None:
+        gsm["repair_advisor"] = {
+            "rules_distilled": repair["rules_distilled"],
+            "hints_total": repair["hints_total"],
+            "structured_success_rate": repair["structured_success_rate"],
+            "suggestion_param_coverage": repair["suggestion_param_coverage"],
+            "replay_fixable_cases": repair["replay_fixable_cases"],
+            "replay_success": repair["replay_success"],
+            "replay_improvement_pct": repair["replay_improvement_pct"],
+            "degraded_cases": repair["degraded_cases"],
+            "input_tokens": repair["input_tokens"],
+            "output_tokens": repair["output_tokens"],
+            "llm_mode": repair["llm_mode"],
+        }
+    return gsm
 
 
 async def _data_composition(conn) -> dict:
