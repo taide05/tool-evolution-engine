@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     pref_share_threshold: float = 0.6
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
-    repair_llm_model: str = "deepseek-chat"
+    repair_llm_model: str = "deepseek-v4-flash"  # deepseek-chat 已于 2026-07-24 停用（官方迁移：chat→v4-flash）
     repair_concurrency: int = 4
     repair_timeout_s: float = 30.0
     repair_retries: int = 2

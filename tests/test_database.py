@@ -144,7 +144,7 @@ async def test_repair_hints_cascade_on_rule_delete(tmp_path, monkeypatch):
         rule_id = cursor.lastrowid
         await conn.execute(
             """INSERT INTO repair_hints (rule_id, content_hash, suggestion, fix, model)
-               VALUES (?, 'abc123', '检查参数', NULL, 'deepseek-chat')""",
+               VALUES (?, 'abc123', '检查参数', NULL, 'deepseek-v4-flash')""",
             (rule_id,)
         )
         await conn.commit()

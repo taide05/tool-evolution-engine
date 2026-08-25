@@ -17,7 +17,7 @@ async def seeded(setup_db):
     await conn.execute(
         """INSERT INTO repair_hints (rule_id, content_hash, suggestion, fix, model)
            VALUES (?, 'abc123', '检查 max_results 取值范围',
-                   ?, 'deepseek-chat')""",
+                   ?, 'deepseek-v4-flash')""",
         (rule_id, json.dumps({"param": "max_results", "suggested_value": 10})))
     await conn.commit()
     return rule_id
