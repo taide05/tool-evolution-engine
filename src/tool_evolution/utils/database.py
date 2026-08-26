@@ -27,7 +27,7 @@ async def transaction(conn: aiosqlite.Connection):
         raise
 
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # version: (ddl, table_to_check, column_to_check)
 MIGRATIONS: dict[int, tuple[str, str, str]] = {
@@ -57,6 +57,35 @@ MIGRATIONS: dict[int, tuple[str, str, str]] = {
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );""",
         "repair_hints", "rule_id"),
+    5: ("""CREATE TABLE IF NOT EXISTS execution_tasks (
+            task_id TEXT PRIMARY KEY,
+            task_description TEXT NOT NULL,
+            skill_name TEXT,
+            mode TEXT NOT NULL CHECK(mode IN ('skill_plan','llm_plan')),
+            plan TEXT,
+            status TEXT NOT NULL CHECK(status IN ('pending','running','success','failed','cancelled')),
+            summary TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            finished_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS execution_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL REFERENCES execution_tasks(task_id),
+            step_index INTEGER NOT NULL,
+            tool_name TEXT NOT NULL,
+            params TEXT,
+            result TEXT,
+            status TEXT NOT NULL,
+            latency_ms INTEGER,
+            tokens INTEGER NOT NULL DEFAULT 0,
+            rules_triggered TEXT,
+            repair_hint_applied TEXT,
+            adapter TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_es_task ON execution_steps(task_id);""",
+        "execution_tasks", "task_id"),
 }
 
 
@@ -212,6 +241,36 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS execution_tasks (
+            task_id TEXT PRIMARY KEY,
+            task_description TEXT NOT NULL,
+            skill_name TEXT,
+            mode TEXT NOT NULL CHECK(mode IN ('skill_plan','llm_plan')),
+            plan TEXT,
+            status TEXT NOT NULL CHECK(status IN ('pending','running','success','failed','cancelled')),
+            summary TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            finished_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS execution_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL REFERENCES execution_tasks(task_id),
+            step_index INTEGER NOT NULL,
+            tool_name TEXT NOT NULL,
+            params TEXT,
+            result TEXT,
+            status TEXT NOT NULL,
+            latency_ms INTEGER,
+            tokens INTEGER NOT NULL DEFAULT 0,
+            rules_triggered TEXT,
+            repair_hint_applied TEXT,
+            adapter TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_es_task ON execution_steps(task_id);
 
         CREATE TABLE IF NOT EXISTS schema_meta (
             version INTEGER NOT NULL
