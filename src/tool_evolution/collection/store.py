@@ -69,19 +69,30 @@ class TraceStore:
         row = await cursor.fetchone()
         return row[0]
 
-    async def get_success_params(self, tool_name: str, tool_version: str, limit: int = 200) -> list[dict]:
-        cursor = await self.conn.execute(
-            "SELECT params FROM trajectories WHERE tool_name=? AND tool_version=? AND success=1 ORDER BY created_at DESC LIMIT ?",
-            (tool_name, tool_version, limit)
-        )
+    async def get_success_params(self, tool_name: str, tool_version: str, limit: int = 200,
+                                 exclude_agent_prefix: str | None = None) -> list[dict]:
+        query = ("SELECT params FROM trajectories WHERE tool_name=? AND tool_version=? "
+                 "AND success=1")
+        args: list = [tool_name, tool_version]
+        if exclude_agent_prefix:
+            query += " AND agent_id NOT LIKE ?"
+            args.append(f"{exclude_agent_prefix}%")
+        query += " ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
+        cursor = await self.conn.execute(query, args)
         rows = await cursor.fetchall()
         return [json.loads(row["params"]) for row in rows if row["params"]]
 
-    async def get_all_traces(self, limit: int = 100, offset: int = 0) -> list[dict]:
-        cursor = await self.conn.execute(
-            "SELECT rowid, * FROM trajectories ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset)
-        )
+    async def get_all_traces(self, limit: int = 100, offset: int = 0,
+                             exclude_agent_prefix: str | None = None) -> list[dict]:
+        query = "SELECT rowid, * FROM trajectories"
+        args: list = []
+        if exclude_agent_prefix:
+            query += " WHERE agent_id NOT LIKE ?"
+            args.append(f"{exclude_agent_prefix}%")
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        args.extend([limit, offset])
+        cursor = await self.conn.execute(query, args)
         return [dict(row) for row in await cursor.fetchall()]
 
     async def get_recent_traces(self, days: int = 30, limit: int = 10000) -> list[dict]:

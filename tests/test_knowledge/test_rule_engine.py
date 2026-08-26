@@ -57,3 +57,39 @@ class TestRuleEngine:
         triggered = await engine.check("search", "1.0.0", {})
         for r in triggered:
             assert r["status"] == "deprecated"
+
+
+class TestRuntimeRules:
+    async def test_only_runtime_rule_types_returned(self, engine):
+        for rtype in ("range_rule", "auth_rule", "retry_rule",
+                      "timeout_rule", "circuit_breaker_rule"):
+            await engine.add_rule({
+                "tool_name": "runtime_tool", "tool_version": "1.0.0",
+                "rule_type": rtype, "condition": {"x": 1},
+                "action": {"y": 2}, "status": "active",
+            })
+        rules = await engine.get_runtime_rules("runtime_tool", "1.0.0")
+        assert {r["rule_type"] for r in rules} == {
+            "retry_rule", "timeout_rule", "circuit_breaker_rule"
+        }
+
+    async def test_deprecated_excluded(self, engine):
+        await engine.add_rule({
+            "tool_name": "runtime_tool", "tool_version": "1.0.0",
+            "rule_type": "timeout_rule", "condition": {},
+            "action": {}, "status": "deprecated",
+        })
+        rules = await engine.get_runtime_rules("runtime_tool", "1.0.0")
+        assert rules == []
+
+    async def test_condition_action_parsed_to_dict(self, engine):
+        await engine.add_rule({
+            "tool_name": "runtime_tool", "tool_version": "1.0.0",
+            "rule_type": "retry_rule",
+            "condition": {"on_error": "quota_exhausted"},
+            "action": {"delay_seconds": 60, "max_retries": 3},
+            "status": "active",
+        })
+        rules = await engine.get_runtime_rules("runtime_tool", "1.0.0")
+        assert rules[0]["condition"] == {"on_error": "quota_exhausted"}
+        assert rules[0]["action"] == {"delay_seconds": 60, "max_retries": 3}

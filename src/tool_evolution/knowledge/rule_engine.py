@@ -35,6 +35,24 @@ class RuleEngine:
                 triggered.append(rule)
         return triggered
 
+    async def get_runtime_rules(self, tool_name: str, tool_version: str) -> list[dict]:
+        """执行层运行时控制规则——只取 3 类运行时规则，不复用 check（check 对无
+        param_names 规则一律触发，会把运行时规则误当前置拦截）。"""
+        cursor = await self.conn.execute(
+            """SELECT * FROM rules
+               WHERE tool_name=? AND tool_version=? AND status='active'
+                 AND rule_type IN ('timeout_rule','retry_rule','circuit_breaker_rule')
+               ORDER BY id ASC""",
+            (tool_name, tool_version)
+        )
+        rules = []
+        for row in await cursor.fetchall():
+            rule = dict(row)
+            rule["condition"] = json.loads(rule["condition"])
+            rule["action"] = json.loads(rule["action"])
+            rules.append(rule)
+        return rules
+
     async def mark_hit(self, rule_id: int) -> None:
         await self.conn.execute(
             "UPDATE rules SET hit_count = hit_count + 1 WHERE id=?", (rule_id,)

@@ -124,3 +124,39 @@ class TestTraceStore:
         assert results == []
         results2 = await store.search("rate limit")
         assert len(results2) >= 1
+
+
+class TestExcludeAgentPrefix:
+    async def test_get_all_traces_excludes_executor(self, store):
+        for i in range(3):
+            await store.insert(TraceReport(
+                trace_id=f"plain-{i}", agent_id="user_a", tool_name="t",
+                success=True, latency_ms=10))
+        await store.insert(TraceReport(
+            trace_id="exec-1", agent_id="executor:anon", tool_name="t",
+            success=True, latency_ms=10))
+        rows = await store.get_all_traces(limit=100,
+                                          exclude_agent_prefix="executor:")
+        assert all(r["agent_id"] != "executor:anon" for r in rows)
+        assert len(rows) == 3
+
+    async def test_default_none_keeps_all(self, store):
+        for i in range(2):
+            await store.insert(TraceReport(
+                trace_id=f"keep-{i}", agent_id="executor:anon", tool_name="t",
+                success=True, latency_ms=10))
+        rows = await store.get_all_traces(limit=100)
+        assert len(rows) == 2
+
+    async def test_get_success_params_excludes_executor(self, store):
+        for i in range(2):
+            await store.insert(TraceReport(
+                trace_id=f"s-{i}", agent_id="user_b", tool_name="t",
+                success=True, latency_ms=10, params={"p": i}))
+        await store.insert(TraceReport(
+            trace_id="s-exec", agent_id="executor:anon", tool_name="t",
+            success=True, latency_ms=10, params={"p": 99}))
+        params = await store.get_success_params(
+            "t", "1.0.0", exclude_agent_prefix="executor:")
+        # created_at 秒级精度下同秒插入顺序不定——只断言集合
+        assert sorted(p["p"] for p in params) == [0, 1]

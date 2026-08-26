@@ -54,7 +54,9 @@ class ParamTemplateManager:
         When user_prefs is provided, user-specified defaults take priority
         over statistically-derived defaults for matching parameter names.
         """
-        params_list = await self.store.get_success_params(tool_name, tool_version, limit=500)
+        params_list = await self.store.get_success_params(
+            tool_name, tool_version, limit=500, exclude_agent_prefix="executor:"
+        )
         if len(params_list) < settings.min_samples:
             return None
         all_keys = set()

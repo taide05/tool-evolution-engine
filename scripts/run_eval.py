@@ -239,7 +239,7 @@ async def eval_kde(conn) -> dict:
     store_kde = TraceStore(conn)
     mode_vs_median = {}
     for tool in results:
-        rows = await store_kde.get_success_params(tool, "1.0.0", limit=200)
+        rows = await store_kde.get_success_params(tool, "1.0.0", limit=200, exclude_agent_prefix="executor:")
         if not rows:
             continue
         tmpl = await mgr.get_template(tool, "1.0.0")
@@ -284,7 +284,7 @@ async def eval_kde(conn) -> dict:
 async def eval_dag(conn) -> dict:
     """Evaluate DAG pattern mining accuracy against planted patterns."""
     store = TraceStore(conn)
-    all_traces = await store.get_all_traces(limit=50000)
+    all_traces = await store.get_all_traces(limit=50000, exclude_agent_prefix="executor:")
 
     # Count planted patterns
     for t in all_traces:
@@ -1300,7 +1300,7 @@ async def main(output_path: Path | None = None):
     for tool in EVAL_TOOLS:
         tmpl = await mgr_kde.get_template(tool, "1.0.0")
         if not tmpl: continue
-        rows = await store_ci.get_success_params(tool, "1.0.0", limit=200)
+        rows = await store_ci.get_success_params(tool, "1.0.0", limit=200, exclude_agent_prefix="executor:")
         if not rows: continue
         for pname, pinfo in tmpl.items():
             if pinfo.get("param_type") not in ("int", "float"): continue
@@ -1334,7 +1334,7 @@ async def main(output_path: Path | None = None):
     # Insert discovered skills for governance scoring
     skill_mgr = SkillPackManager(conn)
     dag_miner = DAGMiner(min_support=0.03, max_nodes=10)
-    all_traces = await TraceStore(conn).get_all_traces(limit=50000)
+    all_traces = await TraceStore(conn).get_all_traces(limit=50000, exclude_agent_prefix="executor:")
     discovered = dag_miner.mine(all_traces)
     for d in discovered:
         await skill_mgr.add_discovery(d)
