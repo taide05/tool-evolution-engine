@@ -27,7 +27,7 @@ async def main():
     await init_db(conn)
     bridge = MCPBridge(conn)
     set_bridge(bridge)
-    await mcp.run_stdio()
+    await mcp.run_stdio_async()  # mcp>=1.0 新 API（run_stdio 已移除——I#7 冒烟实测）
 
 
 if __name__ == "__main__":
