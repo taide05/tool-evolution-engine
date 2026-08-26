@@ -273,6 +273,72 @@ class TestExecutePlan:
         assert len(rows) == 0, "blocked 计划不得产生任何执行轨迹"
         await adapter.close()
 
+    async def test_cross_task_circuit_opens_and_rejects(self, db_conn):
+        await RuleEngine(db_conn).add_rule({
+            "tool_name": "search_api", "tool_version": "1.0.0",
+            "rule_type": "circuit_breaker_rule",
+            "condition": {"on_error": "service_unavailable"},
+            "action": {"failure_threshold": 2, "cooldown_seconds": 60},
+            "status": "active",
+        })
+        executor, adapter = await _mk_executor(db_conn)
+        calls = {"n": 0}
+
+        async def fail_tool(tool_name, params):
+            calls["n"] += 1
+            from tool_evolution.collection.schemas import ErrorType
+            from tool_evolution.execution.adapters import ToolResult
+            return ToolResult(
+                tool_name=tool_name, params=params, success=False,
+                error_type=ErrorType.SERVICE_UNAVAILABLE,
+                error_message="503", latency_ms=0, token_count=0,
+            )
+
+        adapter.execute = fail_tool
+        single = _plan(nodes=[{"tool_name": "search_api",
+                                "params": {"query": "q"}}], edges=[])
+        # 任务 1：失败 1 次（count=1）；任务 2：失败第 2 次 → 开闸（count=2）
+        await executor.execute_plan("task-1", "desc", single)
+        await executor.execute_plan("task-1", "desc", single)
+        # 任务 3：熔断中 → 直接拒绝，不再调 adapter
+        result = await executor.execute_plan("task-1", "desc", single)
+        assert result["status"] == "failed"
+        assert "circuit" in (result["summary"] or "").lower()
+        assert calls["n"] == 2, "熔断后不得再调用 adapter"
+        await adapter.close()
+
+    async def test_circuit_resets_on_success(self, db_conn):
+        await RuleEngine(db_conn).add_rule({
+            "tool_name": "search_api", "tool_version": "1.0.0",
+            "rule_type": "circuit_breaker_rule",
+            "condition": {"on_error": "service_unavailable"},
+            "action": {"failure_threshold": 1, "cooldown_seconds": 60},
+            "status": "active",
+        })
+        executor, adapter = await _mk_executor(db_conn)
+        single = _plan(nodes=[{"tool_name": "search_api",
+                                "params": {"query": "q"}}], edges=[])
+        async def fail_once(tool_name, params):
+            from tool_evolution.collection.schemas import ErrorType
+            from tool_evolution.execution.adapters import ToolResult
+            return ToolResult(
+                tool_name=tool_name, params=params, success=False,
+                error_type=ErrorType.SERVICE_UNAVAILABLE,
+                error_message="503", latency_ms=0, token_count=0,
+            )
+        adapter.execute = fail_once
+        await executor.execute_plan("task-1", "desc", single)  # 开闸
+        # 恢复后成功 → closed 重置
+        adapter.execute = lambda t, p: MockAdapter.execute(adapter, t, p)
+        result = await executor.execute_plan("task-1", "desc", single)
+        assert result["status"] == "success"
+        cursor = await db_conn.execute(
+            "SELECT status, failure_count FROM circuit_states WHERE tool_name='search_api'")
+        row = await cursor.fetchone()
+        assert row["status"] == "closed"
+        assert row["failure_count"] == 0
+        await adapter.close()
+
     async def test_failed_task_has_root_trace(self, db_conn):
         executor, adapter = await _mk_executor(db_conn)
 

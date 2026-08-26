@@ -185,7 +185,7 @@ async def test_v4_db_migrates_to_v5_execution_tables(tmp_path, monkeypatch):
         await conn.commit()
         await run_migrations(conn)
         cursor = await conn.execute("SELECT version FROM schema_meta")
-        assert (await cursor.fetchone())[0] == 5
+        assert (await cursor.fetchone())[0] == CURRENT_SCHEMA_VERSION
         for table in ("execution_tasks", "execution_steps"):
             cursor = await conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -234,5 +234,25 @@ async def test_execution_tables_check_constraints(tmp_path, monkeypatch):
             )
         cursor = await conn.execute("SELECT COUNT(*) FROM execution_tasks")
         assert (await cursor.fetchone())[0] == 0
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_v5_db_migrates_to_v6_circuit_states(tmp_path, monkeypatch):
+    from tool_evolution.utils.config import settings
+    monkeypatch.setattr(settings, "db_path", tmp_path / "engine.db")
+    conn = await get_connection()
+    try:
+        await conn.execute("CREATE TABLE schema_meta (version INTEGER NOT NULL)")
+        await conn.execute("INSERT INTO schema_meta (version) VALUES (5)")
+        await conn.commit()
+        await run_migrations(conn)
+        cursor = await conn.execute("SELECT version FROM schema_meta")
+        assert (await cursor.fetchone())[0] == 6
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='circuit_states'"
+        )
+        assert await cursor.fetchone() is not None
     finally:
         await conn.close()

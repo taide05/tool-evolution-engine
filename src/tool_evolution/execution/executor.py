@@ -123,9 +123,13 @@ class SkillExecutor:
         ok_nodes = sum(1 for r in node_results if r["status"] == "success")
         failed_nodes = [r["tool_name"] for r in node_results if r["status"] == "failed"]
         skipped_nodes = [r["tool_name"] for r in node_results if r["status"] == "skipped"]
+        circuit_rejections = [r["circuit_rejected"] for r in node_results
+                              if r.get("circuit_rejected")]
         summary = (f"成功节点 {ok_nodes}/{len(nodes)}"
                    + (f"，失败 {failed_nodes}" if failed_nodes else "")
-                   + (f"，跳过 {skipped_nodes}" if skipped_nodes else ""))
+                   + (f"，跳过 {skipped_nodes}" if skipped_nodes else "")
+                   + (f"，circuit 熔断拒绝：{circuit_rejections}"
+                      if circuit_rejections else ""))
 
         # root 轨迹成功/失败都写（I#4 修复——失败任务树可查询，无 dangling parent）
         await trace_store.insert(TraceReport(
@@ -164,6 +168,24 @@ class SkillExecutor:
         result: ToolResult | None = None
         node_rules: list[str] = []
 
+        # 跨任务熔断（I#10 修复——真实三态状态机，状态存 circuit_states 表）
+        if circuit_threshold is not None:
+            cooldown_s = next(
+                (r["action"].get("cooldown_seconds", 30) for r in runtime_rules
+                 if r["rule_type"] == "circuit_breaker_rule"), 30)
+            allowed, reason = await self._circuit_check(tool, cooldown_s)
+            if not allowed:
+                if "circuit_breaker_rule" not in node_rules:
+                    node_rules.append("circuit_breaker_rule")
+                return {
+                    "tool_name": tool, "params": params, "result": None,
+                    "status": "failed", "latency_ms": 0, "tokens": 0,
+                    "rules_triggered": node_rules,
+                    "repair_hint_applied": None,
+                    "circuit_limit": circuit_threshold,
+                    "circuit_rejected": reason,
+                }
+
         while True:
             try:
                 if timeout_ms:
@@ -196,6 +218,8 @@ class SkillExecutor:
                     await bridge.extract_and_update({
                         "success": True, "result": result.result, "tool_name": tool,
                     })
+                if circuit_threshold is not None:
+                    await self._circuit_record_success(tool)
                 return {
                     "tool_name": tool, "params": params, "result": result.result,
                     "status": "success", "latency_ms": result.latency_ms,
@@ -224,6 +248,8 @@ class SkillExecutor:
                 continue
 
             latency_ms = int((time.monotonic() - node_start) * 1000)
+            if circuit_threshold is not None:
+                await self._circuit_record_failure(tool, circuit_threshold)
             async with self._db_lock:
                 await trace_store.insert(TraceReport(
                     trace_id=f"exec-{uuid.uuid4().hex[:16]}",
@@ -244,6 +270,62 @@ class SkillExecutor:
                     repair_applied[-1] if repair_used else None),
                 "circuit_limit": circuit_threshold,
             }
+
+    async def _circuit_check(self, tool_name: str, cooldown_s: int) -> tuple[bool, str | None]:
+        """跨任务熔断门：open 且冷却未过 → 拒绝；冷却已过 → half_open 放行试探。"""
+        cursor = await self.conn.execute(
+            "SELECT * FROM circuit_states WHERE tool_name=?", (tool_name,))
+        row = await cursor.fetchone()
+        if row is None:
+            return True, None
+        if row["status"] == "open":
+            cooldown_done = await self.conn.execute(
+                "SELECT opened_at < datetime('now', ?) AS done FROM circuit_states "
+                "WHERE tool_name=?",
+                (f"-{cooldown_s} seconds", tool_name))
+            done_row = await cooldown_done.fetchone()
+            if not (done_row and done_row["done"]):
+                return False, f"circuit open (cooldown {cooldown_s}s)"
+            await self.conn.execute(
+                "UPDATE circuit_states SET status='half_open', "
+                "updated_at=datetime('now') WHERE tool_name=?", (tool_name,))
+            await self.conn.commit()
+        return True, None
+
+    async def _circuit_record_failure(self, tool_name: str, threshold: int) -> None:
+        cursor = await self.conn.execute(
+            "SELECT * FROM circuit_states WHERE tool_name=?", (tool_name,))
+        row = await cursor.fetchone()
+        if row is None:
+            await self.conn.execute(
+                "INSERT INTO circuit_states (tool_name, status, failure_count) "
+                "VALUES (?, 'closed', 1)", (tool_name,))
+        elif row["status"] == "half_open":
+            # 试探失败 → 立即重新 open
+            await self.conn.execute(
+                "UPDATE circuit_states SET status='open', failure_count=?, "
+                "opened_at=datetime('now'), updated_at=datetime('now') "
+                "WHERE tool_name=?", (threshold, tool_name))
+        else:
+            new_count = row["failure_count"] + 1
+            if new_count >= threshold:
+                await self.conn.execute(
+                    "UPDATE circuit_states SET status='open', failure_count=?, "
+                    "opened_at=datetime('now'), updated_at=datetime('now') "
+                    "WHERE tool_name=?", (new_count, tool_name))
+            else:
+                await self.conn.execute(
+                    "UPDATE circuit_states SET failure_count=?, "
+                    "updated_at=datetime('now') WHERE tool_name=?",
+                    (new_count, tool_name))
+        await self.conn.commit()
+
+    async def _circuit_record_success(self, tool_name: str) -> None:
+        await self.conn.execute(
+            "UPDATE circuit_states SET status='closed', failure_count=0, "
+            "opened_at=NULL, updated_at=datetime('now') WHERE tool_name=?",
+            (tool_name,))
+        await self.conn.commit()
 
     async def _first_fix_hint(self, tool_name: str) -> dict | None:
         """按 tool 查 active 规则（ORDER BY id）→ 第一个 fix 非空的修复建议（D4）。"""

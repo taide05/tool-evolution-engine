@@ -27,7 +27,7 @@ async def transaction(conn: aiosqlite.Connection):
         raise
 
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # version: (ddl, table_to_check, column_to_check)
 MIGRATIONS: dict[int, tuple[str, str, str]] = {
@@ -86,6 +86,14 @@ MIGRATIONS: dict[int, tuple[str, str, str]] = {
         );
         CREATE INDEX IF NOT EXISTS idx_es_task ON execution_steps(task_id);""",
         "execution_tasks", "task_id"),
+    6: ("""CREATE TABLE IF NOT EXISTS circuit_states (
+            tool_name TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('closed','open','half_open')),
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            opened_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );""",
+        "circuit_states", "tool_name"),
 }
 
 
@@ -271,6 +279,14 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_es_task ON execution_steps(task_id);
+
+        CREATE TABLE IF NOT EXISTS circuit_states (
+            tool_name TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('closed','open','half_open')),
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            opened_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
 
         CREATE TABLE IF NOT EXISTS schema_meta (
             version INTEGER NOT NULL
