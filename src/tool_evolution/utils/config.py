@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     repair_concurrency: int = 4
     repair_timeout_s: float = 30.0
     repair_retries: int = 2
+    skill_match_threshold: float = 0.5
     api_key: str | None = None
     log_level: str = "INFO"
 
