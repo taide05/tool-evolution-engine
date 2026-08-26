@@ -92,7 +92,7 @@ class TestExecuteTask:
         await _seed_active_skill(setup_db)
         from tool_evolution.execution.adapters import MockAdapter
         monkeypatch.setattr(execute_module, "_make_adapter",
-                            lambda: MockAdapter(delay_s=0.3))
+                            lambda req: MockAdapter(delay_s=0.3))
         payload = {
             "task_id": "t5",
             "task_description": "调用 search_api 和 detail_api 完成检索",
@@ -128,5 +128,22 @@ class TestExecuteTask:
     async def test_invalid_mode_422(self, setup_db, client):
         resp = await client.post("/api/execute/task", json={
             "task_id": "t7", "task_description": "d", "mode": "bogus",
+        })
+        assert resp.status_code == 422
+
+    async def test_adapter_param_validation(self, setup_db, client):
+        # 非法 adapter 值
+        resp = await client.post("/api/execute/task", json={
+            "task_id": "t8", "task_description": "d", "adapter": "bogus",
+        })
+        assert resp.status_code == 422
+        # http 缺 base_url
+        resp = await client.post("/api/execute/task", json={
+            "task_id": "t9", "task_description": "d", "adapter": "http",
+        })
+        assert resp.status_code == 422
+        # mcp 缺 command
+        resp = await client.post("/api/execute/task", json={
+            "task_id": "t10", "task_description": "d", "adapter": "mcp",
         })
         assert resp.status_code == 422

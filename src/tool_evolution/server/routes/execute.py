@@ -6,7 +6,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ...execution.adapters import AsyncToolAdapter, MockAdapter
+from ...execution.adapters import AsyncToolAdapter, HTTPAdapter, MCPAdapter, MockAdapter
 from ...execution.audit import ExecutionAudit
 from ...execution.executor import SkillExecutor
 from ...execution.matcher import SkillMatcher
@@ -16,6 +16,7 @@ from ..deps import get_db
 router = APIRouter()
 
 _VALID_MODES = ("auto", "skill_plan", "llm_plan")
+_VALID_ADAPTERS = ("mock", "http", "mcp")
 
 
 class ExecuteTaskRequest(BaseModel):
@@ -24,11 +25,30 @@ class ExecuteTaskRequest(BaseModel):
     mode: str = "auto"
     params: dict | None = None
     agent_id: str = "anonymous"
+    adapter: str = "mock"
+    http_base_url: str | None = None
+    mcp_command: str | None = None
+    mcp_args: list[str] = []
+    mcp_cwd: str | None = None
 
 
-def _make_adapter() -> AsyncToolAdapter:
-    # 默认 MockAdapter（评测基准）；HTTP/MCP 接入为后续扩展（诚实边界）
-    return MockAdapter()
+def _make_adapter(req: ExecuteTaskRequest) -> AsyncToolAdapter:
+    """按请求参数构造适配器（I#5 修复——HTTP/MCP 接入入口）。"""
+    if req.adapter == "mock":
+        return MockAdapter()
+    if req.adapter == "http":
+        if not req.http_base_url:
+            raise HTTPException(status_code=422,
+                                detail="adapter=http requires http_base_url")
+        return HTTPAdapter(req.http_base_url)
+    if req.adapter == "mcp":
+        if not req.mcp_command:
+            raise HTTPException(status_code=422,
+                                detail="adapter=mcp requires mcp_command")
+        return MCPAdapter(command=req.mcp_command, args=req.mcp_args,
+                          cwd=req.mcp_cwd)
+    raise HTTPException(status_code=422,
+                        detail=f"invalid adapter '{req.adapter}'")
 
 
 _planner: LLMPlanner | None = None
@@ -47,6 +67,9 @@ async def execute_task(req: ExecuteTaskRequest,
                        conn: aiosqlite.Connection = Depends(get_db)):
     if req.mode not in _VALID_MODES:
         raise HTTPException(status_code=422, detail=f"invalid mode '{req.mode}'")
+    if req.adapter not in _VALID_ADAPTERS:
+        raise HTTPException(status_code=422,
+                            detail=f"invalid adapter '{req.adapter}'")
 
     matcher = SkillMatcher(conn)
     matched = await matcher.match(req.task_description) if req.mode != "llm_plan" else None
@@ -84,7 +107,7 @@ async def execute_task(req: ExecuteTaskRequest,
 
     await audit.update_status(req.task_id, "running")
 
-    adapter = _make_adapter()
+    adapter = _make_adapter(req)
     executor = SkillExecutor(conn, adapter, audit=audit)
     try:
         if matched is not None:
