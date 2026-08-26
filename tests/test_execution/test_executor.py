@@ -186,6 +186,13 @@ class TestExecutePlan:
         assert result["status"] == "success"
         applied = result.get("repair_hint_applied") or []
         assert any(a.get("rule_id") == rule_id for a in applied)
+        # 修复证据持久化：审计 steps 落库值含 rule_id+fix
+        task = await executor.audit.get_task("task-1")
+        persisted = [s["repair_hint_applied"] for s in task["steps"]
+                     if s["repair_hint_applied"] is not None]
+        assert persisted
+        assert any(p["rule_id"] == rule_id and p["fix"]["param"] == "max_results"
+                   for p in persisted)
         await adapter.close()
 
     async def test_repair_fix_injected_when_param_missing(self, db_conn):

@@ -76,7 +76,8 @@ class SkillExecutor:
                         task_id=task_id, step_index=step_index, tool_name=tool,
                         params=params, result=None, status="skipped",
                         latency_ms=0, tokens=0, rules_triggered=None,
-                        repair_hint_applied=None, adapter="mock",
+                        repair_hint_applied=None,
+                        adapter=type(self.adapter).__name__,
                     )
                     step_index += 1
                 continue
@@ -86,8 +87,7 @@ class SkillExecutor:
                 params = dict(nodes[idx].get("params", {}))
                 return await self._run_node(
                     idx, tool, params, task_id, executor_agent,
-                    trace_store, rules_triggered, repair_applied,
-                    root_trace_id)
+                    trace_store, repair_applied, root_trace_id)
 
             results = await asyncio.gather(*(_run(i) for i in layer))
             for idx, node_result in zip(layer, results):
@@ -97,6 +97,9 @@ class SkillExecutor:
                     failure_count += 1
                     if circuit_limit is not None and failure_count >= circuit_limit:
                         stopped = True
+                for rule in node_result["rules_triggered"]:
+                    if rule not in rules_triggered:
+                        rules_triggered.append(rule)
                 node_results.append(node_result)
                 await self.audit.add_step(
                     task_id=task_id, step_index=step_index,
@@ -107,7 +110,7 @@ class SkillExecutor:
                     tokens=node_result["tokens"],
                     rules_triggered=node_result["rules_triggered"] or None,
                     repair_hint_applied=node_result["repair_hint_applied"],
-                    adapter="mock",
+                    adapter=type(self.adapter).__name__,
                 )
                 step_index += 1
 
@@ -139,7 +142,7 @@ class SkillExecutor:
 
     async def _run_node(self, idx: int, tool: str, params: dict, task_id: str,
                         executor_agent: str, trace_store: TraceStore,
-                        rules_triggered: list[str], repair_applied: list[dict],
+                        repair_applied: list[dict],
                         parent_trace_id: str) -> dict:
         engine = RuleEngine(self.conn)
         runtime_rules = await engine.get_runtime_rules(tool, "1.0.0")
@@ -159,6 +162,7 @@ class SkillExecutor:
         repair_used = False
         node_start = time.monotonic()
         result: ToolResult | None = None
+        node_rules: list[str] = []
 
         while True:
             try:
@@ -174,8 +178,8 @@ class SkillExecutor:
                     error_type=ErrorType.TIMEOUT,
                     error_message=f"节点超时（>{timeout_ms}ms）",
                     latency_ms=timeout_ms, token_count=0)
-                if "timeout_rule" not in rules_triggered:
-                    rules_triggered.append("timeout_rule")
+                if "timeout_rule" not in node_rules:
+                    node_rules.append("timeout_rule")
 
             if result.success:
                 async with self._db_lock:
@@ -196,15 +200,16 @@ class SkillExecutor:
                     "tool_name": tool, "params": params, "result": result.result,
                     "status": "success", "latency_ms": result.latency_ms,
                     "tokens": result.token_count,
-                    "rules_triggered": list(rules_triggered),
-                    "repair_hint_applied": None,
+                    "rules_triggered": node_rules,
+                    "repair_hint_applied": (
+                        repair_applied[-1] if repair_used else None),
                     "circuit_limit": circuit_threshold,
                 }
 
             if retry_delay is not None and attempt < max_retries:
                 attempt += 1
-                if "retry_rule" not in rules_triggered:
-                    rules_triggered.append("retry_rule")
+                if "retry_rule" not in node_rules:
+                    node_rules.append("retry_rule")
                 if retry_delay:
                     await asyncio.sleep(retry_delay)
                 continue
@@ -234,7 +239,7 @@ class SkillExecutor:
                 "tool_name": tool, "params": params, "result": None,
                 "status": "failed", "latency_ms": latency_ms,
                 "tokens": result.token_count,
-                "rules_triggered": list(rules_triggered),
+                "rules_triggered": node_rules,
                 "repair_hint_applied": (
                     repair_applied[-1] if repair_used else None),
                 "circuit_limit": circuit_threshold,
@@ -269,7 +274,7 @@ class SkillExecutor:
                 tokens=result["total_tokens"],
             )
         result["matched_skill"] = plan.get("skill_name")
-        result["matched_score"] = 1.0
+        # matched_score 由调用方（API 层）用 matcher 的实际分数透传，不在此硬编码
         return result
 
     async def execute_llm_plan(self, task_id: str, task_description: str,
@@ -308,7 +313,8 @@ class SkillExecutor:
                 params=params, result=result.result if result.success else None,
                 status="success" if result.success else "failed",
                 latency_ms=latency_ms, tokens=result.token_count,
-                rules_triggered=None, repair_hint_applied=None, adapter="mock",
+                rules_triggered=None, repair_hint_applied=None,
+                adapter=type(self.adapter).__name__,
             )
             step_index += 1
 
