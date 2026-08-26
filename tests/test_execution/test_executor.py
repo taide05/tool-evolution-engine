@@ -339,6 +339,57 @@ class TestExecutePlan:
         assert row["failure_count"] == 0
         await adapter.close()
 
+    async def test_dataflow_ref_resolves_from_prev_node(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+        plan = _plan(nodes=[
+            {"tool_name": "search_api", "params": {"query": "q"}},
+            {"tool_name": "detail_api",
+             "params": {"query": "${0.documents}"}},
+        ])
+        result = await executor.execute_plan("task-1", "desc", plan)
+        assert result["status"] == "success"
+        detail_step = result["steps"][1]
+        assert detail_step["params"]["query"] != "${0.documents}"
+        assert detail_step["status"] == "success"
+        await adapter.close()
+
+    async def test_dataflow_ref_failed_node_blocks(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+
+        async def fail_search(tool_name, params):
+            if tool_name == "search_api":
+                from tool_evolution.collection.schemas import ErrorType
+                from tool_evolution.execution.adapters import ToolResult
+                return ToolResult(
+                    tool_name=tool_name, params=params, success=False,
+                    error_type=ErrorType.PARAM_ERROR, error_message="bad",
+                    latency_ms=0, token_count=0,
+                )
+            return await MockAdapter.execute(adapter, tool_name, params)
+
+        adapter.execute = fail_search
+        plan = _plan(nodes=[
+            {"tool_name": "search_api", "params": {"query": "q"}},
+            {"tool_name": "detail_api",
+             "params": {"query": "${0.documents}"}},
+        ])
+        result = await executor.execute_plan("task-1", "desc", plan)
+        assert result["status"] == "failed"
+        assert "引用" in (result["summary"] or "")
+        await adapter.close()
+
+    async def test_dataflow_forward_ref_blocks(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+        plan = _plan(nodes=[
+            {"tool_name": "search_api",
+             "params": {"query": "${1.documents}"}},
+            {"tool_name": "detail_api", "params": {"query": "q"}},
+        ])
+        result = await executor.execute_plan("task-1", "desc", plan)
+        assert result["status"] == "failed"
+        assert "引用" in (result["summary"] or "")
+        await adapter.close()
+
     async def test_failed_task_has_root_trace(self, db_conn):
         executor, adapter = await _mk_executor(db_conn)
 

@@ -1,6 +1,8 @@
 """执行器——DAG 拓扑调度 + 运行时规则 + 修复建议重试 + 闭环采集 + 审计。"""
 
 import asyncio
+import json
+import re
 import time
 import uuid
 
@@ -85,8 +87,17 @@ class SkillExecutor:
             async def _run(idx):
                 tool = nodes[idx]["tool_name"]
                 params = dict(nodes[idx].get("params", {}))
+                resolved, ref_err = _resolve_refs(params, node_results)
+                if ref_err is not None:
+                    return {
+                        "tool_name": tool, "params": params, "result": None,
+                        "status": "failed", "latency_ms": 0, "tokens": 0,
+                        "rules_triggered": [],
+                        "repair_hint_applied": None,
+                        "ref_error": ref_err,
+                    }
                 return await self._run_node(
-                    idx, tool, params, task_id, executor_agent,
+                    idx, tool, resolved, task_id, executor_agent,
                     trace_store, repair_applied, root_trace_id)
 
             results = await asyncio.gather(*(_run(i) for i in layer))
@@ -125,11 +136,13 @@ class SkillExecutor:
         skipped_nodes = [r["tool_name"] for r in node_results if r["status"] == "skipped"]
         circuit_rejections = [r["circuit_rejected"] for r in node_results
                               if r.get("circuit_rejected")]
+        ref_errors = [r["ref_error"] for r in node_results if r.get("ref_error")]
         summary = (f"成功节点 {ok_nodes}/{len(nodes)}"
                    + (f"，失败 {failed_nodes}" if failed_nodes else "")
                    + (f"，跳过 {skipped_nodes}" if skipped_nodes else "")
                    + (f"，circuit 熔断拒绝：{circuit_rejections}"
-                      if circuit_rejections else ""))
+                      if circuit_rejections else "")
+                   + (f"，引用解析失败：{ref_errors}" if ref_errors else ""))
 
         # root 轨迹成功/失败都写（I#4 修复——失败任务树可查询，无 dangling parent）
         await trace_store.insert(TraceReport(
@@ -420,6 +433,43 @@ class SkillExecutor:
             "total_latency_ms": total_latency_ms,
             "total_tokens": total_tokens,
         }
+
+
+_REF_RE = re.compile(r"\$\{(\d+)\.(\w+)(?:\.(\w+))?\}")
+
+
+def _resolve_refs(params: dict, node_results: list[dict]) -> tuple[dict, str | None]:
+    """执行期展开 ${idx.key[.sub]} 引用（I#11 数据流）——前序成功节点的结果取值。
+
+    引用失败（节点不存在/未成功/键缺失/前向引用）→ (原 params, 错误信息)。
+    """
+
+    def repl(match: re.Match) -> str:
+        idx = int(match.group(1))
+        key = match.group(2)
+        sub = match.group(3)
+        if idx < 0 or idx >= len(node_results):
+            raise ValueError(f"引用节点 {idx} 不存在或未执行")
+        node = node_results[idx]
+        if node["status"] != "success" or not node.get("result"):
+            raise ValueError(f"引用节点 {idx} 未成功，无法取值")
+        value = node["result"].get(key)
+        if sub is not None and isinstance(value, dict):
+            value = value.get(sub)
+        if value is None:
+            raise ValueError(f"引用键 {key} 不存在")
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+    resolved = {}
+    for pname, pvalue in params.items():
+        if not isinstance(pvalue, str):
+            resolved[pname] = pvalue
+            continue
+        try:
+            resolved[pname] = _REF_RE.sub(repl, pvalue)
+        except ValueError as exc:
+            return params, str(exc)
+    return resolved, None
 
 
 def _topo_layers(graph: nx.DiGraph) -> list[list[int]]:
