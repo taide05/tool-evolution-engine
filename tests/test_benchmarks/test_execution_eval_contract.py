@@ -39,7 +39,11 @@ class TestExecutionEvalContract:
             for tool in task["tool_chain"]:
                 assert tool in TOOL_SPECS, f"{tool} not in TOOL_SPECS"
 
-    async def test_eval_returns_all_keys(self, db_conn):
+    async def test_eval_returns_all_keys(self, db_conn, monkeypatch):
+        # 契约测试走 degraded（键完整性是测试目的；live 臂由评测脚本独立跑——
+        # .env 持久化后若不清 key，每次 pytest 真实调 LLM 50 次，80s+成本）
+        from tool_evolution.utils.config import settings
+        monkeypatch.setattr(settings, "deepseek_api_key", None)
         mod = _load_script()
         result = await mod.run_execution_eval(db_conn)
         assert _EXPECTED_KEYS <= set(result.keys())

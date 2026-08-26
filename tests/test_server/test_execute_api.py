@@ -53,7 +53,10 @@ class TestExecuteTask:
         assert row["total_calls"] == 1
         assert row["success_count"] == 1
 
-    async def test_auto_fallback_llm_plan(self, setup_db, client):
+    async def test_auto_fallback_llm_plan(self, setup_db, client, monkeypatch):
+        # 显式清 key（.env 持久化后测试环境不再是纯 degraded——门禁 V 修复）
+        from tool_evolution.utils.config import settings
+        monkeypatch.setattr(settings, "deepseek_api_key", None)
         resp = await client.post("/api/execute/task", json={
             "task_id": "t2",
             "task_description": "写一份季度报告",
