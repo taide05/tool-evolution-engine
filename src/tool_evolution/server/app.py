@@ -9,7 +9,7 @@ from ..utils.config import settings
 from ..utils.logging import setup_logging
 from .auth import require_api_key, api_key_middleware
 from .deps import get_db
-from .routes import traces, skills, rules, analytics, canary, mcp_routes, templates
+from .routes import traces, skills, rules, analytics, canary, mcp_routes, templates, execute
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"]
 app.include_router(canary.router, prefix="/api/canary", tags=["canary"])
 app.include_router(mcp_routes.router, prefix="/api", tags=["memory"])
 app.include_router(templates.router, prefix="/api", tags=["templates"])
+app.include_router(execute.router, prefix="/api", tags=["execute"])
 
 
 @app.get("/health")
