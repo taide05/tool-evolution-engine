@@ -283,6 +283,14 @@ def _print_report(result: dict) -> None:
         print(f"llm_plan: 成功 {lp['success']} / 失败 {lp['failed']} | "
               f"成功率 {lp['success_rate']} | 平均规划 {lp['avg_planning_ms']}ms | "
               f"耗时 {lp['total_latency_ms']}ms | tokens {lp['total_tokens']}")
+        # TEE 节省视角（口径统一：-31%/-29% 为"技能包相对基线的节省"）
+        sp = result["skill_plan"]
+        if lp["total_tokens"] > 0 and lp["total_latency_ms"] > 0:
+            token_save = round((1 - sp["total_tokens"] / lp["total_tokens"]) * 100, 1)
+            latency_save = round(
+                (1 - sp["total_latency_ms"] / lp["total_latency_ms"]) * 100, 1)
+            print(f"TEE 节省: token -{token_save}% | 耗时 -{latency_save}% "
+                  f"（差额为 LLM 规划开销）")
     rr = result["repair_replay"]
     print(f"修复闭环复验: {rr['rescued']}/{rr['cases']} rescued "
           f"({rr['rescue_rate']})")
