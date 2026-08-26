@@ -45,6 +45,13 @@ class TestExecuteTask:
         assert data["status"] == "success"
         assert data["matched_score"] == 1.0
         assert len(data["steps"]) == 2
+        # R2 闭环断言（I#1 修复）：真实执行后技能统计必须落值
+        cursor = await setup_db.execute(
+            "SELECT total_calls, success_count FROM deployed_skills WHERE name=?"
+            , ("search_api → detail_api",))
+        row = await cursor.fetchone()
+        assert row["total_calls"] == 1
+        assert row["success_count"] == 1
 
     async def test_auto_fallback_llm_plan(self, setup_db, client):
         resp = await client.post("/api/execute/task", json={

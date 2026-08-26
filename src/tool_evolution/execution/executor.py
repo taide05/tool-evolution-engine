@@ -274,6 +274,8 @@ class SkillExecutor:
                 tokens=result["total_tokens"],
             )
         result["matched_skill"] = plan.get("skill_name")
+        result["blocked"] = plan.get("blocked", False)
+        result["block_reason"] = plan.get("block_reason")
         # matched_score 由调用方（API 层）用 matcher 的实际分数透传，不在此硬编码
         return result
 

@@ -1,12 +1,13 @@
 """执行层 API——POST /api/execute/task（同步执行+幂等）/ GET 查询审计。"""
 
+import json
+
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ...execution.adapters import AsyncToolAdapter, MockAdapter
 from ...execution.audit import ExecutionAudit
-from ...execution.assembler import PlanAssembler
 from ...execution.executor import SkillExecutor
 from ...execution.matcher import SkillMatcher
 from ...execution.planner import LLMPlanner
@@ -44,9 +45,15 @@ async def execute_task(req: ExecuteTaskRequest,
 
     mode_used = "skill_plan" if matched is not None else "llm_plan"
     audit = ExecutionAudit(conn)
+    plan_for_audit = None
+    if matched is not None:
+        try:
+            plan_for_audit = json.loads(matched["skill"]["dag_definition"])
+        except (json.JSONDecodeError, TypeError):
+            plan_for_audit = None
     inserted = await audit.create_task(
         task_id=req.task_id, task_description=req.task_description,
-        mode=mode_used, plan=None,
+        mode=mode_used, plan=plan_for_audit,
         skill_name=matched["skill"]["name"] if matched else None,
     )
     if not inserted:
@@ -70,10 +77,10 @@ async def execute_task(req: ExecuteTaskRequest,
     executor = SkillExecutor(conn, adapter, audit=audit)
     try:
         if matched is not None:
-            assembler = PlanAssembler(conn)
-            plan = await assembler.assemble(matched["skill"], task_params=req.params)
-            result = await executor.execute_plan(
-                req.task_id, req.task_description, plan, agent_id=req.agent_id)
+            # execute_skill 组合入口：内部 assemble + execute_plan + record_call（R2 闭环）
+            result = await executor.execute_skill(
+                req.task_id, req.task_description, matched["skill"],
+                task_params=req.params, agent_id=req.agent_id)
             result["matched_skill"] = matched["skill"]["name"]
             result["matched_score"] = matched["score"]
         else:

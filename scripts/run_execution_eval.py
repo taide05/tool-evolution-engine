@@ -18,7 +18,6 @@ import aiosqlite
 from tool_evolution.analysis.dag_miner import DAGMiner
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.execution.adapters import MockAdapter
-from tool_evolution.execution.assembler import PlanAssembler
 from tool_evolution.execution.audit import ExecutionAudit
 from tool_evolution.execution.executor import SkillExecutor
 from tool_evolution.execution.matcher import SkillMatcher
@@ -44,6 +43,7 @@ async def _clear_db(conn: aiosqlite.Connection) -> None:
         "DELETE FROM discovered_skills",
         "DELETE FROM param_distributions",
         "DELETE FROM rules",
+        "DELETE FROM entity_relations",
         "DELETE FROM trajectories_fts",
         "DELETE FROM trajectories",
         "DELETE FROM memory_cache",
@@ -69,7 +69,6 @@ async def _deploy_active_skills(conn: aiosqlite.Connection) -> list[dict]:
 
 async def _run_skill_plan_pass(conn, tasks, active_skills, matcher, executor,
                                audit, threshold) -> dict:
-    assembler = PlanAssembler(conn)
     matched = 0
     success = 0
     blocked = 0
@@ -87,10 +86,11 @@ async def _run_skill_plan_pass(conn, tasks, active_skills, matcher, executor,
         await audit.create_task(
             task_id=f"{_EVAL_PREFIX}{task['task_id']}", task_description=desc,
             mode="skill_plan", plan=None, skill_name=m["skill"]["name"])
-        plan = await assembler.assemble(m["skill"], task_params=task["root_params"])
-        result = await executor.execute_plan(
-            f"{_EVAL_PREFIX}{task['task_id']}", desc, plan, agent_id="eval")
-        if plan["blocked"]:
+        # execute_skill 组合入口（含 record_call——R2 闭环，I#1 修复）
+        result = await executor.execute_skill(
+            f"{_EVAL_PREFIX}{task['task_id']}", desc, m["skill"],
+            task_params=task["root_params"], agent_id="eval")
+        if result.get("blocked"):
             blocked += 1
         elif result["status"] == "success":
             success += 1
