@@ -178,7 +178,9 @@ async def test_v4_db_migrates_to_v5_execution_tables(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "db_path", tmp_path / "engine.db")
     conn = await get_connection()
     try:
-        await init_db(conn)
+        # 手工建最小 v4 形状库（不调 init_db——否则两表已建，MIGRATIONS[5] 的 DDL
+        # 与 split 机制永远不会被执行，DDL 笔误可静默通过）
+        await conn.execute("CREATE TABLE schema_meta (version INTEGER NOT NULL)")
         await conn.execute("INSERT INTO schema_meta (version) VALUES (4)")
         await conn.commit()
         await run_migrations(conn)

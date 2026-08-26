@@ -119,6 +119,9 @@ class TestHTTPAdapter:
 
 
 class TestMCPAdapter:
+    # stdio 子进程路径的测试曾挂死（Windows 管道 + 会话关闭问题，spec 坑清单
+    # 警告场景）——契约由 in-memory 测试覆盖，stdio 真实路径留终验冒烟验证
+
     async def test_call_tool_success(self, db_conn):
         # 会话必须在同一 task 内进出（anyio CancelScope 跨 task 退出会炸）——
         # spec 坑清单纪律，fixture 跨 yield 持有会触发

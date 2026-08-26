@@ -174,7 +174,8 @@ class MCPAdapter:
     async def execute(self, tool_name: str, params: dict) -> ToolResult:
         try:
             session = await self._ensure_session()
-        except RuntimeError as exc:
+        except Exception as exc:
+            # 契约：MCP 错误一律转 ToolResult 不抛穿（stdio 启动失败/initialize 失败等）
             return ToolResult(
                 tool_name=tool_name, params=params, success=False,
                 error_type=ErrorType.SERVICE_UNAVAILABLE, error_message=str(exc),
