@@ -31,6 +31,17 @@ def _make_adapter() -> AsyncToolAdapter:
     return MockAdapter()
 
 
+_planner: LLMPlanner | None = None
+
+
+def _get_planner() -> LLMPlanner:
+    """进程级复用 planner（httpx 连接池常驻——I#6 修复）。"""
+    global _planner
+    if _planner is None:
+        _planner = LLMPlanner()
+    return _planner
+
+
 @router.post("/execute/task")
 async def execute_task(req: ExecuteTaskRequest,
                        conn: aiosqlite.Connection = Depends(get_db)):
@@ -84,11 +95,7 @@ async def execute_task(req: ExecuteTaskRequest,
             result["matched_skill"] = matched["skill"]["name"]
             result["matched_score"] = matched["score"]
         else:
-            planner = LLMPlanner()
-            try:
-                steps = await planner.plan(req.task_description)
-            finally:
-                await planner.aclose()
+            steps = await _get_planner().plan(req.task_description)
             if steps is None:
                 result = {
                     "status": "failed",

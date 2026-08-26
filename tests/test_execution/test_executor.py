@@ -273,6 +273,30 @@ class TestExecutePlan:
         assert len(rows) == 0, "blocked 计划不得产生任何执行轨迹"
         await adapter.close()
 
+    async def test_failed_task_has_root_trace(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+
+        async def always_fail(tool_name, params):
+            from tool_evolution.collection.schemas import ErrorType
+            from tool_evolution.execution.adapters import ToolResult
+            return ToolResult(
+                tool_name=tool_name, params=params, success=False,
+                error_type=ErrorType.PARAM_ERROR, error_message="bad",
+                latency_ms=0, token_count=0,
+            )
+
+        adapter.execute = always_fail
+        result = await executor.execute_plan("task-1", "desc", _plan())
+        assert result["status"] == "failed"
+        rows = await _trace_rows(db_conn)
+        roots = [r for r in rows if r["trace_type"] == "task_root"]
+        atomics = [r for r in rows if r["trace_type"] == "atomic"]
+        # I#4 修复：失败任务也有 root 轨迹，任务树可查询（无 dangling parent）
+        assert len(roots) == 1
+        assert roots[0]["success"] == 0
+        assert all(r["parent_trace_id"] == roots[0]["trace_id"] for r in atomics)
+        await adapter.close()
+
     async def test_executor_trace_prefixes(self, db_conn):
         executor, adapter = await _mk_executor(db_conn)
         await executor.execute_plan("task-1", "desc", _plan())

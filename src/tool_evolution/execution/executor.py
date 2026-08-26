@@ -127,15 +127,15 @@ class SkillExecutor:
                    + (f"，失败 {failed_nodes}" if failed_nodes else "")
                    + (f"，跳过 {skipped_nodes}" if skipped_nodes else ""))
 
-        if success:
-            await trace_store.insert(TraceReport(
-                trace_id=root_trace_id,
-                agent_id=executor_agent,
-                tool_name=plan.get("skill_name", "executor"),
-                trace_type=TraceType.TASK_ROOT, success=True,
-                params={}, latency_ms=total_latency_ms,
-                token_count=total_tokens, source="executor",
-            ))
+        # root 轨迹成功/失败都写（I#4 修复——失败任务树可查询，无 dangling parent）
+        await trace_store.insert(TraceReport(
+            trace_id=root_trace_id,
+            agent_id=executor_agent,
+            tool_name=plan.get("skill_name", "executor"),
+            trace_type=TraceType.TASK_ROOT, success=success,
+            params={}, latency_ms=total_latency_ms,
+            token_count=total_tokens, source="executor",
+        ))
 
         return self._result(status, node_results, summary, rules_triggered,
                             repair_applied, total_latency_ms, total_tokens)
