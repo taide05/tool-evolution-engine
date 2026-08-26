@@ -1,9 +1,10 @@
 """执行层 API——POST /api/execute/task（同步执行+幂等）/ GET 查询审计。"""
 
+import asyncio
 import json
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ...execution.adapters import AsyncToolAdapter, HTTPAdapter, MCPAdapter, MockAdapter
@@ -63,7 +64,7 @@ def _get_planner() -> LLMPlanner:
 
 
 @router.post("/execute/task")
-async def execute_task(req: ExecuteTaskRequest,
+async def execute_task(req: ExecuteTaskRequest, request: Request,
                        conn: aiosqlite.Connection = Depends(get_db)):
     if req.mode not in _VALID_MODES:
         raise HTTPException(status_code=422, detail=f"invalid mode '{req.mode}'")
@@ -107,6 +108,32 @@ async def execute_task(req: ExecuteTaskRequest,
 
     await audit.update_status(req.task_id, "running")
 
+    run_task = asyncio.create_task(
+        _run_branch(req, conn, matched, audit))
+    while not run_task.done():
+        if await request.is_disconnected():
+            # I#12 取消路径：客户端断开 → 取消执行 → cancelled 落库
+            run_task.cancel()
+            try:
+                await run_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            await audit.update_status(req.task_id, "cancelled",
+                                      summary="客户端断开，任务取消")
+            task = await audit.get_task(req.task_id)
+            return _task_response(task, result={"status": "cancelled"})
+        await asyncio.sleep(0.05)
+    result = run_task.result()
+
+    await audit.update_status(
+        req.task_id, result["status"], summary=result.get("summary"))
+    task = await audit.get_task(req.task_id)
+    return _task_response(task, result=result)
+
+
+async def _run_branch(req: ExecuteTaskRequest, conn: aiosqlite.Connection,
+                      matched, audit: ExecutionAudit) -> dict:
+    """匹配后的执行分支（skill_plan/llm_plan）——独立函数供取消路径包 Task。"""
     adapter = _make_adapter(req)
     executor = SkillExecutor(conn, adapter, audit=audit)
     try:
@@ -132,11 +159,7 @@ async def execute_task(req: ExecuteTaskRequest,
                     req.task_id, req.task_description, steps, agent_id=req.agent_id)
     finally:
         await adapter.close()
-
-    await audit.update_status(
-        req.task_id, result["status"], summary=result.get("summary"))
-    task = await audit.get_task(req.task_id)
-    return _task_response(task, result=result)
+    return result
 
 
 @router.get("/execute/task/{task_id}")

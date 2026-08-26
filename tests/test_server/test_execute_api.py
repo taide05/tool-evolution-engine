@@ -147,3 +147,30 @@ class TestExecuteTask:
             "task_id": "t10", "task_description": "d", "adapter": "mcp",
         })
         assert resp.status_code == 422
+
+    async def test_disconnect_cancels_task(self, setup_db, monkeypatch):
+        # I#12：客户端断开 → 执行取消 → cancelled 落库（非 HTTP 直调，fake request）
+        from types import SimpleNamespace
+        from tool_evolution.execution.adapters import MockAdapter
+
+        await _seed_active_skill(setup_db)
+        monkeypatch.setattr(execute_module, "_make_adapter",
+                            lambda req: MockAdapter(delay_s=0.4))
+        req = execute_module.ExecuteTaskRequest(
+            task_id="t-cancel",
+            task_description="调用 search_api 和 detail_api 完成检索",
+            params={"query": "q"},
+        )
+        polls = {"n": 0}
+
+        async def fake_is_disconnected():
+            polls["n"] += 1
+            return polls["n"] >= 3
+
+        fake_request = SimpleNamespace(is_disconnected=fake_is_disconnected)
+        resp = await execute_module.execute_task(req, fake_request, setup_db)
+        assert resp["status"] == "cancelled"
+        cursor = await setup_db.execute(
+            "SELECT status FROM execution_tasks WHERE task_id='t-cancel'")
+        row = await cursor.fetchone()
+        assert row["status"] == "cancelled"
