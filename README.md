@@ -27,6 +27,7 @@ Tool Evolution Engine 在 Agent 的工具层和 LLM 之间加了一个"运维+�
 - **实体共现关系建模**（增量一）：从任务树的成功轨迹中跨 trace 池化挖掘实体共现对（0 LLM，确定性两两成对），evidence_trace_ids 全量溯源 + 幂等重建，relation_type 当前仅 co_occur（语义层是规划中的扩展点）
 - **用户偏好学习闭环**（增量一）：直方图判定个人参数偏好（样本量 ≥20 + 占比 >60% 严格大于 + 偏离全局 KDE mode），executor: 前缀轨迹隔离，偏好经 MCP 缓存反向注入模板生成（source=user_preference）
 - **LLM 修复建议生成**（增量二）：蒸馏时离线批量调用 DeepSeek 为拦截规则生成结构化修复建议 `{suggestion, fix, reason}`（JSON mode + thinking disabled），content_hash 幂等（含工具名，copy-on-hit 零冗余调用）+ fail-open 降级（LLM 不可用时建议降级为模板，规则拦截不受影响）；重放有效性区间 50%~100% 由错误信息质量决定（含有效范围的上界 100%、模糊信息下界 50%）
+- **内置执行层**（增量三）：技能包的消费端——`execution/` 包（三适配器 Mock/HTTP/MCP + 确定性匹配器 + 计划装配器 + DAG 拓扑执行器 + 执行审计 + LLM 规划基线）。50 任务 benchmark 实测：技能包路径成功率 1.0、规划成本 0ms，vs LLM 规划基线成功率 0.98-1.0、平均规划 ~1s——**TEE 节省 token -31~33%、耗时 -29~36%**（差额=重复的 LLM 规划开销）。跨任务熔断三态、取消路径、数据流引用、幂等执行（task_id 即 Idempotency-Key）、executor: 轨迹口径隔离（防自我污染）
 
 ## 快速开始
 
@@ -49,6 +50,10 @@ uvicorn tool_evolution.server.app:app --reload
 
 # 6.（可选）启动 MCP 记忆桥接
 python scripts/run_mcp_server.py
+
+# 7.（增量三）执行层评测：50 任务 skill_plan vs llm_plan 对比
+#    （llm_plan live 臂需 .env 配 TOOLEVO_DEEPSEEK_API_KEY，无 key 自动 degraded 诚实标注）
+python scripts/run_execution_eval.py
 ```
 
 ## 架构概览
@@ -95,6 +100,8 @@ python scripts/run_mcp_server.py
               FastAPI 端点 + MCP stdio 接口
 ```
 
+**消费端（增量三，非管道层）**：`execution/` 包消费 deployed_skills——任务描述 → 确定性匹配（工具名命中打分）→ 装配（KDE 默认值+偏好注入+规则前置校验）→ DAG 拓扑执行（并行分支/运行时规则/修复建议重试）→ 轨迹回写管道（executor: 前缀隔离，执行即采集，闭环真实成立）。LLM 规划是它的对照组基线，不是 TEE 组件。
+
 **数据闭环**：Agent 调工具 → Tracer 采集轨迹 → Classifier 分类失败 + KDE 学参数 + DAG Miner 挖模式 → RuleEngine/ParamTemplate/SkillPack 存储知识 → Governor 评分治理 → CanaryRouter 灰度部署 → 新版本上线后继续采集轨迹 → 循环。
 
 ## 关键技术决策
@@ -109,9 +116,11 @@ python scripts/run_mcp_server.py
 
 **4 层架构 + 0 Agent + 参数上限的复杂度约束**。为什么是 4 层？采集→分析→知识→治理，每层对应数据加工的一个独立阶段，层间通过 Pydantic 模型传递，接口明确。拆成 5 层会把分析和知识割裂（比如 Classifier 的产出直接被 RuleEngine 消费，拆开只增加序列化开销），合并成 3 层会把存储和部署混在一起（知识库和灰度路由的职责完全不同）。为什么 0 Agent？失败分类（RF）、参数学习（KDE）、模式挖掘（WL 哈希）、规则蒸馏（确定性映射）——每一个都是确定性或统计方法能解决的子问题，引入 LLM 只会增加延迟和不确定性。`max_dag_nodes=10` 的根因是子图枚举的计算复杂度 O(2^n)：在 n=10 时最坏情况 ~1024 个子图/任务，在 n=15 时 ~32768——10 是保证枚举在百毫秒级完成的工程上限，同时覆盖了实际 Agent 工作流中 90%+ 的工具调用链路长度。
 
+**全系统只保留 2 个 LLM 点，且各有不可替代的理由**（增量三后）。①修复建议生成——开放式文本生成任务，统计方法生不出"把 max_results 改成 5"这种建议；fail-open（LLM 挂了规则照拦，建议降级模板）。②LLM 规划基线——对照组，存在的意义就是被对比（证明"技能包跳过规划"的收益）；fail-closed（规划失败=任务 failed 诚实记录）。其余 8 个模块全是确定性方法——成本低、可复现、可解释。执行层同步执行（无后台队列）：Mock 毫秒级、LLM 规划受 30s 超时约束，异步化的触发条件（长任务常态/多 worker/取消需求）已显式声明。执行器轨迹用 `exec-` trace_id + `executor:` agent_id 双前缀，DAG 挖掘/KDE 训练/偏好学习三入口过滤——防 mode collapse（用自己产出的参数拟合自己的 mode）。
+
 ## 量化指标
 
-> 评测规模：1000 seed tasks + 400 benchmark tasks（50 基础 × 8 参数变体）+ 3 个增量阶段（关系召回 + 偏好闭环 + 修复建议）+ 去领域化改名（指标不退确认），2026-08-25 run_eval.py 实测（增量二链 + 去领域化链验证，种子固化 _MAIN_RNG=42，stages 1-10 多轮逐字段一致，阶段 10 轨迹隔离）。指标来源：template-data/metrics-snapshot.md（2026-08-25 快照）。
+> 评测规模：1000 seed tasks + 400 benchmark tasks（50 基础 × 8 参数变体）+ 3 个增量阶段（关系召回 + 偏好闭环 + 修复建议）+ 去领域化改名（指标不退确认）+ **执行层 50 任务对比评测**（2026-08-27 实测，live + degraded 双态），run_eval.py + run_execution_eval.py 实测（种子固化 _MAIN_RNG=42，stages 1-10 多轮逐字段一致，执行层评测两轮逐字段一致，LLM 字段结构稳定）。指标来源：template-data/metrics-snapshot.md（2026-08-27 快照）。
 
 | 指标 | 值 | 说明 |
 |------|-----|------|
@@ -127,14 +136,15 @@ python scripts/run_mcp_server.py
 | 权重敏感性 | 40/30/30 最优（5P vs 3P vs 3P） | 三组权重对比验证，默认权重晋升最多 |
 | 简化场景 RF vs 规则 | RF 90.9% vs 规则 39.4%（F1 0.903 vs 0.242） | 含拼写错误+中英混用+同义词，RF 显著优于规则 |
 | 跨语言分类 | EN 100.0% / CN 33.3% | has_cjk 特征改善中文分类，char_wb 跨语言仍有限 |
-| 测试覆盖 | 190 tests | 增量零 10 条生产就绪修复 + 增量一 16 commits + 增量二 12 commits + 去领域化 3 commits 全部测试锁死（含鉴权/迁移/关系/偏好/修复建议/5 工具/端点/零残留静态锁死） |
+| 测试覆盖 | **277 tests** | 增量零 10 条生产就绪修复 + 增量一 + 增量二 + 去领域化 + 增量三（execution 包 7 模块/路由/迁移 v5-v6/熔断/数据流/取消/口径隔离）全部测试锁死 |
+| 执行层对比（增量三） | skill_plan 成功率 **1.0**（50/50）、规划成本 **0ms**；llm_plan **0.98-1.0**（两轮 live）、平均规划 **976-1072ms**；**TEE 节省 token -31~33%、耗时 -29~36%**；修复闭环 **5/5** | 50 任务 benchmark（命中率 50/50，阈值 0.7）；llm_plan 双混杂声明（参数质量+交集对比）；skill_plan 可复现、llm_plan 结构稳定（LLM 输出有方差——诚实口径） |
 | 评测复现性 | stages 1-10 多轮逐字段一致；stage 11 确定性字段一致 + LLM 字段结构稳定 | 种子固化（增量零建立、三增量延续；LLM 字段有运行间方差——诚实口径） |
 | 记忆联动（增量一） | 关系召回 30/30、幂等重建 True；偏好闭环 learned/injected/source 全 True、重试再降 78.0%（89→11） | 共现挖掘 + 直方图偏好判定，0 LLM；阈值敏感性实测 20/60 为平衡点（15/50 放过 60% 边际噪声、30/70 漏掉 25 样本强偏好） |
 | 修复建议（增量二） | 结构化成功率 1.0、参数覆盖 1.0、重放上界 100%（90/90）、下界 50%（15/30）、幂等复用 4/4 | DeepSeek v4-flash + thinking disabled（每规则输出 ~78 token）；上界=错误信息含有效范围、下界=模糊错误信息——**有效性区间由错误信息质量决定** |
 
 ## 技术栈
 
-Python 3.13 · SQLite + FTS5 · Pydantic v2 · FastAPI · scikit-learn（RandomForest + TF-IDF + KMeans） · scipy（gaussian_kde） · networkx（DiGraph + WL hashing） · FastMCP · aiosqlite · httpx（AsyncClient 连接池） · DeepSeek API（v4-flash，修复建议生成） · pytest-asyncio
+Python 3.13 · SQLite + FTS5 · Pydantic v2 · FastAPI · scikit-learn（RandomForest + TF-IDF + KMeans） · scipy（gaussian_kde） · networkx（DiGraph + WL hashing + 拓扑排序） · FastMCP · aiosqlite · httpx（AsyncClient 连接池） · DeepSeek API（v4-flash：修复建议生成 + LLM 规划基线） · pytest-asyncio
 
 ## API 端点
 
@@ -157,6 +167,8 @@ Python 3.13 · SQLite + FTS5 · Pydantic v2 · FastAPI · scikit-learn（RandomF
 | GET | `/api/memory/preferences` | 用户偏好查询 |
 | GET | `/api/memory/relations` | 实体共现关系查询（增量一） |
 | POST | `/api/templates/generate` | 参数模板生成 + 用户偏好注入（增量一） |
+| POST | `/api/execute/task` | 执行层任务执行（增量三）：三模式 auto/skill_plan/llm_plan，幂等（task_id 即 Idempotency-Key：409+轮询 hint/重复提交返回已存），adapter 三选 mock/http/mcp，客户端断开→cancelled |
+| GET | `/api/execute/task/{task_id}` | 执行审计查询（任务状态 + steps + 修复证据）（增量三） |
 
 ## 项目结构
 
@@ -166,13 +178,15 @@ src/tool_evolution/
 ├── analysis/         # Classifier + Distiller + RepairAdvisor + KDEAnalyzer + DAGMiner + PreferenceLearner（分析层）
 ├── knowledge/        # RuleEngine + ParamTemplateManager + SkillPackManager（知识层）
 ├── governance/       # SkillGovernor + CanaryRouter + MCPBridge + RelationStore（治理层）
-├── server/           # FastAPI app + 7 路由模块
-└── utils/            # Config（pydantic-settings）+ Database（DDL）
+├── execution/        # 消费端（增量三）：tool_specs + adapters + matcher + assembler + executor + audit + planner
+├── server/           # FastAPI app + 8 路由模块
+└── utils/            # Config（pydantic-settings，.env 支持）+ Database（DDL + 迁移 v6）
 
 scripts/
 ├── seed_demo_data.py      # 生成 200 条模拟轨迹（7 工具 + 8 DAG 预埋模式）
 ├── run_demo.py            # 端到端 7 步演示
 ├── run_eval.py            # 完整评估（11 阶段：分类器/KDE/DAG/治理/before-after/退化/简化/关系/偏好/修复建议）
+├── run_execution_eval.py  # 执行层评测（增量三）：50 任务 skill_plan vs llm_plan + 修复闭环 + 口径隔离
 ├── run_mcp_server.py      # MCP stdio 独立入口
 └── benchmark_tasks.json   # 50 任务基准测试集
 
