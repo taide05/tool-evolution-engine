@@ -305,6 +305,9 @@ def _print_report(result: dict) -> None:
         print(f"llm_plan: 成功 {lp['success']} / 失败 {lp['failed']} | "
               f"成功率 {lp['success_rate']} | 平均规划 {lp['avg_planning_ms']}ms | "
               f"耗时 {lp['total_latency_ms']}ms | tokens {lp['total_tokens']}")
+        if lp.get("failed_task_ids"):
+            print(f"  失败任务样例: {lp['failed_task_ids'][:5]}"
+                  f"{'...' if len(lp['failed_task_ids']) > 5 else ''}")
         # TEE 节省视角（口径统一：-31%/-29% 为"技能包相对基线的节省"）
         sp = result["skill_plan"]
         if lp["total_tokens"] > 0 and lp["total_latency_ms"] > 0:

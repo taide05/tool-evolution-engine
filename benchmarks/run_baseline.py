@@ -59,7 +59,7 @@ async def run_seeded_eval() -> dict[str, Any]:
     result = subprocess.run(
         [sys.executable, str(PROJECT_ROOT / "scripts" / "run_eval.py"),
          "--output", str(output_path)],
-        capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=600,
+        capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=1800,
     )
     elapsed = time.monotonic() - t0
     print(f"  Eval finished in {elapsed:.1f}s (exit {result.returncode})")

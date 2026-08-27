@@ -54,10 +54,10 @@ class TestCompositionPassthrough:
         assert report["schema_version"] == 1
 
 
-def test_run_baseline_timeout_600():
+def test_run_baseline_timeout_1800():
     import ast
     tree = ast.parse(Path("benchmarks/run_baseline.py").read_text(encoding="utf-8"))
     timeouts = [n.value.value for n in ast.walk(tree)
                 if isinstance(n, ast.keyword) and n.arg == "timeout"
                 and isinstance(n.value, ast.Constant)]
-    assert timeouts and max(timeouts) >= 600
+    assert timeouts and max(timeouts) >= 1800

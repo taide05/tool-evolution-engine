@@ -94,8 +94,11 @@ class TestDegradationSizes:
         assert set(result.keys()) == {"small", "medium", "large"}
         for scale in result.values():
             assert scale["n_traces"] > 0
-            for key in ("classifier_accuracy", "classifier_macro_f1",
-                        "dag_pattern_recall", "dag_discovered"):
+            # > 0 防 error 分支 0 兜底（eval_classifier 失败样本 <20 时返回 error，
+            # get("accuracy", 0) 会兜底 0——测试不能把兜底当通过）
+            assert scale["classifier_accuracy"] > 0
+            for key in ("classifier_macro_f1", "dag_pattern_recall",
+                        "dag_discovered"):
                 assert key in scale
 
 
