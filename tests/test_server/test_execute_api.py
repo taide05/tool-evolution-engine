@@ -177,3 +177,26 @@ class TestExecuteTask:
             "SELECT status FROM execution_tasks WHERE task_id='t-cancel'")
         row = await cursor.fetchone()
         assert row["status"] == "cancelled"
+
+
+class TestExecuteBranchException:
+    async def test_branch_exception_marks_failed_not_stuck(self, setup_db, client, monkeypatch):
+        await _seed_active_skill(setup_db)
+
+        async def boom(req, conn, matched, audit, adapter):
+            raise RuntimeError("simulated branch failure")
+
+        monkeypatch.setattr(execute_module, "_run_branch", boom)
+        resp = await client.post("/api/execute/task", json={
+            "task_id": "t1",
+            "task_description": "调用 search_api 和 detail_api 完成检索",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "failed"
+        # 同 task_id 重放：failed 状态返回既有任务而非 409 永久卡死
+        resp2 = await client.post("/api/execute/task", json={
+            "task_id": "t1",
+            "task_description": "调用 search_api 和 detail_api 完成检索",
+        })
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "failed"

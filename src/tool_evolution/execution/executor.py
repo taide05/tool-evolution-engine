@@ -51,6 +51,10 @@ class SkillExecutor:
 
         nodes = plan.get("nodes", [])
         edges = plan.get("edges", [])
+        if not nodes:
+            return self._result(
+                "failed", [], "计划无节点，拒绝执行", [], [],
+                time.monotonic() - start)
         graph = nx.DiGraph()
         graph.add_nodes_from(range(len(nodes)))
         graph.add_edges_from((e["from"], e["to"]) for e in edges)
@@ -98,7 +102,7 @@ class SkillExecutor:
                     }
                 return await self._run_node(
                     idx, tool, resolved, task_id, executor_agent,
-                    trace_store, repair_applied, root_trace_id)
+                    trace_store, root_trace_id)
 
             results = await asyncio.gather(*(_run(i) for i in layer))
             for idx, node_result in zip(layer, results):
@@ -154,12 +158,13 @@ class SkillExecutor:
             token_count=total_tokens, source="executor",
         ))
 
+        repair_applied = [r["repair_hint_applied"] for r in node_results
+                          if r.get("repair_hint_applied") is not None]
         return self._result(status, node_results, summary, rules_triggered,
                             repair_applied, total_latency_ms, total_tokens)
 
     async def _run_node(self, idx: int, tool: str, params: dict, task_id: str,
                         executor_agent: str, trace_store: TraceStore,
-                        repair_applied: list[dict],
                         parent_trace_id: str) -> dict:
         engine = RuleEngine(self.conn)
         runtime_rules = await engine.get_runtime_rules(tool, "1.0.0")
@@ -180,6 +185,8 @@ class SkillExecutor:
         node_start = time.monotonic()
         result: ToolResult | None = None
         node_rules: list[str] = []
+        # 节点局部修复记录（D1-3 修复）：并行层共享列表的 last-append 归属会错位
+        node_repair: list[dict] = []
 
         # 跨任务熔断（I#10 修复——真实三态状态机，状态存 circuit_states 表）
         if circuit_threshold is not None:
@@ -239,7 +246,7 @@ class SkillExecutor:
                     "tokens": result.token_count,
                     "rules_triggered": node_rules,
                     "repair_hint_applied": (
-                        repair_applied[-1] if repair_used else None),
+                        node_repair[-1] if repair_used else None),
                     "circuit_limit": circuit_threshold,
                 }
 
@@ -256,7 +263,7 @@ class SkillExecutor:
                 repair_used = True
                 params = dict(params)
                 params[hint["fix"]["param"]] = hint["fix"]["suggested_value"]
-                repair_applied.append({"rule_id": hint["rule_id"], "fix": hint["fix"]})
+                node_repair.append({"rule_id": hint["rule_id"], "fix": hint["fix"]})
                 attempt += 1
                 continue
 
@@ -280,7 +287,7 @@ class SkillExecutor:
                 "tokens": result.token_count,
                 "rules_triggered": node_rules,
                 "repair_hint_applied": (
-                    repair_applied[-1] if repair_used else None),
+                    node_repair[-1] if repair_used else None),
                 "circuit_limit": circuit_threshold,
             }
 
@@ -381,6 +388,8 @@ class SkillExecutor:
         start = time.monotonic()
         executor_agent = f"executor:{agent_id}"
         trace_store = TraceStore(self.conn)
+        # D1-1 修复：llm_plan 同样写 task_root（§5⑤ 要求，任务树可重建）
+        root_trace_id = f"exec-{uuid.uuid4().hex[:16]}"
         node_results = []
         step_index = 0
         for step in steps:
@@ -391,6 +400,7 @@ class SkillExecutor:
             latency_ms = int((time.monotonic() - node_start) * 1000)
             await trace_store.insert(TraceReport(
                 trace_id=f"exec-{uuid.uuid4().hex[:16]}",
+                parent_trace_id=root_trace_id,
                 agent_id=executor_agent, tool_name=tool,
                 trace_type=TraceType.ATOMIC, success=result.success,
                 params=params, result=result.result,
@@ -418,6 +428,12 @@ class SkillExecutor:
         success = all(r["status"] == "success" for r in node_results)
         total_latency_ms = int((time.monotonic() - start) * 1000)
         total_tokens = sum(r["tokens"] for r in node_results)
+        await trace_store.insert(TraceReport(
+            trace_id=root_trace_id, agent_id=executor_agent,
+            tool_name="llm_plan", trace_type=TraceType.TASK_ROOT,
+            success=success, params={}, latency_ms=total_latency_ms,
+            token_count=total_tokens, source="executor",
+        ))
         summary = f"llm_plan 执行：{sum(1 for r in node_results if r['status']=='success')}/{len(node_results)} 节点成功"
         return self._result("success" if success else "failed", node_results,
                             summary, [], [], total_latency_ms, total_tokens)

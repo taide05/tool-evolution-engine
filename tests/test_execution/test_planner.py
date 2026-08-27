@@ -121,3 +121,31 @@ class TestLLMPlanner:
                               "params": {"query": "x", "max_results": 3}}]
         finally:
             await client.aclose()
+
+
+class TestLLMPlannerRobustResponse:
+    async def test_non_json_response_returns_none(self, monkeypatch):
+        monkeypatch.setattr("tool_evolution.utils.config.settings.deepseek_api_key",
+                            "sk-test")
+
+        def handler(request):
+            return httpx.Response(200, content=b"not json at all")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        planner = LLMPlanner(client=client, retries=0)
+        try:
+            steps = await planner.plan("任务")
+            assert steps is None
+        finally:
+            await client.aclose()
+
+    async def test_json_list_response_returns_none(self, monkeypatch):
+        monkeypatch.setattr("tool_evolution.utils.config.settings.deepseek_api_key",
+                            "sk-test")
+        client = _mock_client(httpx.Response(200, json=[1, 2, 3]))
+        planner = LLMPlanner(client=client, retries=0)
+        try:
+            steps = await planner.plan("任务")
+            assert steps is None
+        finally:
+            await client.aclose()

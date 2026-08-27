@@ -273,3 +273,31 @@ class TestRepairAdvisorBatch:
         stats = await advisor.generate_for_rules(rules)
         assert stats["generated"] == 10
         assert transport.max_inflight == 4  # 精确断言：并发上限真实生效（串行实现只有 1）
+
+
+class TestRepairAdvisorRobustResponse:
+    async def test_non_json_response_returns_none(self, db_conn, seeded_rule, monkeypatch):
+        monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+
+        def handler(request):
+            return httpx.Response(200, content=b"not json at all")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        advisor = RepairAdvisor(db_conn, client=client, retries=0)
+        try:
+            hint = await advisor.generate_for_rule(_rule(row_id=seeded_rule))
+            # fail-open 降级：非 JSON 响应不抛穿，落模板兜底（fix=None）
+            assert hint is None or hint.get("fix") is None
+        finally:
+            await client.aclose()
+
+    async def test_json_list_response_returns_none(self, db_conn, seeded_rule, monkeypatch):
+        monkeypatch.setattr(settings, "deepseek_api_key", "sk-test")
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[1, 2])))
+        advisor = RepairAdvisor(db_conn, client=client, retries=0)
+        try:
+            hint = await advisor.generate_for_rule(_rule(row_id=seeded_rule))
+            assert hint is None or hint.get("fix") is None
+        finally:
+            await client.aclose()

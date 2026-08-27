@@ -72,6 +72,9 @@ async def execute_task(req: ExecuteTaskRequest, request: Request,
         raise HTTPException(status_code=422,
                             detail=f"invalid adapter '{req.adapter}'")
 
+    # 适配器校验前置（422 在任务创建前返回，不留 running 残留行）
+    adapter = _make_adapter(req)
+
     matcher = SkillMatcher(conn)
     matched = await matcher.match(req.task_description) if req.mode != "llm_plan" else None
 
@@ -109,7 +112,7 @@ async def execute_task(req: ExecuteTaskRequest, request: Request,
     await audit.update_status(req.task_id, "running")
 
     run_task = asyncio.create_task(
-        _run_branch(req, conn, matched, audit))
+        _run_branch(req, conn, matched, audit, adapter))
     while not run_task.done():
         if await request.is_disconnected():
             # I#12 取消路径：客户端断开 → 取消执行 → cancelled 落库
@@ -123,7 +126,15 @@ async def execute_task(req: ExecuteTaskRequest, request: Request,
             task = await audit.get_task(req.task_id)
             return _task_response(task, result={"status": "cancelled"})
         await asyncio.sleep(0.05)
-    result = run_task.result()
+    try:
+        result = run_task.result()
+    except Exception:
+        # 执行分支异常兜底（I2-1 修复）：不落库会让 task 永久 "running"、
+        # 同 task_id 此后永远 409——异常一律转 failed 落库
+        await audit.update_status(req.task_id, "failed",
+                                  summary="执行分支异常，任务终止")
+        task = await audit.get_task(req.task_id)
+        return _task_response(task, result={"status": "failed"})
 
     await audit.update_status(
         req.task_id, result["status"], summary=result.get("summary"))
@@ -132,9 +143,9 @@ async def execute_task(req: ExecuteTaskRequest, request: Request,
 
 
 async def _run_branch(req: ExecuteTaskRequest, conn: aiosqlite.Connection,
-                      matched, audit: ExecutionAudit) -> dict:
+                      matched, audit: ExecutionAudit,
+                      adapter: AsyncToolAdapter) -> dict:
     """匹配后的执行分支（skill_plan/llm_plan）——独立函数供取消路径包 Task。"""
-    adapter = _make_adapter(req)
     executor = SkillExecutor(conn, adapter, audit=audit)
     try:
         if matched is not None:

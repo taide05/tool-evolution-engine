@@ -63,7 +63,12 @@ class LLMPlanner:
                 continue
             if resp.status_code != 200:
                 continue
-            data = resp.json()
+            try:
+                data = resp.json()
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
             content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
             return self._validate(json.loads(content) if _safe_json(content) else None)
         return None

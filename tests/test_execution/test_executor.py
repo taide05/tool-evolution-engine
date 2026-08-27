@@ -454,3 +454,147 @@ class TestExecuteSkill:
             assert row["success_count"] == 1
         finally:
             await executor.adapter.close()
+
+
+class TestEmptyNodesPlan:
+    async def test_empty_nodes_plan_failed(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+        plan = _plan()
+        plan["nodes"] = []
+        result = await executor.execute_plan("task-1", "desc", plan)
+        assert result["status"] == "failed"
+        assert "节点" in (result["summary"] or "")
+        await adapter.close()
+
+
+class TestRepairHintAttribution:
+    async def test_repair_hint_localized_per_node(self, db_conn):
+        from tool_evolution.collection.schemas import ErrorType
+        from tool_evolution.execution.adapters import ToolResult
+        engine = RuleEngine(db_conn)
+        search_rule = await engine.add_rule({
+            "tool_name": "search_api", "tool_version": "1.0.0",
+            "rule_type": "range_rule",
+            "condition": {"param_names": ["max_results"]},
+            "action": {"validate_before_call": True}, "status": "active"})
+        detail_rule = await engine.add_rule({
+            "tool_name": "detail_api", "tool_version": "1.0.0",
+            "rule_type": "range_rule",
+            "condition": {"param_names": ["max_results"]},
+            "action": {"validate_before_call": True}, "status": "active"})
+        for rule_id in (search_rule, detail_rule):
+            await db_conn.execute(
+                """INSERT INTO repair_hints (rule_id, content_hash, suggestion, fix, model)
+                   VALUES (?, ?, ?, ?, 'deepseek-v4-flash')""",
+                (rule_id, f"h{rule_id}", "减小 max_results",
+                 json.dumps({"param": "max_results", "suggested_value": 5})))
+        await db_conn.commit()
+        executor, adapter = await _mk_executor(db_conn)
+        calls = {"search": 0, "detail": 0}
+
+        async def fail_then_ok(tool_name, params):
+            key = "search" if tool_name == "search_api" else "detail"
+            if calls[key] == 0:
+                calls[key] += 1
+                if key == "detail":
+                    import asyncio
+                    await asyncio.sleep(0.2)
+                return ToolResult(
+                    tool_name=tool_name, params=params, success=False,
+                    error_type=ErrorType.PARAM_ERROR,
+                    error_message="value -1 out of range", latency_ms=0, token_count=0)
+            if tool_name == "search_api":
+                import asyncio
+                await asyncio.sleep(0.3)
+            return await MockAdapter.execute(adapter, tool_name, params)
+
+        adapter.execute = fail_then_ok
+        plan = _plan(nodes=[
+            {"tool_name": "search_api", "params": {"query": "q", "max_results": -1}},
+            {"tool_name": "detail_api", "params": {"query": "q", "max_results": -1}},
+        ], edges=[])
+        result = await executor.execute_plan("task-1", "desc", plan)
+        assert result["status"] == "success"
+        steps = result["steps"]
+        by_tool = {s["tool_name"]: s for s in steps}
+        assert by_tool["search_api"]["repair_hint_applied"]["rule_id"] == search_rule
+        assert by_tool["detail_api"]["repair_hint_applied"]["rule_id"] == detail_rule
+        applied = result.get("repair_hint_applied") or []
+        assert {a["rule_id"] for a in applied} == {search_rule, detail_rule}
+        await adapter.close()
+
+
+class TestCircuitHalfOpen:
+    async def test_half_open_probe_after_cooldown(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+        await db_conn.execute(
+            "INSERT INTO circuit_states (tool_name, status, failure_count, opened_at) "
+            "VALUES ('search_api', 'open', 3, datetime('now', '-31 seconds'))")
+        await db_conn.commit()
+        allowed, reason = await executor._circuit_check("search_api", 30)
+        assert allowed is True
+        assert reason is None
+        cursor = await db_conn.execute(
+            "SELECT status FROM circuit_states WHERE tool_name='search_api'")
+        assert (await cursor.fetchone())["status"] == "half_open"
+        await adapter.close()
+
+    async def test_open_within_cooldown_rejects(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+        await db_conn.execute(
+            "INSERT INTO circuit_states (tool_name, status, failure_count, opened_at) "
+            "VALUES ('search_api', 'open', 3, datetime('now'))")
+        await db_conn.commit()
+        allowed, reason = await executor._circuit_check("search_api", 30)
+        assert allowed is False
+        assert "cooldown" in reason
+        await adapter.close()
+
+    async def test_half_open_failure_reopens(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+        await db_conn.execute(
+            "INSERT INTO circuit_states (tool_name, status, failure_count, opened_at) "
+            "VALUES ('search_api', 'half_open', 0, NULL)")
+        await db_conn.commit()
+        await executor._circuit_record_failure("search_api", 2)
+        cursor = await db_conn.execute(
+            "SELECT status, failure_count FROM circuit_states WHERE tool_name='search_api'")
+        row = await cursor.fetchone()
+        assert row["status"] == "open"
+        assert row["failure_count"] == 2
+        await adapter.close()
+
+    async def test_half_open_success_closes(self, db_conn):
+        executor, adapter = await _mk_executor(db_conn)
+        await db_conn.execute(
+            "INSERT INTO circuit_states (tool_name, status, failure_count, opened_at) "
+            "VALUES ('search_api', 'half_open', 1, datetime('now'))")
+        await db_conn.commit()
+        await executor._circuit_record_success("search_api")
+        cursor = await db_conn.execute(
+            "SELECT status, failure_count FROM circuit_states WHERE tool_name='search_api'")
+        row = await cursor.fetchone()
+        assert row["status"] == "closed"
+        assert row["failure_count"] == 0
+        await adapter.close()
+
+
+class TestExecuteLlmPlan:
+    async def test_llm_plan_writes_task_root(self, db_conn):
+        audit = ExecutionAudit(db_conn)
+        await audit.create_task("task-1", "desc", mode="llm_plan", plan=None)
+        adapter = MockAdapter()
+        executor = SkillExecutor(db_conn, adapter, audit=audit)
+        try:
+            result = await executor.execute_llm_plan(
+                "task-1", "desc",
+                [{"tool": "search_api", "params": {"query": "q"}}],
+                agent_id="anon")
+            assert result["status"] == "success"
+            rows = await _trace_rows(db_conn)
+            roots = [r for r in rows if r["trace_type"] == "task_root"]
+            atomics = [r for r in rows if r["trace_type"] == "atomic"]
+            assert len(roots) == 1 and len(atomics) == 1
+            assert atomics[0]["parent_trace_id"] == roots[0]["trace_id"]
+        finally:
+            await adapter.close()

@@ -159,7 +159,12 @@ class RepairAdvisor:
                 continue
             if resp.status_code != 200:
                 continue
-            data = resp.json()
+            try:
+                data = resp.json()
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
             usage = data.get("usage", {}) or {}
             content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
             parsed = self._parse_content(content)
