@@ -1619,10 +1619,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.seed < 50:
         parser.error("--seed must be >= 50 (degradation small level seed//4 would be empty)")
+    if args.num_variants < 1:
+        parser.error("--num-variants must be >= 1")
     return args
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
     asyncio.run(main(output_path=Path(args.output), seed=args.seed,
                      num_variants=args.num_variants))

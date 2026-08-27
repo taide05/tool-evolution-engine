@@ -81,6 +81,20 @@ class TestArgparse:
         assert args.seed == 400
         assert args.num_variants == 8
 
+    def test_parse_num_variants_zero_rejected(self):
+        import pytest
+        with pytest.raises(SystemExit):
+            parse_args(["--num-variants", "0"])
+
+
+class TestSaveResults:
+    def test_save_results_writes_json(self, tmp_path):
+        from scripts.run_execution_eval import save_results
+        p = tmp_path / "out.json"
+        save_results({"n_tasks": 50, "中文键": "值"}, p)
+        data = json.loads(p.read_text(encoding="utf-8"))
+        assert data == {"n_tasks": 50, "中文键": "值"}
+
 
 class TestDegradationSizes:
     def test_degradation_sizes_derived(self):

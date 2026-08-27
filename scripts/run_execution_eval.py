@@ -45,6 +45,11 @@ def load_eval_tasks(n_tasks: int = 2000) -> list[dict]:
     return expand_benchmark_tasks(base_tasks, n_tasks // len(base_tasks))
 
 
+def save_results(result: dict, path: Path) -> None:
+    path.write_text(json.dumps(result, indent=2, ensure_ascii=False),
+                    encoding="utf-8")
+
+
 async def _clear_db(conn: aiosqlite.Connection) -> None:
     for stmt in (
         "DELETE FROM canary_invocations",
@@ -328,15 +333,20 @@ async def _main() -> None:
     parser = argparse.ArgumentParser(description="TEE execution-layer evaluation")
     parser.add_argument("--num-tasks", type=int, default=2000,
                         help="对比任务数（必须被 base 任务数整除，默认 2000）")
+    parser.add_argument("--output", default="exec_eval_results.json",
+                        help="结果 JSON 输出路径")
     args = parser.parse_args()
     conn = await aiosqlite.connect(settings.db_path)
     conn.row_factory = aiosqlite.Row
     try:
         result = await run_execution_eval(conn, n_tasks=args.num_tasks)
         _print_report(result)
+        save_results(result, Path(args.output))
+        print(f"\n结果写入: {args.output}")
     finally:
         await conn.close()
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
     asyncio.run(_main())

@@ -3,6 +3,7 @@ from pathlib import Path
 
 RUN_EVAL = Path(__file__).resolve().parents[2] / "scripts" / "run_eval.py"
 SEED_DEMO = Path(__file__).resolve().parents[2] / "scripts" / "seed_demo_data.py"
+EXEC_EVAL = Path(__file__).resolve().parents[2] / "scripts" / "run_execution_eval.py"
 
 GSM_KEYS = ["schema_version", "timestamp", "seed", "benchmark", "failure_reduction",
             "dag_recall", "classifier", "template_coverage", "rule_precision",
@@ -57,3 +58,19 @@ class TestEvalContractStatic:
         found = [n.value for n in ast.walk(tree)
                  if isinstance(n, ast.Constant) and isinstance(n.value, str)]
         assert "repair_advisor" in found
+
+    def test_stdout_utf8_reconfigure_wired(self):
+        # 日志重定向到文件走 locale 编码（GBK）导致跨工具乱码——双脚本必须显式 UTF-8
+        for path in (RUN_EVAL, EXEC_EVAL):
+            tree = _parse(path)
+            wired = False
+            for n in ast.walk(tree):
+                if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                        and n.func.attr == "reconfigure"
+                        and isinstance(n.func.value, ast.Attribute)
+                        and n.func.value.attr == "stdout"):
+                    kwargs = {k.arg: k.value.value for k in n.keywords
+                              if isinstance(k.value, ast.Constant)}
+                    if kwargs.get("encoding") == "utf-8":
+                        wired = True
+            assert wired, f"{path.name} 缺少 sys.stdout.reconfigure(encoding='utf-8')"
