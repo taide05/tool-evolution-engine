@@ -13,7 +13,8 @@ class PlanAssembler:
     def __init__(self, conn: aiosqlite.Connection):
         self.conn = conn
 
-    async def assemble(self, skill: dict, task_params: dict | None = None) -> dict | None:
+    async def assemble(self, skill: dict, task_params: dict | None = None,
+                       optimized: bool = True) -> dict | None:
         """返回可执行计划：
 
         {'skill_id','skill_name','nodes':[{tool_name,params}],'edges':[{'from':idx,'to':idx}],
@@ -23,6 +24,9 @@ class PlanAssembler:
         → 每节点参数 = KDE 默认值（get_template 的 default_value，跳过 None）
         → 偏好覆盖（flatten_user_prefs）→ task_params 覆盖（最高优先级）
         → RuleEngine.check 前置拦截（触发非空→blocked，不抛）。
+
+        optimized=False（灰度 stable 基线）：跳过 KDE 默认值/偏好注入/前置拦截，
+        仅 task_params 直装配——与 run_eval before/after 的 baseline 口径对齐。
         """
         try:
             dag = json.loads(skill["dag_definition"])
@@ -53,7 +57,7 @@ class PlanAssembler:
 
         tmpl_mgr = ParamTemplateManager(self.conn)
         bridge = MCPBridge(self.conn)
-        prefs = await bridge.get_user_preferences()
+        prefs = await bridge.get_user_preferences() if optimized else {}
         engine = RuleEngine(self.conn)
 
         nodes = []
@@ -61,15 +65,18 @@ class PlanAssembler:
         for node in raw_nodes:
             tool_name = node.get("tool_name")
             params: dict = {}
-            template = await tmpl_mgr.get_template(tool_name, "1.0.0")
-            if template:
-                for pname, pdef in template.items():
-                    if pdef.get("default_value") is not None:
-                        params[pname] = pdef["default_value"]
-            params.update(flatten_user_prefs(prefs, tool_name))
+            if optimized:
+                template = await tmpl_mgr.get_template(tool_name, "1.0.0")
+                if template:
+                    for pname, pdef in template.items():
+                        if pdef.get("default_value") is not None:
+                            params[pname] = pdef["default_value"]
+                params.update(flatten_user_prefs(prefs, tool_name))
             if task_params:
                 params.update(task_params)
             nodes.append({"tool_name": tool_name, "params": params})
+            if not optimized:
+                continue
             triggered = await engine.check(tool_name, "1.0.0", params)
             for rule in triggered:
                 precheck_rules.append({

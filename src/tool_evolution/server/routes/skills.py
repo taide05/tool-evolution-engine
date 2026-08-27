@@ -43,7 +43,9 @@ async def invoke_skill(name: str, req: InvokeRequest,
     """Route a request between stable and canary variants via consistent hashing.
 
     Pure routing decision — no execution, no metric writes. Real invocation
-    receipts are recorded by the executor closed loop (increment 3).
+    receipts are recorded by the executor closed loop (increment 3):
+    canary 桶执行优化装配、stable 桶执行基线装配，两变体实测均落
+    canary_invocations（compare_variants 的 A/B 真实样本）。
     """
     router_inst = CanaryRouter(conn)
     skill = await router_inst.get_skill(name)

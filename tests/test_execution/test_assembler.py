@@ -108,3 +108,27 @@ class TestPlanAssembler:
         plan = await assembler.assemble(_skill_row(dag=dag))
         assert plan["blocked"] is False
         assert plan["edges"] == [{"from": 0, "to": 1}]
+
+
+class TestAssembleBaseline:
+    async def test_optimized_false_skips_defaults_and_precheck(self, db_conn):
+        from tool_evolution.execution.assembler import PlanAssembler
+        from tool_evolution.knowledge.param_template import ParamTemplateManager
+        from tool_evolution.knowledge.rule_engine import RuleEngine
+        mgr = ParamTemplateManager(db_conn)
+        await mgr.save("search_api", "1.0.0", {
+            "max_results": {"param_type": "int", "default_value": 10,
+                            "lower_bound": 0, "upper_bound": 100,
+                            "sample_count": 200}})
+        await RuleEngine(db_conn).add_rule({
+            "tool_name": "search_api", "tool_version": "1.0.0",
+            "rule_type": "range_rule",
+            "condition": {"param_names": ["max_results"]},
+            "action": {"validate_before_call": True}, "status": "active"})
+        skill = {"id": 1, "name": "test_skill",
+                 "dag_definition": '{"nodes": [{"tool_name": "search_api"}], "edges": []}'}
+        plan = await PlanAssembler(db_conn).assemble(
+            skill, task_params={"query": "q"}, optimized=False)
+        assert plan["blocked"] is False
+        assert plan["precheck_rules"] == []
+        assert plan["nodes"][0]["params"] == {"query": "q"}

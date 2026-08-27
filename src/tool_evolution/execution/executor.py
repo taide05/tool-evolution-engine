@@ -11,6 +11,7 @@ import networkx as nx
 
 from ..collection.schemas import ErrorType, TraceReport, TraceType
 from ..collection.store import TraceStore
+from ..governance.canary_router import CanaryRouter
 from ..governance.governor import SkillGovernor
 from ..governance.mcp_bridge import MCPBridge
 from ..knowledge.rule_engine import RuleEngine
@@ -29,8 +30,13 @@ class SkillExecutor:
         self._db_lock = asyncio.Lock()
 
     async def execute_plan(self, task_id: str, task_description: str,
-                           plan: dict, agent_id: str = "anonymous") -> dict:
-        """执行装配好的计划（前置条件：task 已 create——状态归 API 层管理）。"""
+                           plan: dict, agent_id: str = "anonymous",
+                           apply_rules: bool = True) -> dict:
+        """执行装配好的计划（前置条件：task 已 create——状态归 API 层管理）。
+
+        apply_rules=False（灰度 stable 基线）：跳过运行时规则（超时/重试/熔断）——
+        与 assembler optimized=False 配套，构成无优化基线执行。
+        """
         start = time.monotonic()
         executor_agent = f"executor:{agent_id}"
         rules_triggered: list[str] = []
@@ -102,7 +108,7 @@ class SkillExecutor:
                     }
                 return await self._run_node(
                     idx, tool, resolved, task_id, executor_agent,
-                    trace_store, root_trace_id)
+                    trace_store, root_trace_id, apply_rules)
 
             results = await asyncio.gather(*(_run(i) for i in layer))
             for idx, node_result in zip(layer, results):
@@ -165,9 +171,9 @@ class SkillExecutor:
 
     async def _run_node(self, idx: int, tool: str, params: dict, task_id: str,
                         executor_agent: str, trace_store: TraceStore,
-                        parent_trace_id: str) -> dict:
+                        parent_trace_id: str, apply_rules: bool = True) -> dict:
         engine = RuleEngine(self.conn)
-        runtime_rules = await engine.get_runtime_rules(tool, "1.0.0")
+        runtime_rules = await engine.get_runtime_rules(tool, "1.0.0") if apply_rules else []
         timeout_ms = None
         retry_delay, max_retries = None, 0
         circuit_threshold = None
@@ -362,15 +368,39 @@ class SkillExecutor:
 
     async def execute_skill(self, task_id: str, task_description: str,
                             skill: dict, task_params: dict | None,
-                            agent_id: str = "anonymous") -> dict:
-        """组合入口：装配 + 执行 + record_call（R2）。不写 tasks 状态（API 层职责）。"""
-        plan = await PlanAssembler(self.conn).assemble(skill, task_params=task_params)
+                            agent_id: str = "anonymous",
+                            optimized: bool | None = None) -> dict:
+        """组合入口：灰度路由（I2-2 代码闭环）+ 装配 + 执行 + 闭环采集。
+
+        optimized=None 时按 task_id 一致性哈希路由变体：canary 桶=优化装配
+        （KDE 默认值/偏好/规则），stable 桶=基线装配（仅 task_params，无规则）。
+        两变体实测均落 canary_invocations（compare_variants 真实样本）；
+        record_call 信用闭环只计优化执行（基线不代表技能质量）。
+        不写 tasks 状态（API 层职责）。
+        """
+        router = CanaryRouter(self.conn)
+        skill_row = await router.get_skill(skill["name"]) if skill.get("name") else None
+        if optimized is None:
+            status = skill_row["status"] if skill_row else "active"
+            variant = router.decide(task_id, status)
+            optimized = variant == "canary"
+        else:
+            variant = "canary" if optimized else "stable"
+        plan = await PlanAssembler(self.conn).assemble(
+            skill, task_params=task_params, optimized=optimized)
         result = await self.execute_plan(task_id, task_description, plan,
-                                         agent_id=agent_id)
+                                         agent_id=agent_id, apply_rules=optimized)
         if plan.get("skill_id"):
-            gov = SkillGovernor(self.conn)
-            await gov.record_call(
-                skill_id=plan["skill_id"],
+            if optimized:
+                gov = SkillGovernor(self.conn)
+                await gov.record_call(
+                    skill_id=plan["skill_id"],
+                    success=result["status"] == "success",
+                    latency_ms=result["total_latency_ms"],
+                    tokens=result["total_tokens"],
+                )
+            await router.record_invocation(
+                skill_id=plan["skill_id"], variant=variant,
                 success=result["status"] == "success",
                 latency_ms=result["total_latency_ms"],
                 tokens=result["total_tokens"],
@@ -378,6 +408,7 @@ class SkillExecutor:
         result["matched_skill"] = plan.get("skill_name")
         result["blocked"] = plan.get("blocked", False)
         result["block_reason"] = plan.get("block_reason")
+        result["variant"] = variant
         # matched_score 由调用方（API 层）用 matcher 的实际分数透传，不在此硬编码
         return result
 

@@ -598,3 +598,98 @@ class TestExecuteLlmPlan:
             assert atomics[0]["parent_trace_id"] == roots[0]["trace_id"]
         finally:
             await adapter.close()
+
+
+class TestExecuteSkillCanaryLoop:
+    @staticmethod
+    def _find_task_id(status: str, want: str) -> str:
+        from tool_evolution.governance.canary_router import CanaryRouter
+        router = CanaryRouter.__new__(CanaryRouter)
+        for i in range(200):
+            tid = f"t{i}"
+            if router.decide(tid, status) == want:
+                return tid
+        raise AssertionError("no task id found")
+
+    @staticmethod
+    def _skill_json():
+        return json.dumps({"nodes": [{"tool_name": "search_api"}], "edges": []})
+
+    async def test_stable_bucket_runs_baseline(self, db_conn):
+        from tool_evolution.knowledge.param_template import ParamTemplateManager
+        mgr = ParamTemplateManager(db_conn)
+        await mgr.save("search_api", "1.0.0", {
+            "max_results": {"param_type": "int", "default_value": 10,
+                            "lower_bound": 0, "upper_bound": 100,
+                            "sample_count": 200}})
+        await db_conn.execute(
+            """INSERT INTO deployed_skills (id, name, dag_definition, param_template,
+               credit_score, status) VALUES (1, 'test_skill', ?, '{}', 50.0, 'canary_5')""",
+            (self._skill_json(),))
+        await db_conn.commit()
+        audit = ExecutionAudit(db_conn)
+        task_id = self._find_task_id("canary_5", "stable")
+        await audit.create_task(task_id, "desc", mode="skill_plan",
+                                plan={}, skill_name="test_skill")
+        executor = SkillExecutor(db_conn, MockAdapter(), audit=audit)
+        try:
+            result = await executor.execute_skill(
+                task_id, "desc",
+                skill={"id": 1, "name": "test_skill",
+                       "dag_definition": self._skill_json(),
+                       "param_template": None},
+                task_params={"query": "q"}, agent_id="anon")
+            assert result["status"] == "success"
+            assert result["variant"] == "stable"
+            # 基线执行：无 KDE 默认值注入
+            assert result["steps"][0]["params"] == {"query": "q"}
+            cursor = await db_conn.execute(
+                "SELECT variant, success FROM canary_invocations WHERE skill_id=1")
+            rows = [dict(r) for r in await cursor.fetchall()]
+            assert len(rows) == 1
+            assert rows[0]["variant"] == "stable"
+            assert rows[0]["success"] == 1
+            # 基线执行不进技能信用闭环
+            cursor = await db_conn.execute(
+                "SELECT total_calls FROM deployed_skills WHERE id=1")
+            assert (await cursor.fetchone())["total_calls"] == 0
+        finally:
+            await executor.adapter.close()
+
+    async def test_canary_bucket_runs_optimized(self, db_conn):
+        from tool_evolution.knowledge.param_template import ParamTemplateManager
+        mgr = ParamTemplateManager(db_conn)
+        await mgr.save("search_api", "1.0.0", {
+            "max_results": {"param_type": "int", "default_value": 10,
+                            "lower_bound": 0, "upper_bound": 100,
+                            "sample_count": 200}})
+        await db_conn.execute(
+            """INSERT INTO deployed_skills (id, name, dag_definition, param_template,
+               credit_score, status) VALUES (1, 'test_skill', ?, '{}', 50.0, 'canary_5')""",
+            (self._skill_json(),))
+        await db_conn.commit()
+        audit = ExecutionAudit(db_conn)
+        task_id = self._find_task_id("canary_5", "canary")
+        await audit.create_task(task_id, "desc", mode="skill_plan",
+                                plan={}, skill_name="test_skill")
+        executor = SkillExecutor(db_conn, MockAdapter(), audit=audit)
+        try:
+            result = await executor.execute_skill(
+                task_id, "desc",
+                skill={"id": 1, "name": "test_skill",
+                       "dag_definition": self._skill_json(),
+                       "param_template": None},
+                task_params={"query": "q"}, agent_id="anon")
+            assert result["status"] == "success"
+            assert result["variant"] == "canary"
+            # 优化执行：KDE 默认值注入
+            assert result["steps"][0]["params"]["max_results"] == 10
+            cursor = await db_conn.execute(
+                "SELECT variant FROM canary_invocations WHERE skill_id=1")
+            rows = [dict(r) for r in await cursor.fetchall()]
+            assert len(rows) == 1 and rows[0]["variant"] == "canary"
+            cursor = await db_conn.execute(
+                "SELECT total_calls FROM deployed_skills WHERE id=1")
+            assert (await cursor.fetchone())["total_calls"] == 1
+        finally:
+            await executor.adapter.close()
