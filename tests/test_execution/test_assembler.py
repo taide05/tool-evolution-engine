@@ -132,3 +132,14 @@ class TestAssembleBaseline:
         assert plan["blocked"] is False
         assert plan["precheck_rules"] == []
         assert plan["nodes"][0]["params"] == {"query": "q"}
+
+
+class TestTaskParamsWhitelist:
+    async def test_task_params_whitelisted_by_tool_specs(self, db_conn):
+        from tool_evolution.execution.assembler import PlanAssembler
+        skill = {"id": 1, "name": "s",
+                 "dag_definition": '{"nodes": [{"tool_name": "search_api"}], "edges": []}'}
+        plan = await PlanAssembler(db_conn).assemble(
+            skill, task_params={"query": "q", "evil_param": "x"}, optimized=True)
+        assert "query" in plan["nodes"][0]["params"]
+        assert "evil_param" not in plan["nodes"][0]["params"]

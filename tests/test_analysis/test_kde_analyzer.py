@@ -45,3 +45,11 @@ class TestKDEAnalyzer:
         params_list = [{"tags": ["a", "b"]} for _ in range(10)]
         result = ana.analyze("t", "1.0.0", params_list)
         assert "tags" not in result
+
+
+class TestKdeNumericRobust:
+    def test_numeric_mixed_type_no_crash(self):
+        ana = KDEAnalyzer(min_samples=5)
+        params = [{"v": 1}, {"v": "abc"}, {"v": 2}, {"v": 3}, {"v": 4}]
+        result = ana.analyze("t", "1.0.0", params)
+        assert "v" in result

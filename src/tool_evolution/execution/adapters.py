@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from typing import Any, Protocol
 
 import httpx
@@ -88,6 +89,7 @@ class HTTPAdapter:
     async def execute(self, tool_name: str, params: dict) -> ToolResult:
         client = self._get_client()
         url = f"{self._base_url}/{tool_name}"
+        t0 = time.monotonic()
         try:
             resp = await client.post(url, json=params, headers=self._headers,
                                      timeout=self._timeout)
@@ -95,15 +97,16 @@ class HTTPAdapter:
             return ToolResult(
                 tool_name=tool_name, params=params, success=False,
                 error_type=ErrorType.TIMEOUT, error_message=f"timeout calling {url}",
-                latency_ms=0, token_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000), token_count=0,
             )
         except httpx.HTTPError as exc:
             return ToolResult(
                 tool_name=tool_name, params=params, success=False,
                 error_type=ErrorType.SERVICE_UNAVAILABLE,
                 error_message=f"transport error: {exc}",
-                latency_ms=0, token_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000), token_count=0,
             )
+        latency_ms = int((time.monotonic() - t0) * 1000)
         if resp.status_code < 300:
             try:
                 payload = resp.json()
@@ -112,7 +115,7 @@ class HTTPAdapter:
             return ToolResult(
                 tool_name=tool_name, params=params, success=True,
                 result=payload if isinstance(payload, dict) else {"value": payload},
-                latency_ms=0, token_count=0,
+                latency_ms=latency_ms, token_count=0,
             )
         mapping = {
             403: ErrorType.PERMISSION_DENIED,
@@ -124,7 +127,7 @@ class HTTPAdapter:
         return ToolResult(
             tool_name=tool_name, params=params, success=False, error_type=err_type,
             error_message=f"HTTP {resp.status_code}: {resp.text[:200]}",
-            latency_ms=0, token_count=0,
+            latency_ms=latency_ms, token_count=0,
         )
 
     async def close(self) -> None:
@@ -172,6 +175,7 @@ class MCPAdapter:
         return self._session
 
     async def execute(self, tool_name: str, params: dict) -> ToolResult:
+        t0 = time.monotonic()
         try:
             session = await self._ensure_session()
         except Exception as exc:
@@ -179,7 +183,7 @@ class MCPAdapter:
             return ToolResult(
                 tool_name=tool_name, params=params, success=False,
                 error_type=ErrorType.SERVICE_UNAVAILABLE, error_message=str(exc),
-                latency_ms=0, token_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000), token_count=0,
             )
         try:
             call = await asyncio.wait_for(
@@ -190,21 +194,22 @@ class MCPAdapter:
                 tool_name=tool_name, params=params, success=False,
                 error_type=ErrorType.TIMEOUT,
                 error_message=f"MCP call '{tool_name}' timed out",
-                latency_ms=0, token_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000), token_count=0,
             )
         except Exception as exc:
             return ToolResult(
                 tool_name=tool_name, params=params, success=False,
                 error_type=ErrorType.SERVICE_UNAVAILABLE,
                 error_message=f"MCP transport error: {exc}",
-                latency_ms=0, token_count=0,
+                latency_ms=int((time.monotonic() - t0) * 1000), token_count=0,
             )
+        latency_ms = int((time.monotonic() - t0) * 1000)
         if call.isError:
             return ToolResult(
                 tool_name=tool_name, params=params, success=False,
                 error_type=ErrorType.PARAM_ERROR,
                 error_message=_content_to_text(call.content)[:500],
-                latency_ms=0, token_count=0,
+                latency_ms=latency_ms, token_count=0,
             )
         text = _content_to_text(call.content)
         try:
@@ -214,7 +219,7 @@ class MCPAdapter:
         return ToolResult(
             tool_name=tool_name, params=params, success=True,
             result=payload if isinstance(payload, dict) else {"value": payload},
-            latency_ms=0, token_count=0,
+            latency_ms=latency_ms, token_count=0,
         )
 
     async def close(self) -> None:

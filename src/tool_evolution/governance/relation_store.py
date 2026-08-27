@@ -33,31 +33,37 @@ class RelationStore:
     async def upsert_cooccurrence(self, entity_a: str, entity_b: str,
                                   trace_ids: list[str]) -> None:
         source, target = sorted((entity_a, entity_b))
-        existing = await self._get_pair(source, target, "co_occur")
-        old_evidence: list[str] = []
-        if existing:
-            old_evidence = json.loads(existing["evidence_trace_ids"] or "[]")
-        # dict.fromkeys 去重（同一 trace 可能对同一实体对贡献多次）
-        new_ids = list(dict.fromkeys(t for t in trace_ids if t not in old_evidence))
-        if not new_ids:
-            return
-        # 全量存证据：去重基于完整 id 集，重建幂等精确（无截断重计数边界）
-        evidence = old_evidence + new_ids
-        if existing:
-            await self.conn.execute(
-                """UPDATE entity_relations
-                   SET strength = strength + ?, evidence_trace_ids = ?
-                   WHERE source_entity=? AND target_entity=? AND relation_type=?""",
-                (len(new_ids), json.dumps(evidence), source, target, "co_occur")
-            )
-        else:
-            await self.conn.execute(
-                """INSERT INTO entity_relations
-                   (source_entity, target_entity, relation_type, strength, evidence_trace_ids)
-                   VALUES (?, ?, 'co_occur', ?, ?)""",
-                (source, target, len(new_ids), json.dumps(evidence))
-            )
-        await self.conn.commit()
+        # D2-4 修复：check-then-act 包事务——并发 upsert 的读-改-写原子化，
+        # BEGIN IMMEDIATE 序列化并发写（单连接下无嵌套事务问题：调用方无外层显式事务）
+        try:
+            await self.conn.execute("BEGIN IMMEDIATE")
+            existing = await self._get_pair(source, target, "co_occur")
+            old_evidence: list[str] = []
+            if existing:
+                old_evidence = json.loads(existing["evidence_trace_ids"] or "[]")
+            # dict.fromkeys 去重（同一 trace 可能对同一实体对贡献多次）
+            new_ids = list(dict.fromkeys(t for t in trace_ids if t not in old_evidence))
+            if new_ids:
+                # 全量存证据：去重基于完整 id 集，重建幂等精确（无截断重计数边界）
+                evidence = old_evidence + new_ids
+                if existing:
+                    await self.conn.execute(
+                        """UPDATE entity_relations
+                           SET strength = strength + ?, evidence_trace_ids = ?
+                           WHERE source_entity=? AND target_entity=? AND relation_type=?""",
+                        (len(new_ids), json.dumps(evidence), source, target, "co_occur")
+                    )
+                else:
+                    await self.conn.execute(
+                        """INSERT INTO entity_relations
+                           (source_entity, target_entity, relation_type, strength, evidence_trace_ids)
+                           VALUES (?, ?, 'co_occur', ?, ?)""",
+                        (source, target, len(new_ids), json.dumps(evidence))
+                    )
+            await self.conn.commit()
+        except Exception:
+            await self.conn.rollback()
+            raise
 
     async def build_for_task(self, root_id: str) -> int:
         """Build co-occurrence pairs from all successful atomic traces of a task tree.

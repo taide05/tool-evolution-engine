@@ -79,7 +79,12 @@ class RepairAdvisor:
     def _param_names(self, rule: dict, examples: list[dict] | None) -> list[str]:
         condition = rule["condition"]
         if not isinstance(condition, dict):
-            condition = json.loads(condition)
+            try:
+                condition = json.loads(condition)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if not isinstance(condition, dict):
+            return []
         names = condition.get("param_names") or []
         if names:
             return names

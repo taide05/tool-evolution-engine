@@ -7,6 +7,7 @@ import aiosqlite
 from ..governance.mcp_bridge import MCPBridge
 from ..knowledge.param_template import ParamTemplateManager, flatten_user_prefs
 from ..knowledge.rule_engine import RuleEngine
+from .tool_specs import TOOL_SPECS
 
 
 class PlanAssembler:
@@ -73,7 +74,10 @@ class PlanAssembler:
                             params[pname] = pdef["default_value"]
                 params.update(flatten_user_prefs(prefs, tool_name))
             if task_params:
-                params.update(task_params)
+                # 白名单（D2-5 修复）：只放行该工具 TOOL_SPECS 声明的参数键
+                allowed = TOOL_SPECS.get(tool_name, {}).get("params", {})
+                params.update({k: v for k, v in task_params.items()
+                               if k in allowed})
             nodes.append({"tool_name": tool_name, "params": params})
             if not optimized:
                 continue

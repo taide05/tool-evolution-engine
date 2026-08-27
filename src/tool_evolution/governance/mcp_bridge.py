@@ -61,9 +61,12 @@ class MCPBridge:
         return json.loads(row[0]) if row else None
 
     async def _search_entities(self, query: str) -> list[dict]:
+        # LIKE 通配符转义：%/_/\ 按字面匹配，用户输入不产生通配符注入
+        escaped = (query.replace("\\", "\\\\").replace("%", "\\%")
+                   .replace("_", "\\_"))
         cursor = await self.conn.execute(
-            "SELECT key, value FROM memory_cache WHERE key LIKE ?",
-            (f"%{query}%",),
+            "SELECT key, value FROM memory_cache WHERE key LIKE ? ESCAPE '\\'",
+            (f"%{escaped}%",),
         )
         rows = await cursor.fetchall()
         return [json.loads(row["value"]) for row in rows if row["key"].startswith("entity:")]

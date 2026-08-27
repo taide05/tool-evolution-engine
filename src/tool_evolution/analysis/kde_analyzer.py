@@ -51,7 +51,15 @@ class KDEAnalyzer:
         return result
 
     def _analyze_numeric(self, values: list) -> dict:
-        arr = np.array(values, dtype=float)
+        try:
+            arr = np.array(values, dtype=float)
+        except (ValueError, TypeError):
+            # 混合类型（数值型参数混入字符串）——只用数值子集，全非法则返回空分布
+            arr = np.array([float(v) for v in values
+                            if isinstance(v, (int, float)) and not isinstance(v, bool)],
+                           dtype=float)
+            if arr.size == 0:
+                return {"default_value": None, "sample_count": len(values)}
         try:
             kde = gaussian_kde(arr)
             x_grid = np.linspace(arr.min(), arr.max(), 200)

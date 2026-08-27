@@ -199,7 +199,9 @@ class SkillExecutor:
             cooldown_s = next(
                 (r["action"].get("cooldown_seconds", 30) for r in runtime_rules
                  if r["rule_type"] == "circuit_breaker_rule"), 30)
-            allowed, reason = await self._circuit_check(tool, cooldown_s)
+            # D2-4 修复：熔断三态读写纳入写库锁（并行层共享状态防交错）
+            async with self._db_lock:
+                allowed, reason = await self._circuit_check(tool, cooldown_s)
             if not allowed:
                 if "circuit_breaker_rule" not in node_rules:
                     node_rules.append("circuit_breaker_rule")
@@ -244,8 +246,8 @@ class SkillExecutor:
                     await bridge.extract_and_update({
                         "success": True, "result": result.result, "tool_name": tool,
                     })
-                if circuit_threshold is not None:
-                    await self._circuit_record_success(tool)
+                    if circuit_threshold is not None:
+                        await self._circuit_record_success(tool)
                 return {
                     "tool_name": tool, "params": params, "result": result.result,
                     "status": "success", "latency_ms": result.latency_ms,
@@ -274,9 +276,9 @@ class SkillExecutor:
                 continue
 
             latency_ms = int((time.monotonic() - node_start) * 1000)
-            if circuit_threshold is not None:
-                await self._circuit_record_failure(tool, circuit_threshold)
             async with self._db_lock:
+                if circuit_threshold is not None:
+                    await self._circuit_record_failure(tool, circuit_threshold)
                 await trace_store.insert(TraceReport(
                     trace_id=f"exec-{uuid.uuid4().hex[:16]}",
                     parent_trace_id=parent_trace_id,

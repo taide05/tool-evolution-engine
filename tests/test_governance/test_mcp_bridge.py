@@ -138,3 +138,12 @@ class TestMCPBridgeRelations:
         rows = await bridge.search_relations("E1")
         assert len(rows) == 1
         assert rows[0]["target_entity"] == "E2"
+
+
+class TestSearchEntitiesEscape:
+    async def test_search_entities_escapes_like_wildcards(self, db_conn):
+        bridge = MCPBridge(db_conn)
+        await bridge._set_cache("entity:pct%x", {"e": 1})
+        await bridge._set_cache("entity:plain", {"e": 2})
+        rows = await bridge._search_entities("%")
+        assert rows == [{"e": 1}]

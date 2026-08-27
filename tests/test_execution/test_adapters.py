@@ -145,3 +145,41 @@ class TestMCPAdapter:
             result = await adapter.execute("nonexistent_mcp_tool", {"query": "x"})
             assert result.success is False
             assert result.error_type is not None
+
+
+class TestAdapterLatency:
+    async def test_http_latency_measured(self):
+        import time as _time
+
+        def handler(request):
+            _time.sleep(0.02)
+            return httpx.Response(200, json={"ok": True})
+
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://fake")
+        adapter = HTTPAdapter("http://fake", client=client)
+        try:
+            result = await adapter.execute("search_api", {"query": "q"})
+            assert result.success is True
+            assert result.latency_ms > 0
+        finally:
+            await adapter.close()
+
+    async def test_mcp_latency_measured(self):
+        import asyncio as _asyncio
+
+        class FakeSession:
+            async def call_tool(self, name, params):
+                await _asyncio.sleep(0.02)
+                from mcp.types import CallToolResult, TextContent
+                return CallToolResult(
+                    content=[TextContent(type="text", text='{"ok": 1}')],
+                    isError=False)
+
+        adapter = MCPAdapter(session=FakeSession())
+        try:
+            result = await adapter.execute("search_api", {"query": "q"})
+            assert result.success is True
+            assert result.latency_ms > 0
+        finally:
+            await adapter.close()

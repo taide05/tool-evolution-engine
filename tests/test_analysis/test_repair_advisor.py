@@ -301,3 +301,9 @@ class TestRepairAdvisorRobustResponse:
             assert hint is None or hint.get("fix") is None
         finally:
             await client.aclose()
+
+
+class TestRepairAdvisorParamNamesRobust:
+    def test_param_names_bad_json_condition_returns_empty(self):
+        advisor = RepairAdvisor.__new__(RepairAdvisor)
+        assert advisor._param_names({"condition": "not-json"}, []) == []
