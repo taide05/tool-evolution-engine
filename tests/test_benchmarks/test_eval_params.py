@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from scripts.run_eval import build_gsm_metrics, expand_benchmark_tasks, parse_args
+from scripts.run_eval import (build_gsm_metrics, degradation_sizes,
+                               eval_degradation_curve, expand_benchmark_tasks,
+                               parse_args)
 
 _TASKS_PATH = Path(__file__).resolve().parents[2] / "scripts" / "benchmark_tasks.json"
 
@@ -78,3 +80,20 @@ class TestArgparse:
         args = parse_args(["--seed", "400", "--num-variants", "8"])
         assert args.seed == 400
         assert args.num_variants == 8
+
+
+class TestDegradationSizes:
+    def test_degradation_sizes_derived(self):
+        assert degradation_sizes(2000) == [("small", 500), ("medium", 1000),
+                                           ("large", 2000)]
+        assert degradation_sizes(400) == [("small", 100), ("medium", 200),
+                                          ("large", 400)]
+
+    async def test_degradation_runs_small_scale(self, db_conn):
+        result = await eval_degradation_curve(db_conn, n_tasks=400)
+        assert set(result.keys()) == {"small", "medium", "large"}
+        for scale in result.values():
+            assert scale["n_traces"] > 0
+            for key in ("classifier_accuracy", "classifier_macro_f1",
+                        "dag_pattern_recall", "dag_discovered"):
+                assert key in scale

@@ -709,11 +709,16 @@ async def eval_before_after(conn, tasks: list[dict] | None = None) -> dict:
     }
 
 
-async def eval_degradation_curve(conn) -> dict:
-    """Run pipeline at small (50 tasks) and large (500 tasks) scale."""
+def degradation_sizes(n_tasks: int) -> list[tuple[str, int]]:
+    """三档 seed 派生：1/4、1/2、全量（默认 2000 → 500/1000/2000）。"""
+    return [("small", n_tasks // 4), ("medium", n_tasks // 2), ("large", n_tasks)]
+
+
+async def eval_degradation_curve(conn, n_tasks: int) -> dict:
+    """Run pipeline at 1/4, 1/2, and full seed scale."""
     results = {}
 
-    for scale_name, n_tasks in [("small", 200), ("large", 500)]:
+    for scale_name, scale_tasks in degradation_sizes(n_tasks):
         # Reset DB (order: child tables first due to FK constraints)
         await init_db(conn)
         await conn.execute("DELETE FROM canary_invocations")
@@ -725,7 +730,7 @@ async def eval_degradation_curve(conn) -> dict:
         await conn.execute("DELETE FROM trajectories")
         await conn.commit()
 
-        info = await seed_eval_data(conn, n_tasks=n_tasks)
+        info = await seed_eval_data(conn, n_tasks=scale_tasks)
         cls_result = await eval_classifier(conn)
         dag_result = await eval_dag(conn)
 
@@ -1405,9 +1410,9 @@ async def main(output_path: Path | None = None, seed: int = 2000,
     stage_times["before_after"] = round(t_now - t_stage, 2)
     t_stage = t_now
 
-    # F4: degradation curve (small=200, large=500)
-    print("\n[7/11] Degradation Curve (F4 — 200/500 seed)")
-    deg = await eval_degradation_curve(conn)
+    # F4: degradation curve (三档派生: seed//4, seed//2, seed)
+    print(f"\n[7/11] Degradation Curve (F4 — {seed//4}/{seed//2}/{seed} seed)")
+    deg = await eval_degradation_curve(conn, n_tasks=seed)
     for scale, m in deg.items():
         print(f"  {scale}: n={m['n_traces']} cls_acc={m['classifier_accuracy']:.1%} "
               f"cls_f1={m['classifier_macro_f1']:.3f} dag_recall={m['dag_pattern_recall']:.1%} "
