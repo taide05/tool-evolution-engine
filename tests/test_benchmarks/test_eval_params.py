@@ -97,3 +97,90 @@ class TestDegradationSizes:
             for key in ("classifier_accuracy", "classifier_macro_f1",
                         "dag_pattern_recall", "dag_discovered"):
                 assert key in scale
+
+
+class TestExecutionEvalNumTasks:
+    def test_signature_accepts_n_tasks(self):
+        import inspect
+        from scripts.run_execution_eval import run_execution_eval
+        sig = inspect.signature(run_execution_eval)
+        assert "n_tasks" in sig.parameters
+        assert sig.parameters["n_tasks"].default == 2000
+
+    async def test_not_divisible_raises(self, db_conn):
+        import pytest
+        from scripts.run_execution_eval import run_execution_eval
+        with pytest.raises(ValueError, match="50"):
+            await run_execution_eval(db_conn, n_tasks=123)
+
+    def test_shared_expand_consistency(self):
+        from scripts.run_execution_eval import load_eval_tasks
+        tasks = load_eval_tasks(2000)
+        assert len(tasks) == 2000
+        expected = {t["task_id"] for t in expand_benchmark_tasks(_base_tasks(), 40)}
+        assert {t["task_id"] for t in tasks} == expected
+
+    def test_n_tasks_50_single_variant(self):
+        from scripts.run_execution_eval import load_eval_tasks
+        tasks = load_eval_tasks(50)
+        assert len(tasks) == 50
+        assert all(t["task_id"].endswith("-v0") for t in tasks)
+
+
+class TestLlmPlanPassIsolation:
+    async def test_planner_exception_counts_failed(self, db_conn, monkeypatch):
+        from tool_evolution.execution.adapters import MockAdapter
+        from tool_evolution.execution.audit import ExecutionAudit
+        from tool_evolution.execution.executor import SkillExecutor
+        from tool_evolution.execution.planner import LLMPlanner
+        from tool_evolution.utils.config import settings
+        from scripts.run_execution_eval import _run_llm_plan_pass
+
+        monkeypatch.setattr(settings, "deepseek_api_key", "fake-key")
+
+        async def _boom(self, desc):
+            raise RuntimeError("simulated planner failure")
+
+        monkeypatch.setattr(LLMPlanner, "plan", _boom)
+        audit = ExecutionAudit(db_conn)
+        adapter = MockAdapter()
+        executor = SkillExecutor(db_conn, adapter, audit=audit)
+        try:
+            tasks = [{"task_id": "t1", "tool_chain": ["search_api"], "task_name": "x"},
+                     {"task_id": "t2", "tool_chain": ["search_api"], "task_name": "y"}]
+            result = await _run_llm_plan_pass(db_conn, tasks, ["t1", "t2"],
+                                              executor, audit)
+            assert result["mode"] == "live"
+            assert result["success"] == 0
+            assert result["failed"] == 2
+            assert set(result["failed_task_ids"]) == {"t1", "t2"}
+        finally:
+            await adapter.close()
+
+    async def test_planner_none_counts_failed(self, db_conn, monkeypatch):
+        from tool_evolution.execution.adapters import MockAdapter
+        from tool_evolution.execution.audit import ExecutionAudit
+        from tool_evolution.execution.executor import SkillExecutor
+        from tool_evolution.execution.planner import LLMPlanner
+        from tool_evolution.utils.config import settings
+        from scripts.run_execution_eval import _run_llm_plan_pass
+
+        monkeypatch.setattr(settings, "deepseek_api_key", "fake-key")
+
+        async def _none(self, desc):
+            return None
+
+        monkeypatch.setattr(LLMPlanner, "plan", _none)
+        audit = ExecutionAudit(db_conn)
+        adapter = MockAdapter()
+        executor = SkillExecutor(db_conn, adapter, audit=audit)
+        try:
+            tasks = [{"task_id": "t1", "tool_chain": ["search_api"], "task_name": "x"}]
+            result = await _run_llm_plan_pass(db_conn, tasks, ["t1"],
+                                              executor, audit)
+            assert result["mode"] == "live"
+            assert result["success"] == 0
+            assert result["failed"] == 1
+            assert result["failed_task_ids"] == ["t1"]
+        finally:
+            await adapter.close()

@@ -1,9 +1,11 @@
-"""执行层消费端评测——50 任务 skill_plan vs llm_plan 对比 + 修复闭环复验 + 口径隔离验证。
+"""执行层消费端评测——skill_plan vs llm_plan 对比 + 修复闭环复验 + 口径隔离验证。
 
 独立于 run_eval 的 gsm 体系（口径隔离：管道指标 vs 消费端对比）。
 固定 Random(42) 可复现；llm_plan 对比需 TOOLEVO_DEEPSEEK_API_KEY。
+任务集由 benchmark_tasks.json 经 expand_benchmark_tasks 确定性扩展（默认 2000）。
 """
 
+import argparse
 import asyncio
 import json
 import random
@@ -15,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import aiosqlite
 
+from scripts.run_eval import expand_benchmark_tasks, seed_eval_data
 from tool_evolution.analysis.dag_miner import DAGMiner
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.execution.adapters import MockAdapter
@@ -32,6 +35,14 @@ _TASKS_PATH = Path(__file__).parent / "benchmark_tasks.json"
 _EVAL_PREFIX = "exec-eval-"
 _LLM_PREFIX = "exec-llm-"
 _REPAIR_PREFIX = "exec-repair-"
+
+
+def load_eval_tasks(n_tasks: int = 2000) -> list[dict]:
+    base_tasks = json.loads(_TASKS_PATH.read_text(encoding="utf-8"))
+    if n_tasks % len(base_tasks) != 0:
+        raise ValueError(
+            f"--num-tasks must be divisible by {len(base_tasks)} base tasks, got {n_tasks}")
+    return expand_benchmark_tasks(base_tasks, n_tasks // len(base_tasks))
 
 
 async def _clear_db(conn: aiosqlite.Connection) -> None:
@@ -129,25 +140,37 @@ async def _run_llm_plan_pass(conn, tasks, hit_task_ids, executor, audit) -> dict
         total_latency = 0
         total_tokens = 0
         planning_ms_total = 0
+        failed_task_ids = []
+        done = 0
         for task_id in hit_task_ids:
             desc = desc_by_id[task_id]
-            t0 = time.monotonic()
-            steps = await planner.plan(desc)
-            planning_ms_total += (time.monotonic() - t0) * 1000
-            if steps is None:
+            try:
+                # 单任务隔离：planner.plan 内 resp.json() 在 httpx try 外
+                # （planner.py:66）——2000 任务规模下单任务异常不应中断整个评测
+                t0 = time.monotonic()
+                steps = await planner.plan(desc)
+                planning_ms_total += (time.monotonic() - t0) * 1000
+                if steps is None:
+                    failed += 1
+                    failed_task_ids.append(task_id)
+                    continue
+                await audit.create_task(
+                    task_id=f"{_LLM_PREFIX}{task_id}", task_description=desc,
+                    mode="llm_plan", plan=None)
+                result = await executor.execute_llm_plan(
+                    f"{_LLM_PREFIX}{task_id}", desc, steps, agent_id="eval")
+                if result["status"] == "success":
+                    success += 1
+                else:
+                    failed += 1
+                total_latency += result["total_latency_ms"]
+                total_tokens += result["total_tokens"]
+            except Exception:
                 failed += 1
-                continue
-            await audit.create_task(
-                task_id=f"{_LLM_PREFIX}{task_id}", task_description=desc,
-                mode="llm_plan", plan=None)
-            result = await executor.execute_llm_plan(
-                f"{_LLM_PREFIX}{task_id}", desc, steps, agent_id="eval")
-            if result["status"] == "success":
-                success += 1
-            else:
-                failed += 1
-            total_latency += result["total_latency_ms"]
-            total_tokens += result["total_tokens"]
+                failed_task_ids.append(task_id)
+            done += 1
+            if done % 100 == 0:
+                print(f"  llm_plan 进度: {done}/{len(hit_task_ids)}")
         n = max(success + failed, 1)
         return {
             "mode": "live",
@@ -156,6 +179,7 @@ async def _run_llm_plan_pass(conn, tasks, hit_task_ids, executor, audit) -> dict
             "total_latency_ms": total_latency, "total_tokens": total_tokens,
             "avg_planning_ms": round(planning_ms_total / max(len(hit_task_ids), 1), 1),
             "avg_planning_tokens": None,
+            "failed_task_ids": failed_task_ids,
         }
     finally:
         await planner.aclose()
@@ -207,13 +231,11 @@ async def _run_isolation_check(conn) -> dict:
     return {"exec_only_skills": len(exec_only), "exec_only_names": exec_only}
 
 
-async def run_execution_eval(conn: aiosqlite.Connection) -> dict:
-    from scripts.run_eval import seed_eval_data  # 延迟 import 防循环
-
+async def run_execution_eval(conn: aiosqlite.Connection, n_tasks: int = 2000) -> dict:
+    tasks = load_eval_tasks(n_tasks)  # 校验+生成放最前，参数错不碰库
     await _clear_db(conn)
     await seed_eval_data(conn, n_tasks=200)
     active_skills = await _deploy_active_skills(conn)
-    tasks = json.loads(_TASKS_PATH.read_text(encoding="utf-8"))
 
     audit = ExecutionAudit(conn)
     adapter = MockAdapter()
@@ -300,10 +322,14 @@ def _print_report(result: dict) -> None:
 
 
 async def _main() -> None:
+    parser = argparse.ArgumentParser(description="TEE execution-layer evaluation")
+    parser.add_argument("--num-tasks", type=int, default=2000,
+                        help="对比任务数（必须被 base 任务数整除，默认 2000）")
+    args = parser.parse_args()
     conn = await aiosqlite.connect(settings.db_path)
     conn.row_factory = aiosqlite.Row
     try:
-        result = await run_execution_eval(conn)
+        result = await run_execution_eval(conn, n_tasks=args.num_tasks)
         _print_report(result)
     finally:
         await conn.close()
