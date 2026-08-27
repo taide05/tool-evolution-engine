@@ -1,5 +1,4 @@
 from enum import Enum
-from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from typing import Any
 
@@ -32,7 +31,3 @@ class TraceReport(BaseModel):
     latency_ms: int
     token_count: int = 0
     source: str = "synthetic"
-
-
-class TraceSnapshot(TraceReport):
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

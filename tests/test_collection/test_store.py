@@ -17,7 +17,7 @@ class TestTraceStore:
             success=True, latency_ms=100, token_count=50
         )
         await store.insert(r)
-        rows = await store.get_by_tool("search", limit=10)
+        rows = await store.get_all_traces(limit=10)
         assert len(rows) == 1
         assert rows[0]["trace_id"] == "t1"
         assert rows[0]["success"] == 1
@@ -92,7 +92,7 @@ class TestTraceStore:
             success=True, latency_ms=100, source="synthetic_demo"
         )
         await store.insert(r)
-        rows = await store.get_by_tool("search", limit=10)
+        rows = await store.get_all_traces(limit=10)
         assert rows[0]["source"] == "synthetic_demo"
 
     async def test_insert_atomic_rolls_back_on_fts_failure(self, store):
@@ -103,13 +103,13 @@ class TestTraceStore:
                         success=True, latency_ms=10)
         with pytest.raises(aiosqlite.OperationalError):
             await store.insert(r)
-        rows = await store.get_by_tool("t", limit=10)
+        rows = await store.get_all_traces(limit=10)
         assert rows == []
         # 正向对照：重建 FTS 后同一报告可成功插入——锁定"失败即回滚"而非"失败即永久拒插"
         await init_db(store.conn)
         await store.insert(TraceReport(trace_id="atomic-1", agent_id="a", tool_name="t",
                                        success=True, latency_ms=10))
-        rows = await store.get_by_tool("t", limit=10)
+        rows = await store.get_all_traces(limit=10)
         assert len(rows) == 1
 
     async def test_search_escapes_fts_syntax(self, store):

@@ -45,13 +45,3 @@ class TestKDEAnalyzer:
         params_list = [{"tags": ["a", "b"]} for _ in range(10)]
         result = ana.analyze("t", "1.0.0", params_list)
         assert "tags" not in result
-
-    def test_get_defaults(self):
-        ana = KDEAnalyzer(min_samples=5)
-        params_list = [
-            {"max_results": i, "lang": "zh" if i % 2 == 0 else "en"}
-            for i in range(10, 30)
-        ]
-        ana.analyze("search", "1.0.0", params_list)
-        defaults = ana.get_defaults("search", "1.0.0")
-        assert "max_results" in defaults

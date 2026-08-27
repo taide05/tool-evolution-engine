@@ -108,7 +108,3 @@ class KDEAnalyzer:
     def _analyze_bool(self, values: list) -> dict:
         true_count = sum(1 for v in values if v)
         return {"default_value": true_count > len(values) / 2}
-
-    def get_defaults(self, tool_name: str, tool_version: str) -> dict[str, object]:
-        dists = self._distributions.get((tool_name, tool_version), {})
-        return {k: v["default_value"] for k, v in dists.items()}

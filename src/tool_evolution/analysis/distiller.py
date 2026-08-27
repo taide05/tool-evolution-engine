@@ -50,13 +50,3 @@ class CounterfactualDistiller:
             f"{rule['rule_type']}:{tool_name}:{tool_version}".encode()
         ).hexdigest()[:12]
         return rule
-
-    def distill_batch(self, failed_traces: list[dict]) -> list[dict]:
-        seen = set()
-        rules = []
-        for trace in failed_traces:
-            rule = self.distill(trace)
-            if rule["_hash"] not in seen:
-                seen.add(rule["_hash"])
-                rules.append(rule)
-        return rules

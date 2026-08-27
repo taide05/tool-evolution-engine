@@ -67,14 +67,3 @@ class TestCounterfactualDistiller:
         assert rule["rule_type"] == "circuit_breaker_rule"
         assert rule["action"]["failure_threshold"] == 3
         assert rule["action"]["cooldown_seconds"] == 30
-
-    def test_distill_batch_deduplicates_rules(self):
-        d = CounterfactualDistiller()
-        traces = [
-            {"error_type": "param_error", "tool_name": "search", "tool_version": "1.0.0",
-             "params": json.dumps({"q": ""}), "error_message": "missing query"},
-            {"error_type": "param_error", "tool_name": "search", "tool_version": "1.0.0",
-             "params": json.dumps({"q": ""}), "error_message": "empty query"},
-        ]
-        rules = d.distill_batch(traces)
-        assert len(rules) >= 1

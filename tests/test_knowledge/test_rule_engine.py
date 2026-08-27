@@ -35,18 +35,6 @@ class TestRuleEngine:
         triggered = await engine.check("nonexistent", "1.0.0", {})
         assert triggered == []
 
-    async def test_mark_hit_and_miss(self, engine):
-        rid = await engine.add_rule({
-            "tool_name": "t", "tool_version": "1.0.0",
-            "rule_type": "auth_rule",
-            "condition": {}, "action": {}, "status": "active"
-        })
-        await engine.mark_hit(rid)
-        await engine.mark_miss(rid)
-        rules = await engine.check("t", "1.0.0", {})
-        assert rules[0]["hit_count"] == 1
-        assert rules[0]["miss_count"] == 1
-
     async def test_deprecate_version(self, engine):
         await engine.add_rule({
             "tool_name": "search", "tool_version": "1.0.0",

@@ -18,13 +18,14 @@ import asyncio
 import sys
 sys.path.insert(0, "src")
 
-from tool_evolution.utils.database import get_connection, init_db
+from tool_evolution.utils.database import get_connection, init_db, run_migrations
 from tool_evolution.governance.mcp_bridge import MCPBridge, mcp, set_bridge
 
 
 async def main():
     conn = await get_connection()
     await init_db(conn)
+    await run_migrations(conn)
     bridge = MCPBridge(conn)
     set_bridge(bridge)
     await mcp.run_stdio_async()  # mcp>=1.0 新 API（run_stdio 已移除——I#7 冒烟实测）

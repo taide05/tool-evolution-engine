@@ -29,13 +29,6 @@ class TraceStore:
                 (cursor.lastrowid, report.tool_name, report.error_message or "")
             )
 
-    async def get_by_tool(self, tool_name: str, limit: int = 100) -> list[dict]:
-        cursor = await self.conn.execute(
-            "SELECT * FROM trajectories WHERE tool_name=? ORDER BY created_at DESC LIMIT ?",
-            (tool_name, limit)
-        )
-        return [dict(row) for row in await cursor.fetchall()]
-
     async def get_task_tree(self, root_id: str) -> list[dict]:
         cursor = await self.conn.execute(
             """WITH RECURSIVE tree AS (
@@ -93,11 +86,4 @@ class TraceStore:
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         args.extend([limit, offset])
         cursor = await self.conn.execute(query, args)
-        return [dict(row) for row in await cursor.fetchall()]
-
-    async def get_recent_traces(self, days: int = 30, limit: int = 10000) -> list[dict]:
-        cursor = await self.conn.execute(
-            "SELECT rowid, * FROM trajectories WHERE created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?",
-            (f"-{days} days", limit)
-        )
         return [dict(row) for row in await cursor.fetchall()]

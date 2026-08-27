@@ -3,7 +3,7 @@ import asyncio
 import sys
 sys.path.insert(0, "src")
 
-from tool_evolution.utils.database import get_connection, init_db
+from tool_evolution.utils.database import get_connection, init_db, run_migrations
 from tool_evolution.utils.config import settings
 from tool_evolution.collection.store import TraceStore
 from tool_evolution.analysis.classifier import FailureClassifier
@@ -19,18 +19,21 @@ from tool_evolution.governance.governor import SkillGovernor
 async def main():
     conn = await get_connection()
     await init_db(conn)
+    await run_migrations(conn)
 
     store = TraceStore(conn)
 
-    # 1. Data overview
+    # 1. Data overview（生产口径隔离：executor 轨迹不回流挖掘/蒸馏）
     failures = await store.count_failures(None)
-    total = len(await store.get_all_traces(limit=10000))
+    total = len(await store.get_all_traces(limit=10000,
+                                           exclude_agent_prefix="executor:"))
     print("=== Step 1: Data overview ===")
     print(f"Total traces: {total}, Failures: {failures}, Failure rate: {failures/max(total,1):.1%}")
 
-    # 2. Classifier training
+    # 2. Classifier training（口径隔离：排除 executor 轨迹）
     print("\n=== Step 2: Failure classifier training ===")
-    cursor = await conn.execute("SELECT * FROM trajectories WHERE success=0")
+    cursor = await conn.execute(
+        "SELECT * FROM trajectories WHERE success=0 AND agent_id NOT LIKE 'executor:%'")
     failed_rows = [dict(r) for r in await cursor.fetchall()]
     if failed_rows:
         clf = FailureClassifier()
@@ -72,7 +75,8 @@ async def main():
 
     # 5. DAG mining
     print("\n=== Step 5: DAG frequent subgraph mining ===")
-    all_traces = await store.get_all_traces(limit=10000)
+    all_traces = await store.get_all_traces(limit=10000,
+                                            exclude_agent_prefix="executor:")
     miner = DAGMiner(min_support=0.05, max_nodes=10)
     skills = miner.mine(all_traces)
     skill_mgr = SkillPackManager(conn)

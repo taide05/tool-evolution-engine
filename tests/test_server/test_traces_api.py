@@ -28,3 +28,32 @@ class TestTracesAPI:
         assert r.status_code == 200
         data = r.json()
         assert "total_traces" in data
+
+
+class TestPreferenceLearnEntry:
+    async def test_report_triggers_learn_every_20th(self, setup_db, client, monkeypatch):
+        from tool_evolution.server.routes import traces as traces_module
+
+        learn_calls = {"n": 0}
+
+        async def fake_learn_bg():
+            learn_calls["n"] += 1
+
+        # 测节流调度接线；真实学习函数体由 test_preference_learner 覆盖
+        monkeypatch.setattr(traces_module, "_learn_prefs_bg", fake_learn_bg)
+        traces_module._learn_counter = 0
+        for i in range(19):
+            resp = await client.post("/api/traces/report", json={
+                "trace_id": f"p{i}", "agent_id": "a", "tool_name": "search_api",
+                "success": True, "latency_ms": 10})
+            assert resp.status_code == 200
+        assert learn_calls["n"] == 0
+        resp = await client.post("/api/traces/report", json={
+            "trace_id": "p20", "agent_id": "a", "tool_name": "search_api",
+            "success": True, "latency_ms": 10})
+        assert resp.status_code == 200
+        for _ in range(100):
+            if learn_calls["n"] == 1:
+                break
+            await asyncio.sleep(0.01)
+        assert learn_calls["n"] == 1

@@ -53,18 +53,6 @@ class RuleEngine:
             rules.append(rule)
         return rules
 
-    async def mark_hit(self, rule_id: int) -> None:
-        await self.conn.execute(
-            "UPDATE rules SET hit_count = hit_count + 1 WHERE id=?", (rule_id,)
-        )
-        await self.conn.commit()
-
-    async def mark_miss(self, rule_id: int) -> None:
-        await self.conn.execute(
-            "UPDATE rules SET miss_count = miss_count + 1 WHERE id=?", (rule_id,)
-        )
-        await self.conn.commit()
-
     async def deprecate_version(self, tool_name: str, old_version: str) -> None:
         await self.conn.execute(
             "UPDATE rules SET status='deprecated' WHERE tool_name=? AND tool_version=?",

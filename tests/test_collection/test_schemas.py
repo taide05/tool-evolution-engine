@@ -1,4 +1,4 @@
-from tool_evolution.collection.schemas import TraceReport, TraceSnapshot, TraceType, ErrorType
+from tool_evolution.collection.schemas import TraceReport, TraceType, ErrorType
 
 
 class TestTraceReport:
@@ -59,13 +59,3 @@ class TestTraceReport:
             success=True, latency_ms=10, source="canary_measurement"
         )
         assert r.source == "canary_measurement"
-
-
-class TestTraceSnapshot:
-    def test_snapshot_extends_report(self):
-        snap = TraceSnapshot(
-            trace_id="t1", agent_id="a", tool_name="t",
-            success=True, latency_ms=10
-        )
-        assert snap.created_at is not None
-        assert snap.tool_version == "1.0.0"
