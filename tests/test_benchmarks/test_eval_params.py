@@ -199,5 +199,6 @@ class TestLlmPlanPassIsolation:
             assert result["success"] == 0
             assert result["failed"] == 1
             assert result["failed_task_ids"] == ["t1"]
+            assert result["failed_reasons"] == ["plan_rejected"]
         finally:
             await adapter.close()

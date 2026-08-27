@@ -53,6 +53,7 @@ def save_results(result: dict, path: Path) -> None:
 async def _clear_db(conn: aiosqlite.Connection) -> None:
     for stmt in (
         "DELETE FROM canary_invocations",
+        "DELETE FROM circuit_states",
         "DELETE FROM execution_steps",
         "DELETE FROM execution_tasks",
         "DELETE FROM deployed_skills",
@@ -146,6 +147,7 @@ async def _run_llm_plan_pass(conn, tasks, hit_task_ids, executor, audit) -> dict
         total_tokens = 0
         planning_ms_total = 0
         failed_task_ids = []
+        failed_reasons = []
         done = 0
         for task_id in hit_task_ids:
             desc = desc_by_id[task_id]
@@ -158,6 +160,7 @@ async def _run_llm_plan_pass(conn, tasks, hit_task_ids, executor, audit) -> dict
                 if steps is None:
                     failed += 1
                     failed_task_ids.append(task_id)
+                    failed_reasons.append("plan_rejected")
                     continue
                 await audit.create_task(
                     task_id=f"{_LLM_PREFIX}{task_id}", task_description=desc,
@@ -168,11 +171,14 @@ async def _run_llm_plan_pass(conn, tasks, hit_task_ids, executor, audit) -> dict
                     success += 1
                 else:
                     failed += 1
+                    failed_task_ids.append(task_id)
+                    failed_reasons.append("execution_failed")
                 total_latency += result["total_latency_ms"]
                 total_tokens += result["total_tokens"]
-            except Exception:
+            except Exception as exc:
                 failed += 1
                 failed_task_ids.append(task_id)
+                failed_reasons.append(f"{type(exc).__name__}: {exc}")
             done += 1
             if done % 100 == 0:
                 print(f"  llm_plan 进度: {done}/{len(hit_task_ids)}")
@@ -185,6 +191,7 @@ async def _run_llm_plan_pass(conn, tasks, hit_task_ids, executor, audit) -> dict
             "avg_planning_ms": round(planning_ms_total / max(len(hit_task_ids), 1), 1),
             "avg_planning_tokens": None,
             "failed_task_ids": failed_task_ids,
+            "failed_reasons": failed_reasons,
         }
     finally:
         await planner.aclose()

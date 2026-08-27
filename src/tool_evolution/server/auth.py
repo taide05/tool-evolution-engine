@@ -1,3 +1,13 @@
+"""鉴权口径声明（D2-7 修复）：
+
+- fail-closed：未配置 TOOLEVO_API_KEY 拒绝启动（require_api_key 启动门）；
+  /health 外全部路径经中间件校验，无 key/错 key → 401
+- 密钥比较：hmac.compare_digest 常量时间比较（防时序侧信道）
+- 存储口径：明文 env 单 key（TOOLEVO_API_KEY）——非 SHA256 存储。
+  单 key 部署下明文 env 是合理选择（无密钥表/多租户需求），
+  与"API Key 管理用 SHA256"的通用描述差异以此声明为准
+"""
+
 import hmac
 import logging
 from fastapi import Request
