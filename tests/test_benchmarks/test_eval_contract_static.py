@@ -4,9 +4,9 @@ from pathlib import Path
 RUN_EVAL = Path(__file__).resolve().parents[2] / "scripts" / "run_eval.py"
 SEED_DEMO = Path(__file__).resolve().parents[2] / "scripts" / "seed_demo_data.py"
 
-GSM_KEYS = ["schema_version", "timestamp", "seed", "failure_reduction", "dag_recall",
-            "classifier", "template_coverage", "rule_precision", "governance",
-            "throughput", "data_composition"]
+GSM_KEYS = ["schema_version", "timestamp", "seed", "benchmark", "failure_reduction",
+            "dag_recall", "classifier", "template_coverage", "rule_precision",
+            "governance", "throughput", "data_composition"]
 
 
 def _parse(path: Path) -> ast.Module:

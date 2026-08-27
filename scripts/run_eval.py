@@ -3,6 +3,7 @@
 Produces quantitative metrics for resume. Run after `python scripts/seed_demo_data.py`.
 Usage: python scripts/run_eval.py
 """
+import argparse
 import asyncio
 import json
 import random
@@ -79,6 +80,32 @@ ERROR_MESSAGES = {
 
 
 _MAIN_RNG = random.Random(42)  # 主链固定种子——评测可复现（增量零 I 修复#1）
+
+
+def expand_benchmark_tasks(base_tasks: list[dict], num_variants: int) -> list[dict]:
+    """确定性变体扩展（task-major 展开）：N base × num_variants。
+
+    变体 j 的 max_results/lang 按旧版 8 值表轮换（j % 8）——num_variants=8 时
+    与旧版内联循环逐字节一致；40 变体 = 8 参数组合 × 5 轮换的独立确定性抽样。
+    legacy 注：max_results 表中 25 超出 range_rule 合法域 1-20（旧版既有值，
+    保持旧口径一致不修——变体参数不进入 baseline 臂仿真，optimized 臂被规则夹到 20）。
+    """
+    max_results_variants = [5, 8, 10, 12, 15, 18, 20, 25]
+    lang_variants = ["zh", "zh", "zh", "zh", "en", "ja", "zh", "zh"]
+    expanded_tasks = []
+    for i, task in enumerate(base_tasks):
+        for j in range(num_variants):
+            variant = dict(task)
+            variant["task_id"] = f"{task['task_id']}-v{j}"
+            variant["root_params"] = dict(task.get("root_params", task.get("params", {})))
+            if "root_params" not in task:
+                variant["root_params"] = {"query": variant["root_params"].get("query", f"task-{i}"),
+                                          "max_results": variant["root_params"].get("max_results", 10),
+                                          "lang": variant["root_params"].get("lang", "zh")}
+            variant["root_params"]["max_results"] = max_results_variants[j % 8]
+            variant["root_params"]["lang"] = lang_variants[j % 8]
+            expanded_tasks.append(variant)
+    return expanded_tasks
 
 async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
     """Seed labeled evaluation data with known ground truth patterns."""
@@ -1220,7 +1247,8 @@ async def eval_repair_advisor(conn) -> dict:
     }
 
 
-async def main(output_path: Path | None = None):
+async def main(output_path: Path | None = None, seed: int = 2000,
+               num_variants: int = 40):
     conn = await get_connection()
     await init_db(conn)
     await run_migrations(conn)
@@ -1229,31 +1257,17 @@ async def main(output_path: Path | None = None):
     print("TOOL EVOLUTION ENGINE — EVALUATION PIPELINE")
     print("=" * 60)
 
-    # Generate expanded benchmark tasks (50 base × 8 param variants = 400)
+    # Generate expanded benchmark tasks (50 base × num_variants, default 40 = 2000)
     tasks_path = Path(__file__).parent / "benchmark_tasks.json"
     base_tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
-    expanded_tasks = []
-    max_results_variants = [5, 8, 10, 12, 15, 18, 20, 25]
-    lang_variants = ["zh", "zh", "zh", "zh", "en", "ja", "zh", "zh"]
-    for i, task in enumerate(base_tasks):
-        for j in range(8):
-            variant = dict(task)
-            variant["task_id"] = f"{task['task_id']}-v{j}"
-            variant["root_params"] = dict(task.get("root_params", task.get("params", {})))
-            if "root_params" not in task:
-                variant["root_params"] = {"query": variant["root_params"].get("query", f"task-{i}"),
-                                          "max_results": variant["root_params"].get("max_results", 10),
-                                          "lang": variant["root_params"].get("lang", "zh")}
-            variant["root_params"]["max_results"] = max_results_variants[j]
-            variant["root_params"]["lang"] = lang_variants[j]
-            expanded_tasks.append(variant)
-    print(f"\nBenchmark tasks: {len(base_tasks)} base × 8 variants = {len(expanded_tasks)} tasks")
+    expanded_tasks = expand_benchmark_tasks(base_tasks, num_variants)
+    print(f"\nBenchmark tasks: {len(base_tasks)} base × {num_variants} variants = {len(expanded_tasks)} tasks")
 
     # Seed fresh eval data
     t0 = time.monotonic()
     stage_times = {}  # per-stage timing (F3 fix)
     t_stage = t0
-    info = await seed_eval_data(conn, n_tasks=1000)
+    info = await seed_eval_data(conn, n_tasks=seed)
     print(f"\n[1/11] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
           f"{len(info['error_labels'])} labeled failures")
 
@@ -1465,7 +1479,8 @@ async def main(output_path: Path | None = None):
         print(f"  {name}: {sec:.1f}s ({pct:.0f}%)")
     print(f"Evaluation complete in {elapsed:.1f}s")
 
-    gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count, repair)
+    gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count,
+                            seed, len(expanded_tasks), repair)
     if output_path:
         output_path.write_text(json.dumps(gsm, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"\nEval results written to: {output_path}")
@@ -1501,7 +1516,7 @@ async def main(output_path: Path | None = None):
     print(f"\n{'=' * 60}")
     print("L3 内部参考")
     print(f"{'=' * 60}")
-    print("  评测规模:       1000 seed + 400 benchmark")
+    print(f"  评测规模:       {seed} seed + {len(expanded_tasks)} benchmark")
     print(f"  全管道耗时:     {elapsed:.0f}s (离线批量统计,非产品延迟)")
     per_module = []
     if elapsed > 0:
@@ -1519,14 +1534,15 @@ async def main(output_path: Path | None = None):
 
 
 def build_gsm_metrics(cls, kde, dag, gov, ba, elapsed_s, data_composition, rules_count,
-                      repair=None) -> dict:
+                      seed_tasks: int, benchmark_tasks: int, repair=None) -> dict:
     from datetime import datetime, timezone
     bl = ba["baseline"]
     op = ba["optimized"]
     gsm = {
         "schema_version": 1,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "seed": {"n_tasks": 1000},
+        "seed": {"n_tasks": seed_tasks},
+        "benchmark": {"n_tasks": benchmark_tasks},
         "failure_reduction": {
             "baseline_rate": round(bl["failures"] / max(bl["total_calls"], 1), 4),
             "optimized_rate": round(op["failures"] / max(op["total_calls"], 1), 4),
@@ -1588,9 +1604,20 @@ async def _count_rules(conn) -> int:
     return (await cursor.fetchone())[0]
 
 
-if __name__ == "__main__":
-    import argparse
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TEE evaluation pipeline")
     parser.add_argument("--output", default="eval_results.json", help="Output JSON path")
-    args = parser.parse_args()
-    asyncio.run(main(output_path=Path(args.output)))
+    parser.add_argument("--seed", type=int, default=2000,
+                        help="Seed task count for synthetic eval data (default 2000)")
+    parser.add_argument("--num-variants", type=int, default=40,
+                        help="Benchmark variants per base task (50 base x N, default 40 = 2000)")
+    args = parser.parse_args(argv)
+    if args.seed < 50:
+        parser.error("--seed must be >= 50 (degradation small level seed//4 would be empty)")
+    return args
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    asyncio.run(main(output_path=Path(args.output), seed=args.seed,
+                     num_variants=args.num_variants))
