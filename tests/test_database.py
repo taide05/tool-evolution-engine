@@ -80,6 +80,7 @@ async def test_v1_db_migrates(tmp_path, monkeypatch):
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
+        await conn.execute("CREATE TABLE deployed_skills (id INTEGER PRIMARY KEY, name TEXT, status TEXT)")
         await conn.execute(
             """INSERT INTO trajectories (trace_id, agent_id, tool_name, trace_type, params,
                success, latency_ms) VALUES ('v1-row', 'a', 't', 'atomic', '{}', 1, 100)"""
@@ -182,6 +183,7 @@ async def test_v4_db_migrates_to_v5_execution_tables(tmp_path, monkeypatch):
         # 与 split 机制永远不会被执行，DDL 笔误可静默通过）
         await conn.execute("CREATE TABLE schema_meta (version INTEGER NOT NULL)")
         await conn.execute("INSERT INTO schema_meta (version) VALUES (4)")
+        await conn.execute("CREATE TABLE deployed_skills (id INTEGER PRIMARY KEY, name TEXT, status TEXT)")
         await conn.commit()
         await run_migrations(conn)
         cursor = await conn.execute("SELECT version FROM schema_meta")
@@ -246,10 +248,11 @@ async def test_v5_db_migrates_to_v6_circuit_states(tmp_path, monkeypatch):
     try:
         await conn.execute("CREATE TABLE schema_meta (version INTEGER NOT NULL)")
         await conn.execute("INSERT INTO schema_meta (version) VALUES (5)")
+        await conn.execute("CREATE TABLE deployed_skills (id INTEGER PRIMARY KEY, name TEXT, status TEXT)")
         await conn.commit()
         await run_migrations(conn)
         cursor = await conn.execute("SELECT version FROM schema_meta")
-        assert (await cursor.fetchone())[0] == 6
+        assert (await cursor.fetchone())[0] == CURRENT_SCHEMA_VERSION
         cursor = await conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='circuit_states'"
         )

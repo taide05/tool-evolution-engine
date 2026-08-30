@@ -154,14 +154,10 @@ class SkillGovernor:
         return current
 
     async def demote(self, skill_id: int, reason: str) -> str:
-        """Demote skill to deprecated status.
-
-        The reason parameter is reserved for audit trail (deprecation_reason
-        column is a two-week-plan item).
-        """
-        _ = reason
+        """Demote skill to deprecated status, recording the reason for audit trail."""
         await self.conn.execute(
-            "UPDATE deployed_skills SET status='deprecated' WHERE id=?", (skill_id,)
+            "UPDATE deployed_skills SET status='deprecated', deprecation_reason=? WHERE id=?",
+            (reason, skill_id),
         )
         await self.conn.commit()
         return "deprecated"

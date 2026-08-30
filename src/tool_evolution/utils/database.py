@@ -27,7 +27,7 @@ async def transaction(conn: aiosqlite.Connection):
         raise
 
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 # version: (ddl, table_to_check, column_to_check)
 MIGRATIONS: dict[int, tuple[str, str, str]] = {
@@ -94,6 +94,8 @@ MIGRATIONS: dict[int, tuple[str, str, str]] = {
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );""",
         "circuit_states", "tool_name"),
+    7: ("ALTER TABLE deployed_skills ADD COLUMN deprecation_reason TEXT",
+        "deployed_skills", "deprecation_reason"),
 }
 
 
@@ -206,6 +208,7 @@ async def init_db(conn: aiosqlite.Connection) -> None:
             status TEXT NOT NULL DEFAULT 'canary_5'
                 CHECK(status IN ('canary_5','canary_15','canary_50','active','deprecated','offline')),
             last_used_at TEXT,
+            deprecation_reason TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 

@@ -66,36 +66,55 @@ class CanaryRouter:
         await self.conn.commit()
 
     async def compare_variants(self, skill_id: int, min_samples: int = 30) -> dict | None:
-        """Compare canary vs stable metrics from recorded invocations.
+        """Compare canary vs stable on three dimensions (success + latency + tokens).
 
         Returns None if insufficient samples for either variant.
-        Returns {"canary_rate": float, "stable_rate": float, "rollback": bool, "promote": bool}.
+        rollback: canary 显著退化（success 掉 10pp 或 latency/token 暴涨 50%）
+        promote: 三维都不退化（success 不掉 2pp、latency/token 不涨 10%）
         """
         cursor = await self.conn.execute(
             """SELECT variant, COUNT(*) as total,
-                      SUM(CASE WHEN success THEN 1 ELSE 0 END) as successes
+                      SUM(CASE WHEN success THEN 1 ELSE 0 END) as successes,
+                      AVG(latency_ms) as avg_latency,
+                      AVG(tokens) as avg_tokens
                FROM canary_invocations
                WHERE skill_id = ?
                GROUP BY variant""",
             (skill_id,),
         )
         rows = await cursor.fetchall()
-        stats = {row["variant"]: {"total": row["total"], "successes": row["successes"]} for row in rows}
+        stats = {row["variant"]: {"total": row["total"], "successes": row["successes"],
+                                  "avg_latency": row["avg_latency"] or 0, "avg_tokens": row["avg_tokens"] or 0}
+                 for row in rows}
 
-        canary = stats.get("canary", {"total": 0, "successes": 0})
-        stable = stats.get("stable", {"total": 0, "successes": 0})
+        canary = stats.get("canary", {"total": 0, "successes": 0, "avg_latency": 0, "avg_tokens": 0})
+        stable = stats.get("stable", {"total": 0, "successes": 0, "avg_latency": 0, "avg_tokens": 0})
 
         if canary["total"] < min_samples or stable["total"] < min_samples:
             return None
 
         canary_rate = canary["successes"] / canary["total"]
         stable_rate = stable["successes"] / stable["total"]
+        canary_lat = canary["avg_latency"]
+        stable_lat = stable["avg_latency"]
+        canary_tok = canary["avg_tokens"]
+        stable_tok = stable["avg_tokens"]
+
+        success_ok = canary_rate >= stable_rate - 0.02
+        latency_ok = canary_lat <= stable_lat * 1.1
+        tokens_ok = canary_tok <= stable_tok * 1.1
 
         return {
             "canary_rate": round(canary_rate, 4),
             "stable_rate": round(stable_rate, 4),
+            "canary_latency": round(canary_lat, 1),
+            "stable_latency": round(stable_lat, 1),
+            "canary_tokens": round(canary_tok, 1),
+            "stable_tokens": round(stable_tok, 1),
             "canary_samples": canary["total"],
             "stable_samples": stable["total"],
-            "rollback": canary_rate < stable_rate - 0.10,
-            "promote": canary_rate >= stable_rate,
+            "rollback": (canary_rate < stable_rate - 0.10
+                         or canary_lat > stable_lat * 1.5
+                         or canary_tok > stable_tok * 1.5),
+            "promote": success_ok and latency_ok and tokens_ok,
         }
