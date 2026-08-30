@@ -970,6 +970,39 @@ async def eval_simplified_scenario(conn) -> dict:
         "en_details": vt_en_details, "cn_details": vt_cn_details,
     }
 
+    # P2: 主分类器跨分布 holdout —— eval-% 干净数据全量训练，simp-% 噪声数据测试
+    eval_failed = [dict(r) for r in await (await conn.execute(
+        "SELECT * FROM trajectories WHERE success=0 AND trace_id LIKE 'eval-%'"
+    )).fetchall()]
+    noisy_holdout = {}
+    if len(eval_failed) >= 20 and len(failed_rows) >= 20:
+        clf_main = FailureClassifier()
+        clf_main.train(eval_failed)
+        nh_true, nh_pred = [], []
+        for t in failed_rows:
+            try:
+                p = clf_main.predict(t).value
+                nh_true.append(t["error_type"])
+                nh_pred.append(p)
+            except Exception:
+                pass
+        nh_classes = sorted(set(nh_true + nh_pred))
+        nh_per_class = {}
+        for c in nh_classes:
+            tp = sum(1 for a, b in zip(nh_true, nh_pred) if a == c and b == c)
+            fp = sum(1 for a, b in zip(nh_true, nh_pred) if a != c and b == c)
+            fn = sum(1 for a, b in zip(nh_true, nh_pred) if a == c and b != c)
+            pr = tp / max(tp + fp, 1)
+            rc = tp / max(tp + fn, 1)
+            nh_per_class[c] = round(2 * pr * rc / max(pr + rc, 0.01), 3)
+        noisy_holdout = {
+            "train_clean": len(eval_failed),
+            "test_noisy": len(nh_true),
+            "accuracy": round(sum(1 for a, b in zip(nh_true, nh_pred) if a == b) / max(len(nh_true), 1), 3),
+            "macro_f1": round(sum(nh_per_class.values()) / max(len(nh_per_class), 1), 3),
+            "per_class": nh_per_class,
+        }
+
     return {
         "n_traces": len(failed_rows),
         "train_size": len(train_set),
@@ -980,6 +1013,7 @@ async def eval_simplified_scenario(conn) -> dict:
         "rules_f1": rules_f1,
         "rf_wins": rf_acc > rules_acc,
         "char_wb_variant_test": vt_result,
+        "noisy_holdout": noisy_holdout,
     }
 
 
@@ -1472,6 +1506,12 @@ async def main(output_path: Path | None = None, seed: int = 2000,
             if vt.get("cn_total", 0) > 0:
                 print(f"  CN variants: {vt['cn_accuracy']:.1%} ({vt['cn_correct']}/{vt['cn_total']}) [cross-lang limitation]")
                 for d in vt.get("cn_details", []): print(d)
+        nh = simplified.get("noisy_holdout", {})
+        if nh:
+            print("\n  P2 noisy-holdout (clean train -> noisy test):")
+            print(f"    accuracy={nh['accuracy']:.1%}  macro F1={nh['macro_f1']:.3f}  "
+                  f"(clean={nh['train_clean']}, noisy={nh['test_noisy']})")
+            print("    per-class: " + ", ".join(f"{k}={v:.2f}" for k, v in nh['per_class'].items()))
         t_now = time.monotonic()
         stage_times["simplified"] = round(t_now - t_stage, 2)
 
