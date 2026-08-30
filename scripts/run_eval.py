@@ -333,16 +333,7 @@ async def eval_dag(conn) -> dict:
 
     # Check which planted patterns were discovered
     discovered_names = {d["name"] for d in discovered}
-    planted_names = {
-        "search_api → detail_api → analyze_api → report_api",
-        "search_api → analyze_api",
-        "github_api → analyze_api",
-        "arxiv_api → analyze_api → report_api",
-        "official_docs → detail_api → analyze_api",
-        "github_api → search_api → analyze_api",
-        "arxiv_api → official_docs → analyze_api",
-        "search_api → report_api",
-    }
+    planted_names = {" → ".join(p) for p in DAG_PATTERNS}
 
     matched = discovered_names & planted_names
     recall = len(matched) / max(len(planted_names), 1)
@@ -1342,7 +1333,7 @@ async def main(output_path: Path | None = None, seed: int = 2000,
         for tool in EVAL_TOOLS:
             await mgr_kde.generate(tool, "1.0.0")
         kde = await eval_kde(conn)
-        print(f"  Tools analyzed: {kde['tools_analyzed']}/7, Total params: {kde['total_params']}")
+        print(f"  Tools analyzed: {kde['tools_analyzed']}/{len(TOOL_SPECS)}, Total params: {kde['total_params']}")
         for tool, detail in kde.get("details", {}).items():
             print(f"    {tool}: {detail['n_params_discovered']} params")
         below = kde.get("below_min_samples", [])
