@@ -32,6 +32,7 @@ from tool_evolution.execution.tool_specs import TOOL_SPECS, mock_params_for_tool
 EVAL_TOOLS = list(TOOL_SPECS.keys())
 ERRORS = list(ErrorType)
 DAG_PATTERNS = [
+    # 核心管道（原有 8 模式）
     ["search_api", "detail_api", "analyze_api", "report_api"],
     ["search_api", "analyze_api"],
     ["github_api", "analyze_api"],
@@ -40,6 +41,20 @@ DAG_PATTERNS = [
     ["github_api", "search_api", "analyze_api"],
     ["arxiv_api", "official_docs", "analyze_api"],
     ["search_api", "report_api"],
+    # 异构工具模式（新增）
+    ["web_search", "detail_api", "analyze_api"],
+    ["vector_search", "knowledge_base", "analyze_api"],
+    ["document_qa", "wikipedia", "report_api"],
+    ["database_query", "table_lookup", "analyze_api"],
+    ["cache_set", "cache_get", "database_query"],
+    ["data_export", "file_write", "report_api"],
+    ["file_read", "file_list", "analyze_api"],
+    ["file_delete", "file_list"],
+    ["code_execute", "code_review", "report_api"],
+    ["git_commit", "git_diff", "code_review"],
+    ["run_tests", "code_execute", "report_api"],
+    ["http_post", "http_get", "analyze_api"],
+    ["send_email", "send_message", "report_api"],
 ]
 
 # Realistic error messages that do NOT contain the error type literally
@@ -154,12 +169,7 @@ async def seed_eval_data(conn, n_tasks: int = 200) -> dict:
                 tool_name=tool, tool_version="1.0.0",
                 trace_type=TraceType.ATOMIC,
                 success=success,
-                params={
-                    "query": f"产品文档 第{_MAIN_RNG.randint(1, 100)}节",
-                    "max_results": _MAIN_RNG.randint(5, 20),
-                    "lang": _MAIN_RNG.choice(["zh", "zh", "zh", "en", "ja"]),
-                    "timeout_ms": _MAIN_RNG.choice([5000, 10000, 15000]),
-                },
+                params=mock_params_for_tool(tool, _MAIN_RNG),
                 latency_ms=_MAIN_RNG.randint(50, 5000),
                 token_count=_MAIN_RNG.randint(50, 500),
                 source="synthetic_demo",
@@ -447,41 +457,15 @@ async def _seed_kde_training_data(conn) -> None:
     """Seed realistic success traces so KDE can learn valid parameter ranges."""
     store = TraceStore(conn)
     rng = random.Random(42)
-    # Core tools with full param sets
     import uuid as _uuid
     _batch_id = _uuid.uuid4().hex[:8]
     for i in range(200):
-        for tool in ["search_api", "detail_api", "analyze_api", "report_api"]:
+        for tool in TOOL_SPECS:
             await store.insert(TraceReport(
                 trace_id=f"kde-{_batch_id}-{tool}-{i}",
                 agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
                 success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
-                params={"query": f"技术手册 第{rng.randint(1, 100)}节",
-                        "max_results": rng.randint(5, 20),
-                        "lang": rng.choice(["zh", "zh", "zh", "en"]),
-                        "timeout_ms": rng.choice([5000, 10000, 15000])},
-                source="synthetic_demo",
-            ))
-    # Additional tools with their own param schemas
-    for i in range(200):
-        for tool, param_sets in [
-            ("github_api", {"repo": "owner/repo", "per_page": rng.randint(10, 100),
-                           "state": rng.choice(["open", "closed", "all"]),
-                           "sort": rng.choice(["created", "updated", "comments"])}),
-            ("arxiv_api", {"query": f"machine learning agent {rng.randint(2020, 2026)}",
-                          "max_results": rng.randint(5, 30),
-                          "sort_by": rng.choice(["relevance", "lastUpdatedDate"]),
-                          "category": rng.choice(["cs.AI", "cs.CL", "cs.LG", "stat.ML"])}),
-            ("official_docs", {"url": f"https://docs.example.com/v{rng.randint(1,3)}/api/{rng.choice(['search','get','list'])}",
-                              "timeout_ms": rng.choice([5000, 10000, 15000, 20000]),
-                              "retry": rng.choice([True, False]),
-                              "format": rng.choice(["json", "xml", "text"])}),
-        ]:
-            await store.insert(TraceReport(
-                trace_id=f"kde-{_batch_id}-{tool}-{i}",
-                agent_id="benchmark", tool_name=tool, tool_version="1.0.0",
-                success=True, latency_ms=rng.randint(50, 400), token_count=rng.randint(50, 300),
-                params=dict(param_sets),
+                params=mock_params_for_tool(tool, rng),
                 source="synthetic_demo",
             ))
 
