@@ -1252,11 +1252,40 @@ async def eval_repair_advisor(conn) -> dict:
     }
 
 
+_STAGE_DEPS = {
+    "classifier": (),
+    "kde": (),
+    "dag": (),
+    "governance": ("dag",),
+    "before_after": (),
+    "degradation": (),
+    "simplified": (),
+    "relations": (),
+    "preference_loop": (),
+    "repair_advisor": (),
+}
+
+
+def _resolve_stages(only: str | None):
+    """--only: 返回要执行的 stage 集合（含前置依赖闭包）；None = 全跑。"""
+    if only is None:
+        return None
+    needed = {only}
+    for _ in range(len(_STAGE_DEPS)):
+        for s in tuple(needed):
+            needed.update(_STAGE_DEPS.get(s, ()))
+    return needed
+
+
 async def main(output_path: Path | None = None, seed: int = 2000,
-               num_variants: int = 40):
+               num_variants: int = 40, only: str | None = None):
     conn = await get_connection()
     await init_db(conn)
     await run_migrations(conn)
+    wanted = _resolve_stages(only)
+
+    def run(stage: str) -> bool:
+        return wanted is None or stage in wanted
 
     print("=" * 60)
     print("TOOL EVOLUTION ENGINE — EVALUATION PIPELINE")
@@ -1276,205 +1305,216 @@ async def main(output_path: Path | None = None, seed: int = 2000,
     print(f"\n[1/11] Data: {info['n_tasks']} tasks, {info['n_traces']} traces, "
           f"{len(info['error_labels'])} labeled failures")
 
-    # 1. Classifier evaluation
-    print("\n[2/11] Classifier Evaluation")
-    cls = await eval_classifier(conn)
-    print(f"  Train/Test: {cls['train_size']}/{cls['test_size']}")
-    print(f"  Accuracy: {cls['accuracy']:.1%}  Macro F1: {cls['macro_f1']:.3f}")
-    for c, m in cls.get("per_class", {}).items():
-        print(f"    {c}: P={m['precision']:.2f} R={m['recall']:.2f} F1={m['f1']:.2f} (n={m['support']})")
-    t_now = time.monotonic()
-    stage_times["classifier"] = round(t_now - t_stage, 2)
-    t_stage = t_now
+    if run("classifier"):
+        # 1. Classifier evaluation
+        print("\n[2/11] Classifier Evaluation")
+        cls = await eval_classifier(conn)
+        print(f"  Train/Test: {cls['train_size']}/{cls['test_size']}")
+        print(f"  Accuracy: {cls['accuracy']:.1%}  Macro F1: {cls['macro_f1']:.3f}")
+        for c, m in cls.get("per_class", {}).items():
+            print(f"    {c}: P={m['precision']:.2f} R={m['recall']:.2f} F1={m['f1']:.2f} (n={m['support']})")
+        t_now = time.monotonic()
+        stage_times["classifier"] = round(t_now - t_stage, 2)
+        t_stage = t_now
 
-    # F13 fix: seed KDE training data BEFORE eval_kde so all 7 tools have data
-    print("\n[3/11] KDE Parameter Analysis (with F13 timing fix)")
-    await _seed_kde_training_data(conn)
-    mgr_kde = ParamTemplateManager(conn)
-    for tool in EVAL_TOOLS:
-        await mgr_kde.generate(tool, "1.0.0")
-    kde = await eval_kde(conn)
-    print(f"  Tools analyzed: {kde['tools_analyzed']}/7, Total params: {kde['total_params']}")
-    for tool, detail in kde.get("details", {}).items():
-        print(f"    {tool}: {detail['n_params_discovered']} params")
-    below = kde.get("below_min_samples", [])
-    if below:
-        print(f"  Below min_samples (no template): {below}")
-    # I-4: KDE mode vs median comparison
-    mode_vs_median = kde.get("mode_vs_median", {})
-    if mode_vs_median:
-        kde_wins = 0; total_cmp = 0
-        print("\n  I-4: KDE mode vs median MAE comparison:")
-        for tool, params in mode_vs_median.items():
-            for pname, data in params.items():
-                total_cmp += 1
-                if data["kde_better"]: kde_wins += 1
-                winner = "KDE" if data["kde_better"] else "median"
-                print(f"    {tool}.{pname}: KDE={data['kde_mae']} median={data['median_mae']} → {winner}")
-        if total_cmp > 0:
-            print(f"  KDE wins: {kde_wins}/{total_cmp} ({kde_wins/total_cmp*100:.0f}%)")
-    # I-5: KDE 95% CI boundary check
-    print("\n  I-5: KDE 95% CI boundary check:")
-    store_ci = TraceStore(conn)
-    for tool in EVAL_TOOLS:
-        tmpl = await mgr_kde.get_template(tool, "1.0.0")
-        if not tmpl: continue
-        rows = await store_ci.get_success_params(tool, "1.0.0", limit=200, exclude_agent_prefix="executor:")
-        if not rows: continue
-        for pname, pinfo in tmpl.items():
-            if pinfo.get("param_type") not in ("int", "float"): continue
-            lb, ub = pinfo.get("lower_bound"), pinfo.get("upper_bound")
-            if lb is None or ub is None: continue
-            values = []
-            for r in rows:
-                pdict = r  # get_success_params returns parsed params dicts directly
-                if pname in pdict and isinstance(pdict[pname], (int, float)):
-                    values.append(float(pdict[pname]))
-            if len(values) < 5: continue
-            outside = sum(1 for v in values if v < lb or v > ub)
-            pct = round(outside / len(values) * 100, 1)
-            flag = " [>5%]" if pct > 5 else ""
-            print(f"    {tool}.{pname}: {outside}/{len(values)} outside CI = {pct}%{flag}")
-    t_now = time.monotonic()
-    stage_times["kde"] = round(t_now - t_stage, 2)
-    t_stage = t_now
+    if run("kde"):
+        # F13 fix: seed KDE training data BEFORE eval_kde so all 7 tools have data
+        print("\n[3/11] KDE Parameter Analysis (with F13 timing fix)")
+        await _seed_kde_training_data(conn)
+        mgr_kde = ParamTemplateManager(conn)
+        for tool in EVAL_TOOLS:
+            await mgr_kde.generate(tool, "1.0.0")
+        kde = await eval_kde(conn)
+        print(f"  Tools analyzed: {kde['tools_analyzed']}/7, Total params: {kde['total_params']}")
+        for tool, detail in kde.get("details", {}).items():
+            print(f"    {tool}: {detail['n_params_discovered']} params")
+        below = kde.get("below_min_samples", [])
+        if below:
+            print(f"  Below min_samples (no template): {below}")
+        # I-4: KDE mode vs median comparison
+        mode_vs_median = kde.get("mode_vs_median", {})
+        if mode_vs_median:
+            kde_wins = 0; total_cmp = 0
+            print("\n  I-4: KDE mode vs median MAE comparison:")
+            for tool, params in mode_vs_median.items():
+                for pname, data in params.items():
+                    total_cmp += 1
+                    if data["kde_better"]: kde_wins += 1
+                    winner = "KDE" if data["kde_better"] else "median"
+                    print(f"    {tool}.{pname}: KDE={data['kde_mae']} median={data['median_mae']} → {winner}")
+            if total_cmp > 0:
+                print(f"  KDE wins: {kde_wins}/{total_cmp} ({kde_wins/total_cmp*100:.0f}%)")
+        # I-5: KDE 95% CI boundary check
+        print("\n  I-5: KDE 95% CI boundary check:")
+        store_ci = TraceStore(conn)
+        for tool in EVAL_TOOLS:
+            tmpl = await mgr_kde.get_template(tool, "1.0.0")
+            if not tmpl: continue
+            rows = await store_ci.get_success_params(tool, "1.0.0", limit=200, exclude_agent_prefix="executor:")
+            if not rows: continue
+            for pname, pinfo in tmpl.items():
+                if pinfo.get("param_type") not in ("int", "float"): continue
+                lb, ub = pinfo.get("lower_bound"), pinfo.get("upper_bound")
+                if lb is None or ub is None: continue
+                values = []
+                for r in rows:
+                    pdict = r  # get_success_params returns parsed params dicts directly
+                    if pname in pdict and isinstance(pdict[pname], (int, float)):
+                        values.append(float(pdict[pname]))
+                if len(values) < 5: continue
+                outside = sum(1 for v in values if v < lb or v > ub)
+                pct = round(outside / len(values) * 100, 1)
+                flag = " [>5%]" if pct > 5 else ""
+                print(f"    {tool}.{pname}: {outside}/{len(values)} outside CI = {pct}%{flag}")
+        t_now = time.monotonic()
+        stage_times["kde"] = round(t_now - t_stage, 2)
+        t_stage = t_now
 
-    # 3. DAG mining
-    print("\n[4/11] DAG Pattern Mining")
-    dag = await eval_dag(conn)
-    print(f"  Planted: {len(dag['planted_patterns'])}  Discovered: {dag['n_discovered']}  Matched: {len(dag['matched'])}")
-    print(f"  Pattern Recall: {dag['pattern_recall']:.1%}")
-    for d in dag["discoveries"]:
-        print(f"    - {d['name'][:60]} (freq={d['frequency']:.1%}, status={d['status']})")
-    t_now = time.monotonic()
-    stage_times["dag"] = round(t_now - t_stage, 2)
-    t_stage = t_now
+    if run("dag"):
+        # 3. DAG mining
+        print("\n[4/11] DAG Pattern Mining")
+        dag = await eval_dag(conn)
+        print(f"  Planted: {len(dag['planted_patterns'])}  Discovered: {dag['n_discovered']}  Matched: {len(dag['matched'])}")
+        print(f"  Pattern Recall: {dag['pattern_recall']:.1%}")
+        for d in dag["discoveries"]:
+            print(f"    - {d['name'][:60]} (freq={d['frequency']:.1%}, status={d['status']})")
+        t_now = time.monotonic()
+        stage_times["dag"] = round(t_now - t_stage, 2)
+        t_stage = t_now
 
-    # Insert discovered skills for governance scoring
-    skill_mgr = SkillPackManager(conn)
-    dag_miner = DAGMiner(min_support=0.03, max_nodes=10)
-    all_traces = await TraceStore(conn).get_all_traces(limit=50000, exclude_agent_prefix="executor:")
-    discovered = dag_miner.mine(all_traces)
-    for d in discovered:
-        await skill_mgr.add_discovery(d)
+    if run("governance"):
+        # Insert discovered skills for governance scoring
+        skill_mgr = SkillPackManager(conn)
+        dag_miner = DAGMiner(min_support=0.03, max_nodes=10)
+        all_traces = await TraceStore(conn).get_all_traces(limit=50000, exclude_agent_prefix="executor:")
+        discovered = dag_miner.mine(all_traces)
+        for d in discovered:
+            await skill_mgr.add_discovery(d)
 
-    # 4. Governance (with F6 weight sensitivity)
-    print("\n[5/11] Skill Governance + Weight Sensitivity (F6)")
-    gov = await eval_governance(conn)
-    print(f"  Skills scored: {gov['skills_scored']}")
-    for s in gov["skills"]:
-        print(f"    {s['name'][:50]}: score={s['credit_score']:.1f} success_rate={s['success_rate']:.1%} "
-              f"calls={s['total_calls']} status={s['status']} -> after_update:{s.get('status_after_update','?')}")
-    print(f"  A/B rollback test: rollback={gov['ab_test']['rollback']}")
-    # I-6: Full canary promotion path
-    promotion_history = gov.get("promotion_history", {})
-    if promotion_history:
-        print("\n  I-6: Full canary path (canary_5→15→50→active):")
-        for skill_name, history in promotion_history.items():
-            path = " → ".join(f"{h['status']}({h['calls']}c,{h['score']:.0f}pt)" for h in history)
-            print(f"    {skill_name[:50]}: {path}")
-    # F6: weight sensitivity
-    w_sensitivity = await eval_weight_sensitivity(conn)
-    print("  Weight sensitivity (40/30/30 vs 50/25/25 vs 60/20/20):")
-    for w_name, w_data in w_sensitivity.items():
-        print(f"    {w_name}: {w_data['promotions']} promotions, {w_data['demotions']} demotions, {w_data['offlines']} offlines")
-    t_now = time.monotonic()
-    stage_times["governance"] = round(t_now - t_stage, 2)
-    t_stage = t_now
+    if run("governance"):
+        # 4. Governance (with F6 weight sensitivity)
+        print("\n[5/11] Skill Governance + Weight Sensitivity (F6)")
+        gov = await eval_governance(conn)
+        print(f"  Skills scored: {gov['skills_scored']}")
+        for s in gov["skills"]:
+            print(f"    {s['name'][:50]}: score={s['credit_score']:.1f} success_rate={s['success_rate']:.1%} "
+                  f"calls={s['total_calls']} status={s['status']} -> after_update:{s.get('status_after_update','?')}")
+        print(f"  A/B rollback test: rollback={gov['ab_test']['rollback']}")
+        # I-6: Full canary promotion path
+        promotion_history = gov.get("promotion_history", {})
+        if promotion_history:
+            print("\n  I-6: Full canary path (canary_5→15→50→active):")
+            for skill_name, history in promotion_history.items():
+                path = " → ".join(f"{h['status']}({h['calls']}c,{h['score']:.0f}pt)" for h in history)
+                print(f"    {skill_name[:50]}: {path}")
+        # F6: weight sensitivity
+        w_sensitivity = await eval_weight_sensitivity(conn)
+        print("  Weight sensitivity (40/30/30 vs 50/25/25 vs 60/20/20):")
+        for w_name, w_data in w_sensitivity.items():
+            print(f"    {w_name}: {w_data['promotions']} promotions, {w_data['demotions']} demotions, {w_data['offlines']} offlines")
+        t_now = time.monotonic()
+        stage_times["governance"] = round(t_now - t_stage, 2)
+        t_stage = t_now
 
-    # 5. Before/After
-    print("\n[6/11] Before/After Optimization Comparison")
-    ba = await eval_before_after(conn, tasks=expanded_tasks)
-    print(f"  Tasks: {ba['n_tasks']}")
-    print(f"  BASELINE  | failures={ba['baseline']['failures']} retries={ba['baseline']['retries']} "
-          f"tokens={ba['baseline']['total_tokens']} avg_lat={ba['baseline']['avg_latency_ms']}ms")
-    print(f"  OPTIMIZED | failures={ba['optimized']['failures']} retries={ba['optimized']['retries']} "
-          f"tokens={ba['optimized']['total_tokens']} avg_lat={ba['optimized']['avg_latency_ms']}ms")
-    print(f"  Failure reduction: {ba['failure_reduction_pct']}%")
-    print(f"  Retry reduction:   {ba['retry_reduction_pct']}%")
-    print(f"  Token reduction:   {ba['token_reduction_pct']}%")
-    print(f"  Latency reduction: {ba['latency_reduction_pct']}%")
-    # I-1: Failure type breakdown
-    bl_ft = ba["baseline"].get("failure_by_type", {})
-    op_ft = ba["optimized"].get("failure_by_type", {})
-    if bl_ft or op_ft:
-        all_types = sorted(set(list(bl_ft.keys()) + list(op_ft.keys())))
-        print("\n  I-1: Failure type breakdown (baseline → optimized):")
-        print(f"  {'Error Type':<25} {'Baseline':>8} {'Optimized':>8} {'Reduction':>10}")
-        for et in all_types:
-            bl = bl_ft.get(et, 0)
-            op = op_ft.get(et, 0)
-            red = round((1 - op / max(bl, 1)) * 100, 1) if bl > 0 else 0
-            print(f"  {et:<25} {bl:>8} {op:>8} {red:>9.1f}%")
-    t_now = time.monotonic()
-    stage_times["before_after"] = round(t_now - t_stage, 2)
-    t_stage = t_now
+    if run("before_after"):
+        # 5. Before/After
+        print("\n[6/11] Before/After Optimization Comparison")
+        ba = await eval_before_after(conn, tasks=expanded_tasks)
+        print(f"  Tasks: {ba['n_tasks']}")
+        print(f"  BASELINE  | failures={ba['baseline']['failures']} retries={ba['baseline']['retries']} "
+              f"tokens={ba['baseline']['total_tokens']} avg_lat={ba['baseline']['avg_latency_ms']}ms")
+        print(f"  OPTIMIZED | failures={ba['optimized']['failures']} retries={ba['optimized']['retries']} "
+              f"tokens={ba['optimized']['total_tokens']} avg_lat={ba['optimized']['avg_latency_ms']}ms")
+        print(f"  Failure reduction: {ba['failure_reduction_pct']}%")
+        print(f"  Retry reduction:   {ba['retry_reduction_pct']}%")
+        print(f"  Token reduction:   {ba['token_reduction_pct']}%")
+        print(f"  Latency reduction: {ba['latency_reduction_pct']}%")
+        # I-1: Failure type breakdown
+        bl_ft = ba["baseline"].get("failure_by_type", {})
+        op_ft = ba["optimized"].get("failure_by_type", {})
+        if bl_ft or op_ft:
+            all_types = sorted(set(list(bl_ft.keys()) + list(op_ft.keys())))
+            print("\n  I-1: Failure type breakdown (baseline → optimized):")
+            print(f"  {'Error Type':<25} {'Baseline':>8} {'Optimized':>8} {'Reduction':>10}")
+            for et in all_types:
+                bl = bl_ft.get(et, 0)
+                op = op_ft.get(et, 0)
+                red = round((1 - op / max(bl, 1)) * 100, 1) if bl > 0 else 0
+                print(f"  {et:<25} {bl:>8} {op:>8} {red:>9.1f}%")
+        t_now = time.monotonic()
+        stage_times["before_after"] = round(t_now - t_stage, 2)
+        t_stage = t_now
 
-    # F4: degradation curve (三档派生: seed//4, seed//2, seed)
-    print(f"\n[7/11] Degradation Curve (F4 — {seed//4}/{seed//2}/{seed} seed)")
-    deg = await eval_degradation_curve(conn, n_tasks=seed)
-    for scale, m in deg.items():
-        print(f"  {scale}: n={m['n_traces']} cls_acc={m['classifier_accuracy']:.1%} "
-              f"cls_f1={m['classifier_macro_f1']:.3f} dag_recall={m['dag_pattern_recall']:.1%} "
-              f"dag_disc={m['dag_discovered']}")
-    t_now = time.monotonic()
-    stage_times["degradation"] = round(t_now - t_stage, 2)
-    t_stage = t_now
+    if run("degradation"):
+        # F4: degradation curve (三档派生: seed//4, seed//2, seed)
+        print(f"\n[7/11] Degradation Curve (F4 — {seed//4}/{seed//2}/{seed} seed)")
+        deg = await eval_degradation_curve(conn, n_tasks=seed)
+        for scale, m in deg.items():
+            print(f"  {scale}: n={m['n_traces']} cls_acc={m['classifier_accuracy']:.1%} "
+                  f"cls_f1={m['classifier_macro_f1']:.3f} dag_recall={m['dag_pattern_recall']:.1%} "
+                  f"dag_disc={m['dag_discovered']}")
+        t_now = time.monotonic()
+        stage_times["degradation"] = round(t_now - t_stage, 2)
+        t_stage = t_now
 
-    # F8: simplified scenario — RF vs pure rules
-    print("\n[8/11] Simplified Scenario: RF vs Rules (F8)")
-    simplified = await eval_simplified_scenario(conn)
-    print(f"  RF accuracy: {simplified['rf_accuracy']:.1%}  Rules accuracy: {simplified['rules_accuracy']:.1%}")
-    print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
-    vt = simplified.get("char_wb_variant_test", {})
-    if vt:
-        print("\n  I-2: char_wb cross-spelling robustness:")
-        if vt.get("en_total", 0) > 0:
-            print(f"  EN variants: {vt['en_accuracy']:.1%} ({vt['en_correct']}/{vt['en_total']})")
-            for d in vt.get("en_details", []): print(d)
-        if vt.get("cn_total", 0) > 0:
-            print(f"  CN variants: {vt['cn_accuracy']:.1%} ({vt['cn_correct']}/{vt['cn_total']}) [cross-lang limitation]")
-            for d in vt.get("cn_details", []): print(d)
-    t_now = time.monotonic()
-    stage_times["simplified"] = round(t_now - t_stage, 2)
+    if run("simplified"):
+        # F8: simplified scenario — RF vs pure rules
+        print("\n[8/11] Simplified Scenario: RF vs Rules (F8)")
+        simplified = await eval_simplified_scenario(conn)
+        print(f"  RF accuracy: {simplified['rf_accuracy']:.1%}  Rules accuracy: {simplified['rules_accuracy']:.1%}")
+        print(f"  RF macro F1: {simplified['rf_f1']:.3f}  Rules macro F1: {simplified['rules_f1']:.3f}")
+        vt = simplified.get("char_wb_variant_test", {})
+        if vt:
+            print("\n  I-2: char_wb cross-spelling robustness:")
+            if vt.get("en_total", 0) > 0:
+                print(f"  EN variants: {vt['en_accuracy']:.1%} ({vt['en_correct']}/{vt['en_total']})")
+                for d in vt.get("en_details", []): print(d)
+            if vt.get("cn_total", 0) > 0:
+                print(f"  CN variants: {vt['cn_accuracy']:.1%} ({vt['cn_correct']}/{vt['cn_total']}) [cross-lang limitation]")
+                for d in vt.get("cn_details", []): print(d)
+        t_now = time.monotonic()
+        stage_times["simplified"] = round(t_now - t_stage, 2)
 
     # R6: 阶段 9/10 会清 trajectories，gsm 基线数据须提前采集
     composition = await _data_composition(conn)
     rules_count = await _count_rules(conn)
 
-    # 9. Relations (增量一)
-    t_stage = time.monotonic()
-    rel = await eval_relations(conn)
-    stage_times["relations"] = time.monotonic() - t_stage
-    print(f"\n[9/11] Relations: {rel['recalled_premise_pairs']}/{rel['recall_total']} premise pairs recalled, "
-          f"{rel['relation_pairs_built']} pairs built from {rel['relation_tasks']} tasks, "
-          f"shared degree {rel['shared_entity_degree']}, idempotent rebuild: {rel['idempotent_rebuild']}")
+    if run("relations"):
+        # 9. Relations (增量一)
+        t_stage = time.monotonic()
+        rel = await eval_relations(conn)
+        stage_times["relations"] = time.monotonic() - t_stage
+        print(f"\n[9/11] Relations: {rel['recalled_premise_pairs']}/{rel['recall_total']} premise pairs recalled, "
+              f"{rel['relation_pairs_built']} pairs built from {rel['relation_tasks']} tasks, "
+              f"shared degree {rel['shared_entity_degree']}, idempotent rebuild: {rel['idempotent_rebuild']}")
 
-    # 10. Preference loop (增量一)
-    t_stage = time.monotonic()
-    pref = await eval_preference_loop(conn)
-    stage_times["preference_loop"] = time.monotonic() - t_stage
-    print(f"[10/11] Preference loop: learned={pref['learned_correct']} "
-          f"(expected {pref['expected_learned_value']}, got {pref['learned_max_results']}), "
-          f"injected default={pref['injected_default']}, source ok={pref['injected_source_ok']}, "
-          f"retry reduction={pref['retry_reduction_pct']}% "
-          f"(mismatches {pref['mismatches_before']}→{pref['mismatches_after']})")
-    for combo, r in pref["sensitivity"].items():
-        print(f"  sensitivity {combo}: 64pct={r['sens_a_64pct']} 60pct={r['sens_b_60pct']}")
+    if run("preference_loop"):
+        # 10. Preference loop (增量一)
+        t_stage = time.monotonic()
+        pref = await eval_preference_loop(conn)
+        stage_times["preference_loop"] = time.monotonic() - t_stage
+        print(f"[10/11] Preference loop: learned={pref['learned_correct']} "
+              f"(expected {pref['expected_learned_value']}, got {pref['learned_max_results']}), "
+              f"injected default={pref['injected_default']}, source ok={pref['injected_source_ok']}, "
+              f"retry reduction={pref['retry_reduction_pct']}% "
+              f"(mismatches {pref['mismatches_before']}→{pref['mismatches_after']})")
+        for combo, r in pref["sensitivity"].items():
+            print(f"  sensitivity {combo}: 64pct={r['sens_a_64pct']} 60pct={r['sens_b_60pct']}")
 
-    # 11. Repair advisor (增量二)
-    t_stage = time.monotonic()
-    repair = await eval_repair_advisor(conn)
-    stage_times["repair_advisor"] = time.monotonic() - t_stage
-    print(f"[11/11] Repair advisor: mode={repair['llm_mode']} rules={repair['rules_distilled']} "
-          f"hints={repair['hints_total']} fix非空={repair['fix_non_null']} "
-          f"参数覆盖={repair['suggestion_param_coverage']:.0%} "
-          f"reused_round2={repair['reused_round2']} "
-          f"重放(含范围) {repair['replay_success']}/{repair['replay_fixable_cases']} "
-          f"({repair['replay_improvement_pct']}%) "
-          f"重放(模糊) {repair['vague_replay_success']}/{repair['vague_fixable_cases']} "
-          f"({repair['vague_improvement_pct']}%) "
-          f"tokens in/out={repair['input_tokens']}/{repair['output_tokens']}")
+    if run("repair_advisor"):
+        # 11. Repair advisor (增量二)
+        t_stage = time.monotonic()
+        repair = await eval_repair_advisor(conn)
+        stage_times["repair_advisor"] = time.monotonic() - t_stage
+        print(f"[11/11] Repair advisor: mode={repair['llm_mode']} rules={repair['rules_distilled']} "
+              f"hints={repair['hints_total']} fix非空={repair['fix_non_null']} "
+              f"参数覆盖={repair['suggestion_param_coverage']:.0%} "
+              f"reused_round2={repair['reused_round2']} "
+              f"重放(含范围) {repair['replay_success']}/{repair['replay_fixable_cases']} "
+              f"({repair['replay_improvement_pct']}%) "
+              f"重放(模糊) {repair['vague_replay_success']}/{repair['vague_fixable_cases']} "
+              f"({repair['vague_improvement_pct']}%) "
+              f"tokens in/out={repair['input_tokens']}/{repair['output_tokens']}")
 
     elapsed = time.monotonic() - t0
     print(f"\n{'=' * 60}")
@@ -1484,54 +1524,59 @@ async def main(output_path: Path | None = None, seed: int = 2000,
         print(f"  {name}: {sec:.1f}s ({pct:.0f}%)")
     print(f"Evaluation complete in {elapsed:.1f}s")
 
-    gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count,
-                            seed, len(expanded_tasks), repair)
-    if output_path:
-        output_path.write_text(json.dumps(gsm, indent=2, ensure_ascii=False), encoding="utf-8")
-        print(f"\nEval results written to: {output_path}")
+    if only is None:
+        gsm = build_gsm_metrics(cls, kde, dag, gov, ba, elapsed, composition, rules_count,
+                                seed, len(expanded_tasks), repair)
+        if output_path:
+            output_path.write_text(json.dumps(gsm, indent=2, ensure_ascii=False), encoding="utf-8")
+            print(f"\nEval results written to: {output_path}")
+    
+        # ── L1/L2/L3 评测总结 ──
+        print(f"\n{'=' * 60}")
+        print("L1 简历必写")
+        print(f"{'=' * 60}")
+        print(f"  失败率下降:     {ba['failure_reduction_pct']:.1f}% ({ba['baseline']['failures']}→{ba['optimized']['failures']})  [实测]")
+        print(f"  Token 下降:     {ba['token_reduction_pct']:.1f}% ({ba['baseline']['total_tokens']}→{ba['optimized']['total_tokens']})  [实测]")
+        print(f"  重试次数下降:   {ba['retry_reduction_pct']:.1f}% ({ba['baseline']['retries']}→{ba['optimized']['retries']})  [实测]")
+        print(f"  分类器 F1:      {cls['macro_f1']:.3f} (5类, {cls['train_size']}/{cls['test_size']} split)  [实测]")
+    
+        print(f"\n{'=' * 60}")
+        print("L2 面试支撑")
+        print(f"{'=' * 60}")
+        ft = ba["baseline"].get("failure_by_type", {})
+        ft_o = ba["optimized"].get("failure_by_type", {})
+        if ft:
+            parts = []
+            for et in sorted(ft.keys()):
+                bl = ft.get(et, 0); op = ft_o.get(et, 0)
+                red = round((1 - op / max(bl, 1)) * 100, 1) if bl > 0 else 0
+                parts.append(f"{et}={red:.0f}%")
+            print(f"  失败类型拆分:   {', '.join(parts)}  [实测]")
+        print(f"  DAG 召回:       {dag['pattern_recall']:.1%} ({len(dag['matched'])}/{len(dag['planted_patterns'])}) +{dag['n_discovered']-len(dag['matched'])}子模式  [实测]")
+        print(f"  KDE 覆盖:       {kde['tools_analyzed']}/7 工具, {kde['total_params']} 参数, CI外≤3%  [实测]")
+        ph = gov.get("promotion_history", {})
+        active_count = sum(1 for h in ph.values() if h[-1]["status"] == "active")
+        print(f"  灰度全路径:     {active_count}/{len(ph)} 技能走通 canary_5→active (310 calls)  [实测]")
+        print(f"  权重最优:       40/30/30 ({w_sensitivity['40/30/30 (default)']['promotions']} 晋升) vs 50/25/25 ({w_sensitivity['50/25/25']['promotions']})  [实测]")
+    
+        print(f"\n{'=' * 60}")
+        print("L3 内部参考")
+        print(f"{'=' * 60}")
+        print(f"  评测规模:       {seed} seed + {len(expanded_tasks)} benchmark")
+        print(f"  全管道耗时:     {elapsed:.0f}s (离线批量统计,非产品延迟)")
+        per_module = []
+        if elapsed > 0:
+            for name, sec in stage_times.items():
+                if name in ("classifier", "kde", "dag", "governance", "before_after"):
+                    per_module.append(f"{name}={sec:.0f}s")
+        print(f"  耗时拆分:       {', '.join(per_module)}")
+        vt = simplified.get("char_wb_variant_test", {})
+        if vt:
+            print(f"  跨语言分类:     EN {vt.get('en_accuracy', 0):.1%} / CN {vt.get('cn_accuracy', 0):.1%} (已知 char_wb 局限)")
 
-    # ── L1/L2/L3 评测总结 ──
-    print(f"\n{'=' * 60}")
-    print("L1 简历必写")
-    print(f"{'=' * 60}")
-    print(f"  失败率下降:     {ba['failure_reduction_pct']:.1f}% ({ba['baseline']['failures']}→{ba['optimized']['failures']})  [实测]")
-    print(f"  Token 下降:     {ba['token_reduction_pct']:.1f}% ({ba['baseline']['total_tokens']}→{ba['optimized']['total_tokens']})  [实测]")
-    print(f"  重试次数下降:   {ba['retry_reduction_pct']:.1f}% ({ba['baseline']['retries']}→{ba['optimized']['retries']})  [实测]")
-    print(f"  分类器 F1:      {cls['macro_f1']:.3f} (5类, {cls['train_size']}/{cls['test_size']} split)  [实测]")
-
-    print(f"\n{'=' * 60}")
-    print("L2 面试支撑")
-    print(f"{'=' * 60}")
-    ft = ba["baseline"].get("failure_by_type", {})
-    ft_o = ba["optimized"].get("failure_by_type", {})
-    if ft:
-        parts = []
-        for et in sorted(ft.keys()):
-            bl = ft.get(et, 0); op = ft_o.get(et, 0)
-            red = round((1 - op / max(bl, 1)) * 100, 1) if bl > 0 else 0
-            parts.append(f"{et}={red:.0f}%")
-        print(f"  失败类型拆分:   {', '.join(parts)}  [实测]")
-    print(f"  DAG 召回:       {dag['pattern_recall']:.1%} ({len(dag['matched'])}/{len(dag['planted_patterns'])}) +{dag['n_discovered']-len(dag['matched'])}子模式  [实测]")
-    print(f"  KDE 覆盖:       {kde['tools_analyzed']}/7 工具, {kde['total_params']} 参数, CI外≤3%  [实测]")
-    ph = gov.get("promotion_history", {})
-    active_count = sum(1 for h in ph.values() if h[-1]["status"] == "active")
-    print(f"  灰度全路径:     {active_count}/{len(ph)} 技能走通 canary_5→active (310 calls)  [实测]")
-    print(f"  权重最优:       40/30/30 ({w_sensitivity['40/30/30 (default)']['promotions']} 晋升) vs 50/25/25 ({w_sensitivity['50/25/25']['promotions']})  [实测]")
-
-    print(f"\n{'=' * 60}")
-    print("L3 内部参考")
-    print(f"{'=' * 60}")
-    print(f"  评测规模:       {seed} seed + {len(expanded_tasks)} benchmark")
-    print(f"  全管道耗时:     {elapsed:.0f}s (离线批量统计,非产品延迟)")
-    per_module = []
-    if elapsed > 0:
-        for name, sec in stage_times.items():
-            if name in ("classifier", "kde", "dag", "governance", "before_after"):
-                per_module.append(f"{name}={sec:.0f}s")
-    print(f"  耗时拆分:       {', '.join(per_module)}")
-    vt = simplified.get("char_wb_variant_test", {})
-    if vt:
-        print(f"  跨语言分类:     EN {vt.get('en_accuracy', 0):.1%} / CN {vt.get('cn_accuracy', 0):.1%} (已知 char_wb 局限)")
+    else:
+        gsm = None
+        print(f"\n[--only {only}] 单 stage 完成（跳过 gsm 汇总 / JSON 落盘 / L1-L3 总结）")
 
     await conn.close()
 
@@ -1616,6 +1661,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Seed task count for synthetic eval data (default 2000)")
     parser.add_argument("--num-variants", type=int, default=40,
                         help="Benchmark variants per base task (50 base x N, default 40 = 2000)")
+    parser.add_argument("--only", choices=sorted(_STAGE_DEPS), default=None,
+                        help="只跑单个 stage（含前置依赖），跳过完整汇总；用于快速迭代")
     args = parser.parse_args(argv)
     if args.seed < 50:
         parser.error("--seed must be >= 50 (degradation small level seed//4 would be empty)")
@@ -1628,4 +1675,4 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
     asyncio.run(main(output_path=Path(args.output), seed=args.seed,
-                     num_variants=args.num_variants))
+                     num_variants=args.num_variants, only=args.only))
