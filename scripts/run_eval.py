@@ -642,7 +642,7 @@ async def eval_before_after(conn, tasks: list[dict] | None = None) -> dict:
 
     # Phase 0: seed KDE training data and generate templates, then clear
     await _seed_kde_training_data(conn)
-    for tool in ["search_api", "detail_api", "analyze_api", "report_api"]:
+    for tool in TOOL_SPECS:
         await mgr.generate(tool, "1.0.0")
     await _clear_traces(conn)
 

@@ -34,7 +34,7 @@ class TestExecutionEvalContract:
 
     def test_benchmark_tasks_tools_subset(self):
         tasks = json.loads(_TASKS.read_text(encoding="utf-8"))
-        assert len(tasks) == 50
+        assert len(tasks) >= 50
         for task in tasks:
             for tool in task["tool_chain"]:
                 assert tool in TOOL_SPECS, f"{tool} not in TOOL_SPECS"
@@ -46,5 +46,5 @@ class TestExecutionEvalContract:
         from tool_evolution.utils.config import settings
         monkeypatch.setattr(settings, "deepseek_api_key", None)
         mod = _load_script()
-        result = await mod.run_execution_eval(db_conn, n_tasks=50)
+        result = await mod.run_execution_eval(db_conn, n_tasks=len(json.loads(_TASKS.read_text(encoding="utf-8"))))
         assert _EXPECTED_KEYS <= set(result.keys())

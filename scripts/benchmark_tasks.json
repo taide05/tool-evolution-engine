@@ -695,5 +695,186 @@
       "max_results": 10,
       "lang": "zh"
     }
+  },
+  {
+    "task_id": "bench-051",
+    "task_name": "异构工具链（1）",
+    "tool_chain": [
+      "web_search",
+      "detail_api",
+      "analyze_api"
+    ],
+    "root_params": {
+      "query": "待分析的技术文档摘要"
+    }
+  },
+  {
+    "task_id": "bench-052",
+    "task_name": "异构工具链（2）",
+    "tool_chain": [
+      "vector_search",
+      "knowledge_base",
+      "analyze_api"
+    ],
+    "root_params": {
+      "query": "待分析的技术文档摘要",
+      "collection": "tool_docs"
+    }
+  },
+  {
+    "task_id": "bench-053",
+    "task_name": "异构工具链（3）",
+    "tool_chain": [
+      "document_qa",
+      "wikipedia",
+      "report_api"
+    ],
+    "root_params": {
+      "question": "这个参数默认值是多少",
+      "doc_id": "kb-42",
+      "title": "Tool calling",
+      "query": "周度分析报告"
+    }
+  },
+  {
+    "task_id": "bench-054",
+    "task_name": "异构工具链（4）",
+    "tool_chain": [
+      "database_query",
+      "table_lookup",
+      "analyze_api"
+    ],
+    "root_params": {
+      "sql": "SELECT id, name FROM users WHERE active=1",
+      "table": "orders",
+      "query": "待分析的技术文档摘要"
+    }
+  },
+  {
+    "task_id": "bench-055",
+    "task_name": "异构工具链（5）",
+    "tool_chain": [
+      "cache_set",
+      "cache_get",
+      "database_query"
+    ],
+    "root_params": {
+      "key": "user:42:profile",
+      "value": "{\"name\":\"alice\"}",
+      "sql": "SELECT id, name FROM users WHERE active=1"
+    }
+  },
+  {
+    "task_id": "bench-056",
+    "task_name": "异构工具链（6）",
+    "tool_chain": [
+      "data_export",
+      "file_write",
+      "report_api"
+    ],
+    "root_params": {
+      "format": "csv",
+      "path": "/data/out.txt",
+      "content": "generated report",
+      "query": "周度分析报告"
+    }
+  },
+  {
+    "task_id": "bench-057",
+    "task_name": "异构工具链（7）",
+    "tool_chain": [
+      "file_read",
+      "file_list",
+      "analyze_api"
+    ],
+    "root_params": {
+      "path": "/data/report.txt",
+      "directory": "/data",
+      "query": "待分析的技术文档摘要"
+    }
+  },
+  {
+    "task_id": "bench-058",
+    "task_name": "异构工具链（8）",
+    "tool_chain": [
+      "file_delete",
+      "file_list"
+    ],
+    "root_params": {
+      "path": "/data/tmp.txt",
+      "directory": "/data"
+    }
+  },
+  {
+    "task_id": "bench-059",
+    "task_name": "异构工具链（9）",
+    "tool_chain": [
+      "code_execute",
+      "code_review",
+      "report_api"
+    ],
+    "root_params": {
+      "code": "print(sum(range(10)))",
+      "file_path": "src/app.py",
+      "query": "周度分析报告"
+    }
+  },
+  {
+    "task_id": "bench-060",
+    "task_name": "异构工具链（10）",
+    "tool_chain": [
+      "git_commit",
+      "git_diff",
+      "code_review"
+    ],
+    "root_params": {
+      "message": "fix: retry backoff",
+      "base_branch": "main",
+      "file_path": "src/app.py"
+    }
+  },
+  {
+    "task_id": "bench-061",
+    "task_name": "异构工具链（11）",
+    "tool_chain": [
+      "run_tests",
+      "code_execute",
+      "report_api"
+    ],
+    "root_params": {
+      "test_path": "tests/",
+      "code": "print(sum(range(10)))",
+      "query": "周度分析报告"
+    }
+  },
+  {
+    "task_id": "bench-062",
+    "task_name": "异构工具链（12）",
+    "tool_chain": [
+      "http_post",
+      "http_get",
+      "analyze_api"
+    ],
+    "root_params": {
+      "url": "https://api.example.com/v1/items",
+      "query": "待分析的技术文档摘要"
+    }
+  },
+  {
+    "task_id": "bench-063",
+    "task_name": "异构工具链（13）",
+    "tool_chain": [
+      "send_email",
+      "send_message",
+      "report_api"
+    ],
+    "root_params": {
+      "to": "user@example.com",
+      "subject": "任务完成通知",
+      "channel": "slack",
+      "recipient": "#ops",
+      "text": "deploy finished",
+      "query": "周度分析报告"
+    }
   }
 ]

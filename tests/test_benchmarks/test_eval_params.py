@@ -18,14 +18,14 @@ def _base_tasks() -> list[dict]:
 class TestExpandBenchmarkTasks:
     def test_expand_8_matches_legacy_shape(self):
         expanded = expand_benchmark_tasks(_base_tasks(), 8)
-        assert len(expanded) == 400
+        assert len(expanded) == len(_base_tasks()) * 8
         assert expanded[0]["task_id"] == "bench-001-v0"
         assert expanded[7]["task_id"] == "bench-001-v7"
         assert expanded[8]["task_id"] == "bench-002-v0"
 
     def test_expand_40_gives_2000(self):
         expanded = expand_benchmark_tasks(_base_tasks(), 40)
-        assert len(expanded) == 2000
+        assert len(expanded) == len(_base_tasks()) * 40
         assert expanded[0]["task_id"].endswith("-v0")
         assert expanded[-1]["task_id"].endswith("-v39")
 
@@ -49,7 +49,7 @@ class TestExpandBenchmarkTasks:
 
     def test_expand_num_variants_one(self):
         expanded = expand_benchmark_tasks(_base_tasks(), 1)
-        assert len(expanded) == 50
+        assert len(expanded) == len(_base_tasks())
         assert expanded[0]["task_id"] == "bench-001-v0"
 
 
@@ -127,20 +127,20 @@ class TestExecutionEvalNumTasks:
     async def test_not_divisible_raises(self, db_conn):
         import pytest
         from scripts.run_execution_eval import run_execution_eval
-        with pytest.raises(ValueError, match="50"):
+        with pytest.raises(ValueError, match="divisible"):
             await run_execution_eval(db_conn, n_tasks=123)
 
     def test_shared_expand_consistency(self):
         from scripts.run_execution_eval import load_eval_tasks
-        tasks = load_eval_tasks(2000)
-        assert len(tasks) == 2000
+        tasks = load_eval_tasks(len(_base_tasks()) * 40)
+        assert len(tasks) == len(_base_tasks()) * 40
         expected = {t["task_id"] for t in expand_benchmark_tasks(_base_tasks(), 40)}
         assert {t["task_id"] for t in tasks} == expected
 
     def test_n_tasks_50_single_variant(self):
         from scripts.run_execution_eval import load_eval_tasks
-        tasks = load_eval_tasks(50)
-        assert len(tasks) == 50
+        tasks = load_eval_tasks(len(_base_tasks()))
+        assert len(tasks) == len(_base_tasks())
         assert all(t["task_id"].endswith("-v0") for t in tasks)
 
 
