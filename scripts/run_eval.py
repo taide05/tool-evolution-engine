@@ -26,10 +26,10 @@ from tool_evolution.knowledge.skill_pack import SkillPackManager
 from tool_evolution.governance.governor import SkillGovernor
 from tool_evolution.governance.relation_store import RelationStore
 from tool_evolution.analysis.preference_learner import PreferenceLearner
+from tool_evolution.execution.tool_specs import TOOL_SPECS, mock_params_for_tool
 
 
-EVAL_TOOLS = ["search_api", "detail_api", "analyze_api", "report_api",
-              "github_api", "arxiv_api", "official_docs"]
+EVAL_TOOLS = list(TOOL_SPECS.keys())
 ERRORS = list(ErrorType)
 DAG_PATTERNS = [
     ["search_api", "detail_api", "analyze_api", "report_api"],
@@ -245,8 +245,7 @@ async def eval_kde(conn) -> dict:
     mgr = ParamTemplateManager(conn)
 
     # Check all 7 tools, not just 3
-    all_tools = ["search_api", "detail_api", "analyze_api", "report_api",
-                 "github_api", "arxiv_api", "official_docs"]
+    all_tools = list(TOOL_SPECS.keys())
     results = {}
     below_threshold = []
     for tool in all_tools:
@@ -1650,7 +1649,7 @@ def build_gsm_metrics(cls, kde, dag, gov, ba, elapsed_s, data_composition, rules
             "per_class_f1": {c: m["f1"] for c, m in cls.get("per_class", {}).items()},
         },
         "template_coverage": {
-            "tools_total": 7,
+            "tools_total": len(TOOL_SPECS),
             "with_templates": kde["tools_analyzed"],
             "params": kde["total_params"],
         },
