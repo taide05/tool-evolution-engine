@@ -1567,7 +1567,7 @@ async def main(output_path: Path | None = None, seed: int = 2000,
                 parts.append(f"{et}={red:.0f}%")
             print(f"  失败类型拆分:   {', '.join(parts)}  [实测]")
         print(f"  DAG 召回:       {dag['pattern_recall']:.1%} ({len(dag['matched'])}/{len(dag['planted_patterns'])}) +{dag['n_discovered']-len(dag['matched'])}子模式  [实测]")
-        print(f"  KDE 覆盖:       {kde['tools_analyzed']}/7 工具, {kde['total_params']} 参数, CI外≤3%  [实测]")
+        print(f"  KDE 覆盖:       {kde['tools_analyzed']}/{len(TOOL_SPECS)} 工具, {kde['total_params']} 参数, CI外≤3%  [实测]")
         ph = gov.get("promotion_history", {})
         active_count = sum(1 for h in ph.values() if h[-1]["status"] == "active")
         print(f"  灰度全路径:     {active_count}/{len(ph)} 技能走通 canary_5→active (310 calls)  [实测]")
