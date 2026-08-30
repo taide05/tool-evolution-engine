@@ -27,7 +27,7 @@ Tool Evolution Engine 在 Agent 的工具层和 LLM 之间加了一个"运维+�
 - **实体共现关系建模**（增量一）：从任务树的成功轨迹中跨 trace 池化挖掘实体共现对（0 LLM，确定性两两成对），evidence_trace_ids 全量溯源 + 幂等重建，relation_type 当前仅 co_occur（语义层是规划中的扩展点）
 - **用户偏好学习闭环**（增量一）：直方图判定个人参数偏好（样本量 ≥20 + 占比 >60% 严格大于 + 偏离全局 KDE mode），executor: 前缀轨迹隔离，偏好经 MCP 缓存反向注入模板生成（source=user_preference）
 - **LLM 修复建议生成**（增量二）：蒸馏时离线批量调用 DeepSeek 为拦截规则生成结构化修复建议 `{suggestion, fix, reason}`（JSON mode + thinking disabled），content_hash 幂等（含工具名，copy-on-hit 零冗余调用）+ fail-open 降级（LLM 不可用时建议降级为模板，规则拦截不受影响）；重放有效性区间 50%~100% 由错误信息质量决定（含有效范围的上界 100%、模糊信息下界 50%）
-- **内置执行层**（增量三）：技能包的消费端——`execution/` 包（三适配器 Mock/HTTP/MCP + 确定性匹配器 + 计划装配器 + DAG 拓扑执行器 + 执行审计 + LLM 规划基线）。2000 任务 benchmark 实测：技能包路径成功率 1.0、规划成本 0ms，vs LLM 规划基线成功率 0.991、平均规划 ~1s——**TEE 节省 token -32.5%、耗时 -25.3%**（差额=重复的 LLM 规划开销；跨口径禁比较——旧 50 任务口径的 -31~33%/-29~36% 已随规模升级封存）。跨任务熔断三态、取消路径、数据流引用、幂等执行（task_id 即 Idempotency-Key）、executor: 轨迹口径隔离（防自我污染）
+- **内置执行层**（增量三）：技能包的消费端——`execution/` 包（三适配器 Mock/HTTP/MCP + 确定性匹配器 + 计划装配器 + DAG 拓扑执行器 + 执行审计 + LLM 规划基线）。2016 任务 benchmark 实测：技能包路径成功率 1.0、规划成本 0ms，vs LLM 规划基线成功率 0.985、平均规划 953.9ms——**TEE 节省 token -34.8%、耗时 -31.1%**（差额=重复的 LLM 规划开销；跨口径禁比较——旧 50/2000 任务口径已随规模升级封存）。跨任务熔断三态、取消路径、数据流引用、幂等执行（task_id 即 Idempotency-Key）、executor: 轨迹口径隔离（防自我污染）
 
 ## 快速开始
 
