@@ -94,7 +94,8 @@ def cmd_summary(args: argparse.Namespace) -> int:
             "test_calls", "test_failures", "repairable", "repair_coverage_of_failures")},
         "limitations": [
             "cache-only replay: repaired calls that are not in the released cache are unverified",
-            "instance-level memory does not transfer to unseen task sets (cross_group coverage 0)",
+            "schema-default completion proposals are not verified",
+            "server-side/transient errors are classified as retryable, not repaired",
             "no live API evaluation in this artifact",
         ],
     }, ensure_ascii=False, indent=2))

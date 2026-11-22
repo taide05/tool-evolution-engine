@@ -24,6 +24,7 @@ class ToolCall:
     recorded_ok: bool
     available_tools: list[str] = field(default_factory=list)
     valid_data: bool = False
+    query: str = ""
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "ToolCall":
@@ -42,6 +43,7 @@ class ToolCall:
             recorded_ok=bool(row.get("observation_ok")),
             available_tools=list(row.get("available_tools") or []),
             valid_data=bool(row.get("valid_data")),
+            query=str(row.get("query") or ""),
         )
 
 

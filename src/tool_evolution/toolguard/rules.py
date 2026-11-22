@@ -262,11 +262,14 @@ def parse_missing_params(error: str) -> list[str]:
     match = _MISSING_PARAM_RE.search(error)
     tail = match.group(1) if match else ""
     names = [a or b for a, b in _QUOTED_RE.findall(tail)]
-    if not names:
-        bare = _BARE_AFTER_COLON_RE.search(tail)
-        if bare:
-            names = [part.strip() for part in re.split(r",| and | or ", bare.group(1)) if part.strip()]
-    return [n for n in names if n]
+    if not names and tail:
+        # "Missing required parameters: start_date, end_date" (unquoted names)
+        head = tail.split(".")[0]
+        for token in re.split(r",| and | or ", head):
+            token = token.strip().strip("'\"")
+            if token and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_ ]*", token):
+                names.append(token)
+    return [n.strip() for n in names if n.strip()]
 
 
 def _map_param_name(raw: str, schema: FunctionSchema) -> str | None:
