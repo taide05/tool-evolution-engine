@@ -17,6 +17,9 @@ build/
 data/
 *.db
 
+# ToolGuard local fixtures / scratch (downloaded benchmark data, never committed)
+.scratch/
+
 # Env
 .env
 benchmarks/runs/

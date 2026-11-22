@@ -1,0 +1,103 @@
+{
+  "artifact_version": 1,
+  "experiment": "ToolGuard_offline_repair_eval_on_real_tool_call_failures",
+  "generated_at": "2026-11-22",
+  "dataset": {
+    "source": "StableToolBench baseline trajectory release (public)",
+    "license": "Apache-2.0",
+    "tool_schema_source": "StableToolBench solvable_queries api_list (public, same release)",
+    "trajectories_parsed": 7636,
+    "trajectory_files_skipped_corrupt": 14,
+    "model_method_configs": 10,
+    "model_families": 5,
+    "query_groups": 6,
+    "tool_calls_raw": 30277,
+    "dfs_sentinel_calls_excluded": 157,
+    "tool_calls_evaluated": 30120,
+    "real_failures": 1033,
+    "failure_rate": 0.0343,
+    "failures_by_kind": {
+      "missing_required": 724,
+      "invalid_value": 98,
+      "server_error": 96,
+      "other": 85,
+      "input_parse": 30
+    },
+    "failures_by_model": {
+      "chatgpt": 324,
+      "gpt-3.5-turbo-1106": 213,
+      "toolllama": 208,
+      "gpt-4-turbo-preview": 173,
+      "gpt-4-0613": 115
+    }
+  },
+  "protocol": {
+    "lomo": "leave-one-model-out over the five model families (memory/rules built from the other four)",
+    "cross_model": "train: chatgpt/toolllama/gpt-3.5-turbo-1106; test: gpt-4-0613 + gpt-4-turbo-preview",
+    "cross_group": "memory from G1/G2 queries; test on independently worded G3_instruction queries",
+    "memory_filter": "only tool calls inside task-valid trajectories enter success memory",
+    "repair_rules": [
+      "schema-valid function-name resolution for hallucinated names",
+      "drop/rename arguments outside the agent-visible schema",
+      "fill missing required params from schema defaults/example values",
+      "memory replay: re-issue a previously successful invocation of the same task/function",
+      "learned parameter fill/normalization from successful-call value modes"
+    ]
+  },
+  "results": {
+    "lomo_aggregate": {
+      "evaluated_calls": 30120,
+      "evaluable_failures": 969,
+      "repairable": 321,
+      "repair_coverage_of_failures": 0.3313,
+      "schema_valid": 321,
+      "schema_valid_rate": 1.0,
+      "cache_verified_recovered": 48,
+      "cache_verified_still_error": 0,
+      "cache_miss": 273
+    },
+    "lomo_per_fold_coverage": {
+      "chatgpt": 0.217,
+      "gpt-3.5-turbo-1106": 0.332,
+      "gpt-4-0613": 0.413,
+      "gpt-4-turbo-preview": 0.363,
+      "toolllama": 0.432
+    },
+    "cross_model": {
+      "test_calls": 10088,
+      "test_failures": 277,
+      "repairable": 106,
+      "repair_coverage_of_failures": 0.3827,
+      "schema_valid_rate": 1.0,
+      "rule_hits": {
+        "memory_replay_successful_call": 69,
+        "memory_param_fill": 45,
+        "fill_required_from_schema": 10
+      },
+      "cache_verification": {
+        "verified_recovered": 15,
+        "cache_miss": 91
+      }
+    },
+    "cross_group": {
+      "test_calls": 3027,
+      "test_failures": 76,
+      "repairable": 0,
+      "repair_coverage_of_failures": 0.0,
+      "note": "level-1 memory is instance-level; unseen task/function sets provide no prior successful invocation"
+    }
+  },
+  "limitations": [
+    "Offline replay only: no live API/tool execution in this artifact.",
+    "The released response cache covers reference-solution inputs only (final-attempt replay hit rate 51.6%); repaired calls that miss the cache cannot be verified, hence cache_miss=273.",
+    "Cross-task generalization is currently zero: learned repairs rely on having seen the same task/function succeed.",
+    "Server-side/transient errors (n=96) are classified as retryable but not repaired deterministically.",
+    "Single repair direction (middleware does not modify tool implementations or agent prompts in this artifact)."
+  ],
+  "reproduce": [
+    "python scripts/download_toolguard_data.py --data-dir .scratch/toolguard",
+    "python scripts/parse_toolbench_trajectories.py --input .scratch/toolguard/baselines/data_baselines --output-dir .scratch/toolguard",
+    "python scripts/eval_toolguard_rules.py",
+    "python scripts/toolguard_cli.py summary"
+  ]
+}
