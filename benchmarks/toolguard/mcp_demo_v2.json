@@ -1,0 +1,4515 @@
+{
+  "artifact_version": 2,
+  "experiment": "ToolGuard_mcp_multiserver_live_ab_v2",
+  "generated_at": "2026-11-23T09:35:47.558485+00:00",
+  "model": "deepseek-v4-flash",
+  "protocol": {
+    "transport": "MCP over stdio; two real server processes (worldbank + market groups) merged by the client adapter",
+    "mcp_sdk_version": "1.26.0",
+    "servers": {
+      "worldbank": "scripts\\mcp_toolguard_server.py --group worldbank",
+      "market": "scripts\\mcp_toolguard_server.py --group market"
+    },
+    "arms": [
+      "baseline",
+      "guard"
+    ],
+    "budget_conditions": {
+      "clean+1": "per-task turn budget = fault-free MCP calibration turns + 1",
+      "clean+4": "per-task turn budget = fault-free MCP calibration turns + 4"
+    },
+    "repeats": {
+      "clean+1": 2,
+      "clean+4": 1
+    },
+    "workers": 2,
+    "wall_seconds": 923.0,
+    "failure_modes_injected": {
+      "server_transient_fault_epoch": {
+        "rate": 0.38,
+        "attempts_to_fail": 2,
+        "seed": 11,
+        "note": "deterministic server-side isError epochs (timeout / 429 / 5xx)"
+      },
+      "server_process_crash": {
+        "crash_after_call": 2,
+        "note": "the worldbank server process exits abruptly during that call; the stdio session really breaks, the adapter reconnects a fresh process, and the middleware retries the call as a retryable request_error"
+      },
+      "catalog_drift": {
+        "advertised_alias": "fetch_exchange_rate",
+        "real_tool": "get_exchange_rate",
+        "note": "stale client config advertises an old tool name no server registers; the middleware resolves it against the real catalogue (offline-validated function-name similarity rule)"
+      }
+    },
+    "calibration": "fault-free MCP run per task with middleware enabled; the turn count anchors the budget sweep",
+    "tool_surface": {
+      "advertised_tools": [
+        "fetch_exchange_rate",
+        "find_country_by_capital",
+        "geocode_city",
+        "get_country_gdp_per_capita",
+        "get_country_info",
+        "get_country_population",
+        "get_hn_item",
+        "get_hn_top_story",
+        "get_hn_user",
+        "get_package_release_date",
+        "get_package_version",
+        "get_weather"
+      ],
+      "real_tools": [
+        "find_country_by_capital",
+        "geocode_city",
+        "get_country_gdp_per_capita",
+        "get_country_info",
+        "get_country_population",
+        "get_exchange_rate",
+        "get_hn_item",
+        "get_hn_top_story",
+        "get_hn_user",
+        "get_package_release_date",
+        "get_package_version",
+        "get_weather"
+      ],
+      "hidden_behind_alias": [
+        "get_exchange_rate"
+      ]
+    },
+    "verification": "programmatic; ground truth fetched live through the MCP servers before the runs"
+  },
+  "tasks": [
+    {
+      "id": "capital_weather_japan",
+      "question": "What is the current temperature, in degrees Celsius, in the capital city of Japan? Use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature.",
+      "expected": {
+        "country": "Japan",
+        "capital": "Tokyo",
+        "latitude": 35.6895,
+        "longitude": 139.69171,
+        "temperature_c": 10.5
+      },
+      "min_turns": 4,
+      "category": "weather"
+    },
+    {
+      "id": "capital_weather_norway",
+      "question": "What is the current temperature, in degrees Celsius, in the capital city of Norway? Use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature.",
+      "expected": {
+        "country": "Norway",
+        "capital": "Oslo",
+        "latitude": 59.91273,
+        "longitude": 10.74609,
+        "temperature_c": 0.3
+      },
+      "min_turns": 4,
+      "category": "weather"
+    },
+    {
+      "id": "capital_weather_compare_france_germany",
+      "question": "Which capital city is currently warmer: the capital of France or the capital of Germany? For each country use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature. Give both temperatures in degrees Celsius.",
+      "expected": {
+        "a": {
+          "country": "France",
+          "capital": "Paris",
+          "temperature_c": 3.3
+        },
+        "b": {
+          "country": "Germany",
+          "capital": "Berlin",
+          "temperature_c": 0.7
+        },
+        "warmer_capital": "Paris",
+        "require_warmer": true
+      },
+      "min_turns": 5,
+      "category": "weather"
+    },
+    {
+      "id": "capital_weather_triple",
+      "question": "What is the current temperature in degrees Celsius in the capital cities of Japan, Norway and Portugal? Give all three values.",
+      "expected": {
+        "Japan": 10.5,
+        "Norway": 0.3,
+        "Portugal": 11.1
+      },
+      "min_turns": 6,
+      "category": "weather"
+    },
+    {
+      "id": "capital_population_canberra",
+      "question": "What is the latest population of the country whose capital city is Canberra? Give the exact integer from the World Bank data.",
+      "expected": {
+        "capital": "Canberra",
+        "country": "Australia",
+        "population": 27614411
+      },
+      "min_turns": 3,
+      "category": "worldbank"
+    },
+    {
+      "id": "capital_population_ottawa",
+      "question": "What is the latest population of the country whose capital city is Ottawa? Give the exact integer from the World Bank data.",
+      "expected": {
+        "capital": "Ottawa",
+        "country": "Canada",
+        "population": 41651653
+      },
+      "min_turns": 3,
+      "category": "worldbank"
+    },
+    {
+      "id": "capital_gdp_switzerland",
+      "question": "What is the GDP per capita in current US dollars of the country whose capital city is Bern?",
+      "expected": {
+        "capital": "Bern",
+        "country": "Switzerland",
+        "gdp_per_capita_usd": 114769.01
+      },
+      "min_turns": 3,
+      "category": "worldbank"
+    },
+    {
+      "id": "capital_income_brazil",
+      "question": "What is the World Bank income-level classification (for example 'High income') of the country whose capital city is Brasília?",
+      "expected": {
+        "capital": "Brasília",
+        "country": "Brazil",
+        "income_level": "Upper middle income"
+      },
+      "min_turns": 3,
+      "category": "worldbank"
+    },
+    {
+      "id": "population_total_three_capitals",
+      "question": "What is the combined (summed) population of the countries whose capital cities are Oslo, Wellington and Canberra? Give the exact integer total.",
+      "expected": {
+        "countries": [
+          "Norway",
+          "New Zealand",
+          "Australia"
+        ],
+        "populations": [
+          5610870,
+          5324700,
+          27614411
+        ],
+        "total": 38549981
+      },
+      "min_turns": 5,
+      "category": "worldbank"
+    },
+    {
+      "id": "population_compare_oslo_wellington",
+      "question": "Which country has the larger population: the country whose capital city is Oslo, or the country whose capital city is Wellington? Give both populations.",
+      "expected": {
+        "countries": [
+          "Norway",
+          "New Zealand"
+        ],
+        "populations": [
+          5610870,
+          5324700
+        ],
+        "larger_country": "Norway"
+      },
+      "min_turns": 4,
+      "category": "worldbank"
+    },
+    {
+      "id": "pypi_release_date_httpx",
+      "question": "When was the latest version of the Python package httpx released on PyPI? Give the date as YYYY-MM-DD.",
+      "expected": {
+        "package": "httpx",
+        "version": "0.28.1",
+        "release_date": "2024-12-06"
+      },
+      "min_turns": 3,
+      "category": "pypi"
+    },
+    {
+      "id": "pypi_newer_requests_flask",
+      "question": "Which Python package was updated more recently on PyPI: requests or flask? Give both release dates as YYYY-MM-DD.",
+      "expected": {
+        "a": {
+          "package": "requests",
+          "version": "2.34.2",
+          "release_date": "2026-05-14"
+        },
+        "b": {
+          "package": "flask",
+          "version": "3.1.3",
+          "release_date": "2026-02-19"
+        },
+        "newer": "requests"
+      },
+      "min_turns": 4,
+      "category": "pypi"
+    },
+    {
+      "id": "hn_item_1_author_karma",
+      "question": "What is the Hacker News karma score of the user who posted Hacker News item 1?",
+      "expected": {
+        "story_id": 1,
+        "username": "pg",
+        "karma": 157316
+      },
+      "min_turns": 3,
+      "category": "hn"
+    },
+    {
+      "id": "hn_item_8863_author_karma",
+      "question": "What is the Hacker News karma score of the user who posted Hacker News item 8863?",
+      "expected": {
+        "story_id": 8863,
+        "username": "dhouston",
+        "karma": 3803
+      },
+      "min_turns": 3,
+      "category": "hn"
+    },
+    {
+      "id": "fx_eur_jpy_cross",
+      "question": "What is the implied EUR to JPY cross rate (how many Japanese yen is 1 euro worth) computed through the USD market? Use the EUR-to-USD and USD-to-JPY rates and give the result to two decimal places.",
+      "expected": {
+        "eur_usd": 1.097535,
+        "usd_jpy": 158.701406,
+        "cross_rate": 174.18034763420997
+      },
+      "min_turns": 3,
+      "category": "fx"
+    },
+    {
+      "id": "fx_triangular_check",
+      "question": "Compare the direct EUR to JPY exchange rate with the rate implied by EUR to USD then USD to JPY. Give both rates to two decimal places and their absolute difference.",
+      "expected": {
+        "direct": 174.175459,
+        "implied": 174.18034763420997,
+        "difference": 0.004888634209976317
+      },
+      "min_turns": 4,
+      "category": "fx"
+    }
+  ],
+  "calibration": {
+    "capital_weather_japan": {
+      "turns": 4,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_weather_norway": {
+      "turns": 4,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_weather_compare_france_germany": {
+      "turns": 4,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_weather_triple": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_population_canberra": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_population_ottawa": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_gdp_switzerland": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_income_brazil": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "population_total_three_capitals": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "population_compare_oslo_wellington": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "pypi_release_date_httpx": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "pypi_newer_requests_flask": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "hn_item_1_author_karma": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "hn_item_8863_author_karma": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "fx_eur_jpy_cross": {
+      "turns": 2,
+      "success": true,
+      "exhausted": false
+    },
+    "fx_triangular_check": {
+      "turns": 2,
+      "success": true,
+      "exhausted": false
+    }
+  },
+  "skipped": [],
+  "records": [
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 4,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 6166,
+        "completion_tokens": 220,
+        "total_tokens": 6386
+      },
+      "elapsed_ms": 12691.23,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 5,
+      "mcp_errors": 4,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Tokyo, Japan's capital, is 10.5 °C.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6235,
+        "completion_tokens": 212,
+        "total_tokens": 6447
+      },
+      "elapsed_ms": 19875.51,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 450.0,
+      "guard_events": [
+        {
+          "rule": "rate_limit",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": false
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 10,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 6237,
+        "completion_tokens": 267,
+        "total_tokens": 6504
+      },
+      "elapsed_ms": 15954.58,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Tokyo, Japan's capital, is 10.5 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4859,
+        "completion_tokens": 174,
+        "total_tokens": 5033
+      },
+      "elapsed_ms": 18856.41,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 200.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "geocode_city",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 6,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_norway",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Oslo, Norway's capital, is 0.3 °C.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6274,
+        "completion_tokens": 226,
+        "total_tokens": 6500
+      },
+      "elapsed_ms": 19274.2,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_norway",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Oslo, Norway is 0.3 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4873,
+        "completion_tokens": 174,
+        "total_tokens": 5047
+      },
+      "elapsed_ms": 18660.58,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "geocode_city",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_norway",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 4,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 6157,
+        "completion_tokens": 220,
+        "total_tokens": 6377
+      },
+      "elapsed_ms": 11602.83,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 5,
+      "mcp_errors": 4,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_norway",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Oslo, Norway's capital, is 0.3 °C.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6252,
+        "completion_tokens": 215,
+        "total_tokens": 6467
+      },
+      "elapsed_ms": 18819.72,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 300.0,
+      "guard_events": [
+        {
+          "rule": "server_error",
+          "function": "geocode_city",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": false
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 8,
+      "mcp_errors": 5,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 6,
+      "tool_calls": 11,
+      "tool_errors": 5,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 8793,
+        "completion_tokens": 495,
+        "total_tokens": 9288
+      },
+      "elapsed_ms": 34304.53,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 11,
+      "mcp_errors": 5,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Paris (France) is warmer at 3.3 °C than Berlin (Germany) at 0.7 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5376,
+        "completion_tokens": 291,
+        "total_tokens": 5667
+      },
+      "elapsed_ms": 32681.32,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 350.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 11,
+      "mcp_errors": 5,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 6,
+      "tool_calls": 13,
+      "tool_errors": 10,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 8796,
+        "completion_tokens": 651,
+        "total_tokens": 9447
+      },
+      "elapsed_ms": 23185.18,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 13,
+      "mcp_errors": 10,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Paris (France) is warmer at 3.3 °C, versus Berlin (Germany) at 0.7 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5373,
+        "completion_tokens": 291,
+        "total_tokens": 5664
+      },
+      "elapsed_ms": 33490.83,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 5,
+      "guard_retry_sleep_ms": 650.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 15,
+      "mcp_errors": 9,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_triple",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 7,
+      "clean_turns": 6,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 7,
+      "tool_calls": 15,
+      "tool_errors": 7,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 12900,
+        "completion_tokens": 808,
+        "total_tokens": 13708
+      },
+      "elapsed_ms": 43525.65,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 15,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_triple",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 7,
+      "clean_turns": 6,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo 10.5 °C, Oslo 0.3 °C, and Lisbon 11.1 °C.",
+      "turns": 4,
+      "tool_calls": 9,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5897,
+        "completion_tokens": 451,
+        "total_tokens": 6348
+      },
+      "elapsed_ms": 44503.17,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 4,
+      "guard_retry_sleep_ms": 500.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 16,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_triple",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 7,
+      "clean_turns": 6,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo (Japan) is 10.5 °C, Oslo (Norway) is 0.3 °C, and Lisbon (Portugal) is 11.1 °C.",
+      "turns": 6,
+      "tool_calls": 14,
+      "tool_errors": 8,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 9739,
+        "completion_tokens": 795,
+        "total_tokens": 10534
+      },
+      "elapsed_ms": 30355.14,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 14,
+      "mcp_errors": 8,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_canberra",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4652,
+        "completion_tokens": 198,
+        "total_tokens": 4850
+      },
+      "elapsed_ms": 8144.59,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 3,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "capital_population_canberra",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Australia's latest World Bank population is 27,614,411.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3412,
+        "completion_tokens": 115,
+        "total_tokens": 3527
+      },
+      "elapsed_ms": 14501.51,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 200.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_population",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_triple",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 7,
+      "clean_turns": 6,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo: 10.5 °C, Oslo: 0.3 °C, Lisbon: 11.1 °C.",
+      "turns": 4,
+      "tool_calls": 9,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6037,
+        "completion_tokens": 497,
+        "total_tokens": 6534
+      },
+      "elapsed_ms": 48701.95,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 4,
+      "guard_retry_sleep_ms": 500.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 16,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_canberra",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4679,
+        "completion_tokens": 183,
+        "total_tokens": 4862
+      },
+      "elapsed_ms": 16532.94,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_ottawa",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4778,
+        "completion_tokens": 234,
+        "total_tokens": 5012
+      },
+      "elapsed_ms": 8364.87,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 3,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "capital_population_canberra",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Australia's latest World Bank population is 27,614,411 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3412,
+        "completion_tokens": 118,
+        "total_tokens": 3530
+      },
+      "elapsed_ms": 14949.15,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_population",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_ottawa",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The country with capital Ottawa is Canada, whose latest World Bank population (2025) is 41,651,653.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3399,
+        "completion_tokens": 121,
+        "total_tokens": 3520
+      },
+      "elapsed_ms": 15169.42,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 200.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_population",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_ottawa",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The latest World Bank population for Canada (capital: Ottawa) is 41,651,653 (2025).",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4650,
+        "completion_tokens": 152,
+        "total_tokens": 4802
+      },
+      "elapsed_ms": 15363.7,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4833,
+        "completion_tokens": 312,
+        "total_tokens": 5145
+      },
+      "elapsed_ms": 9466.45,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 3,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "capital_population_ottawa",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Canada's latest World Bank population is 41,651,653 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3377,
+        "completion_tokens": 102,
+        "total_tokens": 3479
+      },
+      "elapsed_ms": 14107.25,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_population",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland’s GDP per capita is **$114,769.01** in current US dollars (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3408,
+        "completion_tokens": 130,
+        "total_tokens": 3538
+      },
+      "elapsed_ms": 15250.93,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 200.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_gdp_per_capita",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 1,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4788,
+        "completion_tokens": 259,
+        "total_tokens": 5047
+      },
+      "elapsed_ms": 20209.05,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland (capital Bern) had a GDP per capita of $114,769.01 in 2025.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3402,
+        "completion_tokens": 126,
+        "total_tokens": 3528
+      },
+      "elapsed_ms": 13906.92,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_gdp_per_capita",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_income_brazil",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Brazil is classified as **Upper middle income**.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4774,
+        "completion_tokens": 175,
+        "total_tokens": 4949
+      },
+      "elapsed_ms": 14118.25,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_income_brazil",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Brazil is classified as **Upper middle income**.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3445,
+        "completion_tokens": 119,
+        "total_tokens": 3564
+      },
+      "elapsed_ms": 14701.73,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_income_brazil",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Brazil's World Bank income-level classification is **Upper middle income**.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4765,
+        "completion_tokens": 175,
+        "total_tokens": 4940
+      },
+      "elapsed_ms": 14943.72,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_income_brazil",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Brazil's World Bank income-level classification is \"Upper middle income\".",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3395,
+        "completion_tokens": 98,
+        "total_tokens": 3493
+      },
+      "elapsed_ms": 14125.94,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_total_three_capitals",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 6,
+      "tool_calls": 15,
+      "tool_errors": 10,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 9215,
+        "completion_tokens": 654,
+        "total_tokens": 9869
+      },
+      "elapsed_ms": 21784.15,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 15,
+      "mcp_errors": 10,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_total_three_capitals",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The combined population of Norway, New Zealand and Australia is **38,549,981** (5,610,870 + 5,324,700 + 27,614,411).",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3813,
+        "completion_tokens": 301,
+        "total_tokens": 4114
+      },
+      "elapsed_ms": 22266.43,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 4,
+      "guard_retry_sleep_ms": 500.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "find_country_by_capital",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 13,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_total_three_capitals",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 6,
+      "tool_calls": 11,
+      "tool_errors": 6,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 8819,
+        "completion_tokens": 455,
+        "total_tokens": 9274
+      },
+      "elapsed_ms": 21365.66,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 11,
+      "mcp_errors": 6,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_total_three_capitals",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 6,
+      "clean_turns": 5,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The combined population of Norway, New Zealand, and Australia is 38,549,981.",
+      "turns": 4,
+      "tool_calls": 7,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5382,
+        "completion_tokens": 380,
+        "total_tokens": 5762
+      },
+      "elapsed_ms": 22822.72,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 450.0,
+      "guard_events": [
+        {
+          "rule": "timeout",
+          "function": "find_country_by_capital",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": false
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 13,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 7,
+      "tool_errors": 4,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 6381,
+        "completion_tokens": 393,
+        "total_tokens": 6774
+      },
+      "elapsed_ms": 19766.61,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 7,
+      "mcp_errors": 4,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Norway (capital Oslo) has the larger population at 5,610,870 versus New Zealand (capital Wellington) at 5,324,700.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3590,
+        "completion_tokens": 182,
+        "total_tokens": 3772
+      },
+      "elapsed_ms": 18174.57,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 350.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "find_country_by_capital",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 9,
+      "mcp_errors": 5,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 10,
+      "tool_errors": 7,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 6680,
+        "completion_tokens": 429,
+        "total_tokens": 7109
+      },
+      "elapsed_ms": 16790.03,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 10,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4793,
+        "completion_tokens": 264,
+        "total_tokens": 5057
+      },
+      "elapsed_ms": 8247.27,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Norway (capital Oslo) has the larger population: 5,610,870 versus New Zealand's (capital Wellington) 5,324,700.",
+      "turns": 4,
+      "tool_calls": 5,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4937,
+        "completion_tokens": 229,
+        "total_tokens": 5166
+      },
+      "elapsed_ms": 18622.63,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 450.0,
+      "guard_events": [
+        {
+          "rule": "timeout",
+          "function": "find_country_by_capital",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": false
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 11,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "httpx 0.28.1 (the latest version) was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3455,
+        "completion_tokens": 145,
+        "total_tokens": 3600
+      },
+      "elapsed_ms": 6201.27,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4690,
+        "completion_tokens": 212,
+        "total_tokens": 4902
+      },
+      "elapsed_ms": 7278.86,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The latest version of httpx (0.28.1) was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3459,
+        "completion_tokens": 147,
+        "total_tokens": 3606
+      },
+      "elapsed_ms": 6739.1,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "requests (2.34.2, 2026-05-14) was updated more recently than Flask (3.1.3, 2026-02-19).",
+      "turns": 5,
+      "tool_calls": 6,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6463,
+        "completion_tokens": 330,
+        "total_tokens": 6793
+      },
+      "elapsed_ms": 12427.77,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 6,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "requests was updated more recently (2026-05-14) than flask (2026-02-19).",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3674,
+        "completion_tokens": 244,
+        "total_tokens": 3918
+      },
+      "elapsed_ms": 10156.3,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 6,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "requests was updated more recently (requests 2.34.2 on 2026-05-14; Flask 3.1.3 on 2026-02-19).",
+      "turns": 5,
+      "tool_calls": 6,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6393,
+        "completion_tokens": 317,
+        "total_tokens": 6710
+      },
+      "elapsed_ms": 11851.64,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 6,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "requests was updated more recently — requests 2.34.2 released 2026-05-14 vs Flask 3.1.3 released 2026-02-19.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3678,
+        "completion_tokens": 238,
+        "total_tokens": 3916
+      },
+      "elapsed_ms": 10097.64,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 6,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The user who posted Hacker News item 1 is **pg**, with a karma score of **157,316**.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3460,
+        "completion_tokens": 137,
+        "total_tokens": 3597
+      },
+      "elapsed_ms": 10092.3,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 2,
+      "mcp_errors": 0,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The user “pg” has a Hacker News karma score of 157,316.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3469,
+        "completion_tokens": 138,
+        "total_tokens": 3607
+      },
+      "elapsed_ms": 9304.41,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 2,
+      "mcp_errors": 0,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The Hacker News user who posted item 1 is **pg**, with a karma score of **157,316**.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3451,
+        "completion_tokens": 143,
+        "total_tokens": 3594
+      },
+      "elapsed_ms": 10541.54,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 2,
+      "mcp_errors": 0,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The Hacker News item 1 poster is **pg**, with a karma score of **157,316**.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3448,
+        "completion_tokens": 129,
+        "total_tokens": 3577
+      },
+      "elapsed_ms": 9827.29,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 2,
+      "mcp_errors": 0,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The HN user \"dhouston\" (who posted item 8863) has a karma score of 3803.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3455,
+        "completion_tokens": 121,
+        "total_tokens": 3576
+      },
+      "elapsed_ms": 10553.51,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_item",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4701,
+        "completion_tokens": 203,
+        "total_tokens": 4904
+      },
+      "elapsed_ms": 10922.5,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The HN user \"dhouston\" (poster of item 8863, the Dropbox launch story) has a karma score of 3803.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3457,
+        "completion_tokens": 129,
+        "total_tokens": 3586
+      },
+      "elapsed_ms": 9982.89,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_user",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4752,
+        "completion_tokens": 182,
+        "total_tokens": 4934
+      },
+      "elapsed_ms": 10731.9,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_expected_value",
+      "answer": "I can't compute the EUR-to-JPY cross rate because the exchange-rate tool is unavailable, so I don't have the EUR/USD and USD/JPY rates.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2342,
+        "completion_tokens": 406,
+        "total_tokens": 2748
+      },
+      "elapsed_ms": 2825.62,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 2,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The implied EUR/JPY cross rate through USD is 174.18 yen per euro.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2359,
+        "completion_tokens": 337,
+        "total_tokens": 2696
+      },
+      "elapsed_ms": 8561.72,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "function_name_resolution+transient_retry:2",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "USD"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "USD",
+            "target": "JPY"
+          },
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 6,
+      "mcp_errors": 4,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The implied EUR/JPY cross rate is 174.18 yen per euro (1.097535 × 158.701406 = 174.18).",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3941,
+        "completion_tokens": 517,
+        "total_tokens": 4458
+      },
+      "elapsed_ms": 9443.38,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 6,
+      "mcp_errors": 4,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The implied EUR/JPY cross rate through USD is **174.18 JPY per EUR** (1.097535 × 158.701406).",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2352,
+        "completion_tokens": 409,
+        "total_tokens": 2761
+      },
+      "elapsed_ms": 9595.06,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "USD"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "USD",
+            "target": "JPY"
+          },
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_triangular_check",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 8,
+      "tool_errors": 7,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7246,
+        "completion_tokens": 572,
+        "total_tokens": 7818
+      },
+      "elapsed_ms": 8569.14,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 8,
+      "mcp_errors": 7,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_triangular_check",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The direct EUR→JPY rate is **174.18** (174.175459), the implied rate via USD is **174.18** (1.097535 × 158.701406 = 174.180348), and their absolute difference is **0.00** (≈0.0049 before rounding).",
+      "turns": 2,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2369,
+        "completion_tokens": 534,
+        "total_tokens": 2903
+      },
+      "elapsed_ms": 13927.7,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 300.0,
+      "guard_events": [
+        {
+          "rule": "function_name_resolution+transient_retry:2",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "JPY"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution+transient_retry:2",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "USD"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "USD",
+            "target": "JPY"
+          },
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 10,
+      "mcp_errors": 7,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_triangular_check",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The direct EUR→JPY rate is 174.18, the implied rate via USD (1.097535 × 158.701406) is 174.18, and their absolute difference is 0.00 (≈0.0049 before rounding).",
+      "turns": 5,
+      "tool_calls": 9,
+      "tool_errors": 6,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7593,
+        "completion_tokens": 1115,
+        "total_tokens": 8708
+      },
+      "elapsed_ms": 17746.17,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 9,
+      "mcp_errors": 6,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_triangular_check",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 1,
+      "fault_seed": 112,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Direct EUR→JPY is 174.18, the implied rate (1.097535 × 158.701406) is 174.18, and their absolute difference is 0.00 (0.0049 unrounded).",
+      "turns": 2,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2417,
+        "completion_tokens": 635,
+        "total_tokens": 3052
+      },
+      "elapsed_ms": 14450.59,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "JPY"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "USD"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "USD",
+            "target": "JPY"
+          },
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 6,
+      "mcp_errors": 3,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 8,
+      "tool_calls": 8,
+      "tool_errors": 6,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 10755,
+        "completion_tokens": 370,
+        "total_tokens": 11125
+      },
+      "elapsed_ms": 21008.82,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 8,
+      "mcp_errors": 6,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Tokyo, Japan's capital, is 10.4 °C.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6239,
+        "completion_tokens": 214,
+        "total_tokens": 6453
+      },
+      "elapsed_ms": 22122.9,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 450.0,
+      "guard_events": [
+        {
+          "rule": "rate_limit",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": false
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 10,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_norway",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Oslo, Norway's capital, is 0.5 °C.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6302,
+        "completion_tokens": 237,
+        "total_tokens": 6539
+      },
+      "elapsed_ms": 21784.67,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_norway",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The current temperature in Oslo, Norway's capital, is 0.5 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4882,
+        "completion_tokens": 178,
+        "total_tokens": 5060
+      },
+      "elapsed_ms": 19004.08,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "geocode_city",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 9,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Paris is warmer at 3.4 °C, compared with Berlin at 0.9 °C.",
+      "turns": 7,
+      "tool_calls": 11,
+      "tool_errors": 5,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 10776,
+        "completion_tokens": 514,
+        "total_tokens": 11290
+      },
+      "elapsed_ms": 36743.13,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 11,
+      "mcp_errors": 5,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 9,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Paris is warmer at 3.4 °C, compared with Berlin at 0.9 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5385,
+        "completion_tokens": 292,
+        "total_tokens": 5677
+      },
+      "elapsed_ms": 34859.69,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 350.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 11,
+      "mcp_errors": 5,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_triple",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 10,
+      "clean_turns": 6,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo (Japan) 10.4 °C, Oslo (Norway) 0.5 °C, and Lisbon (Portugal) 11.8 °C.",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3994,
+        "completion_tokens": 330,
+        "total_tokens": 4324
+      },
+      "elapsed_ms": 28623.88,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 4,
+      "guard_retry_sleep_ms": 500.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "geocode_city",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 13,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_weather_triple",
+      "category": "weather",
+      "condition": "clean+4",
+      "budget": 10,
+      "clean_turns": 6,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo (Japan) 10.4 °C, Oslo (Norway) 0.5 °C, and Lisbon (Portugal) 11.8 °C.",
+      "turns": 8,
+      "tool_calls": 16,
+      "tool_errors": 7,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 14654,
+        "completion_tokens": 786,
+        "total_tokens": 15440
+      },
+      "elapsed_ms": 47477.54,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 16,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_canberra",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Australia's latest World Bank population (2025) is 27,614,411.",
+      "turns": 6,
+      "tool_calls": 5,
+      "tool_errors": 3,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7396,
+        "completion_tokens": 233,
+        "total_tokens": 7629
+      },
+      "elapsed_ms": 14630.34,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_canberra",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Australia's latest World Bank population (2025) is 27,614,411.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3406,
+        "completion_tokens": 116,
+        "total_tokens": 3522
+      },
+      "elapsed_ms": 13295.32,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 200.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_population",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_ottawa",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The latest World Bank population for Canada, whose capital is Ottawa, is 41,651,653 (2025).",
+      "turns": 6,
+      "tool_calls": 5,
+      "tool_errors": 3,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7675,
+        "completion_tokens": 310,
+        "total_tokens": 7985
+      },
+      "elapsed_ms": 15523.6,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_population_ottawa",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Canada's latest World Bank population (2025) is 41,651,653.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3377,
+        "completion_tokens": 103,
+        "total_tokens": 3480
+      },
+      "elapsed_ms": 13316.94,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 200.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_population",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland (capital: Bern) has a GDP per capita of about $114,769 (2025).",
+      "turns": 3,
+      "tool_calls": 3,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3555,
+        "completion_tokens": 191,
+        "total_tokens": 3746
+      },
+      "elapsed_ms": 8737.97,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 3,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland's GDP per capita is $114,769.01 (current US dollars, 2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3400,
+        "completion_tokens": 124,
+        "total_tokens": 3524
+      },
+      "elapsed_ms": 13815.72,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 200.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_gdp_per_capita",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 5,
+      "mcp_errors": 3,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_income_brazil",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Brazil’s World Bank income-level classification is **Upper middle income**.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 1,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4769,
+        "completion_tokens": 178,
+        "total_tokens": 4947
+      },
+      "elapsed_ms": 13620.72,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "capital_income_brazil",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Brazil's World Bank income-level classification is \"Upper middle income\".",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3395,
+        "completion_tokens": 98,
+        "total_tokens": 3493
+      },
+      "elapsed_ms": 13130.75,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:1",
+          "function": "get_country_info",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 3,
+      "mcp_errors": 1,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_total_three_capitals",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 9,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The combined population of Norway (Oslo), New Zealand (Wellington) and Australia (Canberra) is **38,549,981** (5,610,870 + 5,324,700 + 27,614,411).",
+      "turns": 9,
+      "tool_calls": 14,
+      "tool_errors": 9,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 14983,
+        "completion_tokens": 701,
+        "total_tokens": 15684
+      },
+      "elapsed_ms": 27335.78,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 14,
+      "mcp_errors": 9,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_total_three_capitals",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 9,
+      "clean_turns": 5,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The combined population of Norway (5,610,870), New Zealand (5,324,700) and Australia (27,614,411) is **38,549,981**.",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3847,
+        "completion_tokens": 316,
+        "total_tokens": 4163
+      },
+      "elapsed_ms": 20373.85,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 4,
+      "guard_retry_sleep_ms": 500.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "find_country_by_capital",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 13,
+      "mcp_errors": 7,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 8,
+      "tool_calls": 10,
+      "tool_errors": 6,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 11272,
+        "completion_tokens": 418,
+        "total_tokens": 11690
+      },
+      "elapsed_ms": 24655.04,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 10,
+      "mcp_errors": 6,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "category": "worldbank",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Norway (capital Oslo) has the larger population at 5,610,870, versus New Zealand (capital Wellington) at 5,324,700.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3608,
+        "completion_tokens": 192,
+        "total_tokens": 3800
+      },
+      "elapsed_ms": 17723.61,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 350.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:1",
+          "function": "find_country_by_capital",
+          "error": "request_error: MCP transport failure: MCP transport failure: Connection closed",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 9,
+      "mcp_errors": 5,
+      "mcp_restarts": 1
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The latest version of httpx (0.28.1) was released on 2024-12-06.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6205,
+        "completion_tokens": 279,
+        "total_tokens": 6484
+      },
+      "elapsed_ms": 6411.12,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "httpx version 0.28.1 was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3453,
+        "completion_tokens": 140,
+        "total_tokens": 3593
+      },
+      "elapsed_ms": 6322.45,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "category": "pypi",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Requests was updated more recently, on 2026-05-14, versus Flask on 2026-02-19.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3705,
+        "completion_tokens": 287,
+        "total_tokens": 3992
+      },
+      "elapsed_ms": 8769.14,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 6,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "category": "pypi",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "requests was updated more recently: requests 2.34.2 on 2026-05-14 and Flask 3.1.3 on 2026-02-19.",
+      "turns": 5,
+      "tool_calls": 6,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6476,
+        "completion_tokens": 340,
+        "total_tokens": 6816
+      },
+      "elapsed_ms": 10008.4,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 6,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "category": "hn",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The user \"pg\" has a Hacker News karma score of 157,316.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3398,
+        "completion_tokens": 100,
+        "total_tokens": 3498
+      },
+      "elapsed_ms": 9994.17,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 2,
+      "mcp_errors": 0,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "category": "hn",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Hacker News item 1 was posted by **pg**, whose karma score is **157,316**.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3456,
+        "completion_tokens": 135,
+        "total_tokens": 3591
+      },
+      "elapsed_ms": 9517.77,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 2,
+      "mcp_errors": 0,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "category": "hn",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Hacker News item 8863 was posted by user \"dhouston,\" who has a karma score of 3803.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3457,
+        "completion_tokens": 123,
+        "total_tokens": 3580
+      },
+      "elapsed_ms": 8874.02,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_item",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "category": "hn",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The Hacker News item 8863 (\"My YC app: Dropbox\") was posted by user **dhouston**, whose karma score is **3803**.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6103,
+        "completion_tokens": 233,
+        "total_tokens": 6336
+      },
+      "elapsed_ms": 10838.43,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 4,
+      "mcp_errors": 2,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "category": "fx",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The implied EUR/JPY cross rate through USD is 1.097535 × 158.701406 ≈ **174.18 JPY per EUR**.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2316,
+        "completion_tokens": 300,
+        "total_tokens": 2616
+      },
+      "elapsed_ms": 8456.58,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "function_name_resolution+transient_retry:2",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "USD"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "USD",
+            "target": "JPY"
+          },
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 6,
+      "mcp_errors": 4,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "category": "fx",
+      "condition": "clean+4",
+      "budget": 7,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "1.097535 × 158.701406 = let's compute: 158.701406 × 1.097535.\n\n158.701406 × 1 = 158.701406\n×0.09 = 14.28312654\n×0.007 = 1.110909842\n×0.0005 = 0.079350703\n×0.00003 = 0.00476104\n×0.000005 = 0.000793507\n\nSum: 158.701406 + 14.28312654 = 172.98453254\n+1.110909842 = 174.09544238\n+0.079350703 = 174.17479309\n+0.004761042 = 174.17955413\n+0.000793507 = 174.18034764\n\n≈ 174.18.The implied EUR/JPY cross rate t",
+      "turns": 6,
+      "tool_calls": 9,
+      "tool_errors": 7,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 9281,
+        "completion_tokens": 872,
+        "total_tokens": 10153
+      },
+      "elapsed_ms": 12831.17,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 9,
+      "mcp_errors": 7,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_triangular_check",
+      "category": "fx",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Direct EUR→JPY is 174.18, the implied rate (1.097535 × 158.701406) is 174.18, and their absolute difference is 0.00 (about 0.0049).",
+      "turns": 2,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2372,
+        "completion_tokens": 439,
+        "total_tokens": 2811
+      },
+      "elapsed_ms": 12372.27,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 300.0,
+      "guard_events": [
+        {
+          "rule": "function_name_resolution+transient_retry:2",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "JPY"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution+transient_retry:2",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "EUR",
+            "target": "USD"
+          },
+          "recovered": true
+        },
+        {
+          "rule": "function_name_resolution",
+          "function": "fetch_exchange_rate",
+          "error": "tool_error: Unknown tool: fetch_exchange_rate",
+          "repaired_function": "get_exchange_rate",
+          "repaired_arguments": {
+            "base": "USD",
+            "target": "JPY"
+          },
+          "recovered": true
+        }
+      ],
+      "mcp_calls": 10,
+      "mcp_errors": 7,
+      "mcp_restarts": 0
+    },
+    {
+      "task": "fx_triangular_check",
+      "category": "fx",
+      "condition": "clean+4",
+      "budget": 8,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 11,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Direct EUR→JPY is 174.18, the implied rate (1.097535 × 158.701406) is 174.18, an absolute difference of 0.00 (0.0049 before rounding).",
+      "turns": 5,
+      "tool_calls": 10,
+      "tool_errors": 7,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7668,
+        "completion_tokens": 972,
+        "total_tokens": 8640
+      },
+      "elapsed_ms": 15383.43,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": [],
+      "mcp_calls": 10,
+      "mcp_errors": 7,
+      "mcp_restarts": 0
+    }
+  ],
+  "aggregate": {
+    "conditions": {
+      "clean+1": {
+        "mean_budget": 4.75,
+        "arms": {
+          "baseline": {
+            "cells": 32,
+            "success": 11,
+            "success_rate": 0.3438,
+            "success_wilson_95": [
+              0.2041,
+              0.5169
+            ],
+            "turns": 146,
+            "turns_per_cell": 4.562,
+            "tool_calls": 201,
+            "tool_errors": 115,
+            "exhausted": 20,
+            "faults_injected": 0,
+            "fault_kinds": {},
+            "guard_recoveries": 0,
+            "guard_retry_sleep_ms": 0.0,
+            "mcp_calls": 201,
+            "mcp_errors": 115,
+            "mcp_restarts": 17,
+            "usage": {
+              "prompt_tokens": 193901,
+              "completion_tokens": 11699,
+              "total_tokens": 205600
+            },
+            "elapsed_ms": 498421.45
+          },
+          "guard": {
+            "cells": 32,
+            "success": 32,
+            "success_rate": 1.0,
+            "success_wilson_95": [
+              0.8928,
+              1.0
+            ],
+            "turns": 104,
+            "turns_per_cell": 3.25,
+            "tool_calls": 112,
+            "tool_errors": 4,
+            "exhausted": 0,
+            "faults_injected": 0,
+            "fault_kinds": {},
+            "guard_recoveries": 60,
+            "guard_retry_sleep_ms": 6950.0,
+            "mcp_calls": 220,
+            "mcp_errors": 112,
+            "mcp_restarts": 20,
+            "usage": {
+              "prompt_tokens": 127466,
+              "completion_tokens": 7532,
+              "total_tokens": 134998
+            },
+            "elapsed_ms": 553586.17
+          }
+        },
+        "paired_cells": {
+          "both_success": 11,
+          "baseline_only": 0,
+          "guard_only": 21,
+          "neither": 0,
+          "mcnemar_exact_p": 9.5367431640625e-07
+        },
+        "per_category": {
+          "weather": {
+            "baseline": [
+              2,
+              8
+            ],
+            "guard": [
+              8,
+              8
+            ]
+          },
+          "worldbank": {
+            "baseline": [
+              3,
+              12
+            ],
+            "guard": [
+              12,
+              12
+            ]
+          },
+          "pypi": {
+            "baseline": [
+              2,
+              4
+            ],
+            "guard": [
+              4,
+              4
+            ]
+          },
+          "hn": {
+            "baseline": [
+              2,
+              4
+            ],
+            "guard": [
+              4,
+              4
+            ]
+          },
+          "fx": {
+            "baseline": [
+              2,
+              4
+            ],
+            "guard": [
+              4,
+              4
+            ]
+          }
+        },
+        "failure_modes": {
+          "baseline": {
+            "no_answer": 20,
+            "no_expected_value": 1
+          }
+        }
+      },
+      "clean+4": {
+        "mean_budget": 7.75,
+        "arms": {
+          "baseline": {
+            "cells": 16,
+            "success": 14,
+            "success_rate": 0.875,
+            "success_wilson_95": [
+              0.6398,
+              0.965
+            ],
+            "turns": 93,
+            "turns_per_cell": 5.812,
+            "tool_calls": 114,
+            "tool_errors": 63,
+            "exhausted": 2,
+            "faults_injected": 0,
+            "fault_kinds": {},
+            "guard_recoveries": 0,
+            "guard_retry_sleep_ms": 0.0,
+            "mcp_calls": 114,
+            "mcp_errors": 63,
+            "mcp_restarts": 9,
+            "usage": {
+              "prompt_tokens": 131268,
+              "completion_tokens": 6734,
+              "total_tokens": 138002
+            },
+            "elapsed_ms": 296984.33
+          },
+          "guard": {
+            "cells": 16,
+            "success": 16,
+            "success_rate": 1.0,
+            "success_wilson_95": [
+              0.8064,
+              1.0
+            ],
+            "turns": 50,
+            "turns_per_cell": 3.125,
+            "tool_calls": 52,
+            "tool_errors": 1,
+            "exhausted": 0,
+            "faults_injected": 0,
+            "fault_kinds": {},
+            "guard_recoveries": 32,
+            "guard_retry_sleep_ms": 3750.0,
+            "mcp_calls": 110,
+            "mcp_errors": 59,
+            "mcp_restarts": 10,
+            "usage": {
+              "prompt_tokens": 60292,
+              "completion_tokens": 3387,
+              "total_tokens": 63679
+            },
+            "elapsed_ms": 250578.97
+          }
+        },
+        "paired_cells": {
+          "both_success": 14,
+          "baseline_only": 0,
+          "guard_only": 2,
+          "neither": 0,
+          "mcnemar_exact_p": 0.5
+        },
+        "per_category": {
+          "weather": {
+            "baseline": [
+              3,
+              4
+            ],
+            "guard": [
+              4,
+              4
+            ]
+          },
+          "worldbank": {
+            "baseline": [
+              5,
+              6
+            ],
+            "guard": [
+              6,
+              6
+            ]
+          },
+          "pypi": {
+            "baseline": [
+              2,
+              2
+            ],
+            "guard": [
+              2,
+              2
+            ]
+          },
+          "hn": {
+            "baseline": [
+              2,
+              2
+            ],
+            "guard": [
+              2,
+              2
+            ]
+          },
+          "fx": {
+            "baseline": [
+              2,
+              2
+            ],
+            "guard": [
+              2,
+              2
+            ]
+          }
+        },
+        "failure_modes": {
+          "baseline": {
+            "no_answer": 2
+          }
+        }
+      }
+    },
+    "budget_curve": [
+      {
+        "condition": "clean+1",
+        "mean_budget": 4.75,
+        "baseline_success_rate": 0.3438,
+        "guard_success_rate": 1.0,
+        "baseline_cells": 32,
+        "guard_cells": 32
+      },
+      {
+        "condition": "clean+4",
+        "mean_budget": 7.75,
+        "baseline_success_rate": 0.875,
+        "guard_success_rate": 1.0,
+        "baseline_cells": 16,
+        "guard_cells": 16
+      }
+    ]
+  },
+  "guard_repairs_by_rule": {
+    "rate_limit": 2,
+    "transient_retry": 77,
+    "server_error": 1,
+    "timeout": 2,
+    "function_name_resolution+transient_retry": 6,
+    "function_name_resolution": 9
+  },
+  "key_findings": [
+    "clean+1 (mean budget 4.75): baseline 11/32 vs guard 32/32 (McNemar p=9.54e-07)",
+    "clean+1: turns/cell baseline 4.562 -> guard 3.25, tokens baseline 205600 -> guard 134998, agent-visible tool errors 115 -> 4",
+    "clean+4 (mean budget 7.75): baseline 14/16 vs guard 16/16 (McNemar p=0.5)",
+    "clean+4: turns/cell baseline 5.812 -> guard 3.125, tokens baseline 138002 -> guard 63679, agent-visible tool errors 63 -> 1"
+  ],
+  "limitations": [
+    "The server crash and the catalog drift are deterministic injected scenarios (call #2 of the worldbank server; alias fetch_exchange_rate), not observed production incidents; everything else (stdio transport, process death, reconnects, tool routing, HTTP, LLM) is real.",
+    "Single model (deepseek-v4-flash) and repeat seeds vary only the injected fault surface, not model sampling.",
+    "A fresh pair of MCP server processes is started per cell, so cold HTTP caches make runs slower and fault assignment depends on the calls the cell actually makes.",
+    "MCP stdio needs real pipe handles, so this runner needs full local access; the test suite covers the same adapter logic with the SDK in-memory transport.",
+    "Free public APIs are not production grade and API drift can affect reruns."
+  ],
+  "reproduce": [
+    "python scripts/run_mcp_demo_v2.py --mode calibrate",
+    "python scripts/run_mcp_demo_v2.py --workers 2 --output benchmarks/toolguard/mcp_demo_v2.json",
+    "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
+  ]
+}

@@ -1,29 +1,34 @@
-"""Real MCP (stdio) server exposing the key-free public-API tool surface.
+"""Real MCP (stdio) server exposing the key-free public-API tool surface, split by group.
 
-This is the tool layer for the MCP integration demo: a standard MCP server that any MCP
-client can drive.  Every tool calls a real public API (World Bank, Open-Meteo, PyPI,
-Hacker News, open.er-api.com); there is no mock data.
+This is the tool layer for the MCP integration demo; every tool calls a real public API
+(World Bank, Open-Meteo, PyPI, Hacker News, open.er-api.com).  There is no mock data.
+
+Two tool groups can be served by separate server processes (``--group worldbank`` and
+``--group market``), so the client exercises **multi-server routing** like a real MCP
+deployment instead of a single monolithic server.  With no ``--group`` all tools are
+served (backward compatible with the V1 demo).
 
 Errors are reported through MCP ``isError`` results with a ``TOOL_ERROR[kind]: message``
-marker, so a middleware client can map them back onto the failure taxonomy it learned
-from the offline traces (``invalid_argument`` / ``timeout`` / ``rate_limit`` / ...).
+marker, so a middleware client can map them back onto the failure taxonomy it learned from
+the offline traces (``invalid_argument`` / ``timeout`` / ``rate_limit`` / ...).
 
-Fault injection lives *in the server*, i.e. where real outages live: when
-``TOOLGUARD_MCP_FAULT_RATE`` is set, a deterministic subset of logical calls fails its
-first ``TOOLGUARD_MCP_FAULT_EPOCH`` attempts with transient MCP tool errors (timeout /
-HTTP 429 / HTTP 5xx).  The demo runner starts a fresh server per arm so both A/B arms
-face the same fresh fault surface.  With the env vars unset the server never injects
-faults.
+Fault injection (disabled unless configured)
+--------------------------------------------
+* ``TOOLGUARD_MCP_FAULT_RATE``: deterministic subset of logical calls fails its first
+  ``TOOLGUARD_MCP_FAULT_EPOCH`` attempts with transient MCP tool errors.
+* ``TOOLGUARD_MCP_CRASH_AFTER=N``: the server process exits abruptly (code 17) during
+  call N.  This is a *real* transport failure: the client's stdio session is torn down
+  mid-request, so the client adapter must reconnect and retry.
 
 Run it directly to speak MCP over stdio::
 
-    python scripts/mcp_toolguard_server.py
-
-or point any MCP client at it.
+    python scripts/mcp_toolguard_server.py --group worldbank
+    python scripts/mcp_toolguard_server.py --group market
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import logging
@@ -48,7 +53,9 @@ mcp = FastMCP("toolguard-live-tools", log_level="WARNING")
 _FAULT_RATE = float(os.environ.get("TOOLGUARD_MCP_FAULT_RATE") or 0.0)
 _FAULT_SEED = int(os.environ.get("TOOLGUARD_MCP_FAULT_SEED") or 7)
 _FAULT_EPOCH = max(1, int(os.environ.get("TOOLGUARD_MCP_FAULT_EPOCH") or 2))
+_CRASH_AFTER = int(os.environ.get("TOOLGUARD_MCP_CRASH_AFTER") or 0)
 _FAULT_STATE: dict[str, int] = {}
+_CALL_COUNT = 0
 
 
 def _stable_roll(*parts: object) -> float:
@@ -77,85 +84,112 @@ def _maybe_fault(tool: str, arguments: dict) -> None:
 
 
 def _call(tool: str, handler, **arguments):
+    global _CALL_COUNT
     _maybe_fault(tool, arguments)
+    _CALL_COUNT += 1
+    if _CRASH_AFTER and _CALL_COUNT >= _CRASH_AFTER:
+        # Hard crash mid-request: no JSON-RPC response is written, the stdio session dies.
+        os._exit(17)
     try:
         return handler(**arguments)
     except ToolError as exc:
         raise ValueError(f"TOOL_ERROR[{exc.kind}]: {exc.message}") from exc
 
 
-@mcp.tool()
+# ---------------------------------------------------------------------------
+# worldbank group
+# ---------------------------------------------------------------------------
 def get_country_info(country: str) -> dict:
     """Get a country's capital city, region and income level (World Bank data)."""
     return _call("get_country_info", live_hard.get_country_info, country=country)
 
 
-@mcp.tool()
 def find_country_by_capital(capital: str) -> dict:
     """Find the country that has a given capital city (World Bank data)."""
     return _call("find_country_by_capital", live_hard.find_country_by_capital, capital=capital)
 
 
-@mcp.tool()
 def get_country_population(country: str) -> dict:
     """Get a country's latest population from the World Bank."""
     return _call("get_country_population", live_hard.get_country_population, country=country)
 
 
-@mcp.tool()
 def get_country_gdp_per_capita(country: str) -> dict:
     """Get a country's GDP per capita in current US dollars (World Bank)."""
     return _call("get_country_gdp_per_capita", live_hard.get_country_gdp_per_capita, country=country)
 
 
-@mcp.tool()
 def geocode_city(name: str) -> dict:
     """Resolve a city name to latitude/longitude coordinates (Open-Meteo geocoding)."""
     return _call("geocode_city", live_hard.geocode_city, name=name)
 
 
-@mcp.tool()
 def get_weather(latitude: float, longitude: float) -> dict:
     """Get the current temperature in Celsius for a coordinate (Open-Meteo)."""
     return _call("get_weather", live_hard.get_weather, latitude=latitude, longitude=longitude)
 
 
-@mcp.tool()
+# ---------------------------------------------------------------------------
+# market group
+# ---------------------------------------------------------------------------
 def get_package_version(package: str) -> dict:
     """Get the latest published version of a Python package on PyPI."""
     return _call("get_package_version", live_hard.get_package_version, package=package)
 
 
-@mcp.tool()
 def get_package_release_date(package: str, version: str) -> dict:
     """Get the release date (YYYY-MM-DD) of one published version of a PyPI package."""
     return _call("get_package_release_date", live_hard.get_package_release_date,
                  package=package, version=version)
 
 
-@mcp.tool()
 def get_hn_item(story_id: int) -> dict:
     """Get a Hacker News item (story) by its numeric id."""
     return _call("get_hn_item", live_hard.get_hn_item, story_id=story_id)
 
 
-@mcp.tool()
 def get_hn_user(username: str) -> dict:
     """Get a Hacker News user's karma score."""
     return _call("get_hn_user", live_hard.get_hn_user, username=username)
 
 
-@mcp.tool()
 def get_hn_top_story() -> dict:
     """Get the current top story on Hacker News (id, title, author, score)."""
     return _call("get_hn_top_story", live_hard.get_hn_top_story)
 
 
-@mcp.tool()
 def get_exchange_rate(base: str, target: str) -> dict:
     """Get the current FX rate from a base currency to a target currency."""
     return _call("get_exchange_rate", live_hard.get_exchange_rate, base=base, target=target)
 
 
-if __name__ == "__main__":
+WORLDBANK_TOOLS = (
+    get_country_info,
+    find_country_by_capital,
+    get_country_population,
+    get_country_gdp_per_capita,
+    geocode_city,
+    get_weather,
+)
+MARKET_TOOLS = (
+    get_package_version,
+    get_package_release_date,
+    get_hn_item,
+    get_hn_user,
+    get_hn_top_story,
+    get_exchange_rate,
+)
+GROUPS = {"worldbank": WORLDBANK_TOOLS, "market": MARKET_TOOLS, "all": WORLDBANK_TOOLS + MARKET_TOOLS}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--group", choices=sorted(GROUPS), default="all")
+    args = parser.parse_args()
+    for tool in GROUPS[args.group]:
+        mcp.add_tool(tool)
     mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()
