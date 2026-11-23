@@ -1,0 +1,805 @@
+{
+  "artifact_version": 1,
+  "experiment": "ToolGuard_mcp_stdio_live_ab",
+  "generated_at": "2026-11-23T06:04:29.765867+00:00",
+  "model": "deepseek-v4-flash",
+  "protocol": {
+    "transport": "MCP over stdio (real stdio pipe session to a local MCP server process)",
+    "mcp_sdk_version": "1.26.0",
+    "server": "scripts\\mcp_toolguard_server.py",
+    "arms": [
+      "baseline",
+      "guard"
+    ],
+    "fresh_server_per_arm": true,
+    "fault_injection": {
+      "location": "MCP server side: deterministic first-N-attempts isError epoch per logical call (timeout / HTTP 429 / HTTP 5xx)",
+      "p_fault": 0.38,
+      "attempts_to_fail": 2,
+      "seed": 7
+    },
+    "calibration": "one fault-free MCP run per task; budgeted turn budget = calibrated turns + 1",
+    "tool_surface": {
+      "tools": [
+        "get_country_info",
+        "find_country_by_capital",
+        "get_country_population",
+        "get_country_gdp_per_capita",
+        "geocode_city",
+        "get_weather",
+        "get_package_version",
+        "get_package_release_date",
+        "get_hn_item",
+        "get_hn_user",
+        "get_hn_top_story",
+        "get_exchange_rate"
+      ],
+      "apis": [
+        "api.worldbank.org",
+        "geocoding-api.open-meteo.com",
+        "api.open-meteo.com",
+        "pypi.org",
+        "hacker-news.firebaseio.com",
+        "open.er-api.com"
+      ]
+    },
+    "verification": "programmatic; ground truth fetched live through the MCP server before the runs"
+  },
+  "tasks": [
+    {
+      "id": "capital_weather_japan",
+      "question": "What is the current temperature, in degrees Celsius, in the capital city of Japan? Use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature.",
+      "expected": {
+        "country": "Japan",
+        "capital": "Tokyo",
+        "latitude": 35.6895,
+        "longitude": 139.69171,
+        "temperature_c": 12.9
+      },
+      "min_turns": 4
+    },
+    {
+      "id": "capital_weather_compare_france_germany",
+      "question": "Which capital city is currently warmer: the capital of France or the capital of Germany? For each country use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature. Give both temperatures in degrees Celsius.",
+      "expected": {
+        "a": {
+          "country": "France",
+          "capital": "Paris",
+          "temperature_c": 5.1
+        },
+        "b": {
+          "country": "Germany",
+          "capital": "Berlin",
+          "temperature_c": 0.7
+        },
+        "warmer_capital": "Paris",
+        "require_warmer": true
+      },
+      "min_turns": 5
+    },
+    {
+      "id": "capital_population_canberra",
+      "question": "What is the latest population of the country whose capital city is Canberra? Give the exact integer from the World Bank data.",
+      "expected": {
+        "capital": "Canberra",
+        "country": "Australia",
+        "population": 27614411
+      },
+      "min_turns": 3
+    },
+    {
+      "id": "capital_income_brazil",
+      "question": "What is the World Bank income-level classification (for example 'High income') of the country whose capital city is Brasília?",
+      "expected": {
+        "capital": "Brasília",
+        "country": "Brazil",
+        "income_level": "Upper middle income"
+      },
+      "min_turns": 3
+    },
+    {
+      "id": "pypi_release_date_httpx",
+      "question": "When was the latest version of the Python package httpx released on PyPI? Give the date as YYYY-MM-DD.",
+      "expected": {
+        "package": "httpx",
+        "version": "0.28.1",
+        "release_date": "2024-12-06"
+      },
+      "min_turns": 3
+    },
+    {
+      "id": "pypi_newer_requests_flask",
+      "question": "Which Python package was updated more recently on PyPI: requests or flask? Give both release dates as YYYY-MM-DD.",
+      "expected": {
+        "a": {
+          "package": "requests",
+          "version": "2.34.2",
+          "release_date": "2026-05-14"
+        },
+        "b": {
+          "package": "flask",
+          "version": "3.1.3",
+          "release_date": "2026-02-19"
+        },
+        "newer": "requests"
+      },
+      "min_turns": 4
+    },
+    {
+      "id": "hn_item_1_author_karma",
+      "question": "What is the Hacker News karma score of the user who posted Hacker News item 1?",
+      "expected": {
+        "story_id": 1,
+        "username": "pg",
+        "karma": 157316
+      },
+      "min_turns": 3
+    },
+    {
+      "id": "hn_item_8863_author_karma",
+      "question": "What is the Hacker News karma score of the user who posted Hacker News item 8863?",
+      "expected": {
+        "story_id": 8863,
+        "username": "dhouston",
+        "karma": 3803
+      },
+      "min_turns": 3
+    },
+    {
+      "id": "fx_eur_jpy_cross",
+      "question": "What is the implied EUR to JPY cross rate (how many Japanese yen is 1 euro worth) computed through the USD market? Use the EUR-to-USD and USD-to-JPY rates and give the result to two decimal places.",
+      "expected": {
+        "eur_usd": 1.097535,
+        "usd_jpy": 158.701406,
+        "cross_rate": 174.18034763420997
+      },
+      "min_turns": 3
+    },
+    {
+      "id": "population_sum_australia_canada",
+      "question": "What is the combined (summed) population of Australia and Canada according to the World Bank? Give the exact integer total.",
+      "expected": {
+        "populations": [
+          27614411,
+          41651653
+        ],
+        "total": 69266064
+      },
+      "min_turns": 3
+    }
+  ],
+  "calibration": {
+    "capital_weather_japan": {
+      "turns": 4,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_weather_compare_france_germany": {
+      "turns": 4,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_population_canberra": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "capital_income_brazil": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "pypi_release_date_httpx": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "pypi_newer_requests_flask": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "hn_item_1_author_karma": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "hn_item_8863_author_karma": {
+      "turns": 3,
+      "success": true,
+      "exhausted": false
+    },
+    "fx_eur_jpy_cross": {
+      "turns": 2,
+      "success": true,
+      "exhausted": false
+    },
+    "population_sum_australia_canada": {
+      "turns": 2,
+      "success": true,
+      "exhausted": false
+    }
+  },
+  "skipped": [],
+  "records": [
+    {
+      "task": "capital_weather_japan",
+      "arm": "baseline",
+      "budget": 5,
+      "success": false,
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 6100,
+        "completion_tokens": 253,
+        "total_tokens": 6353
+      },
+      "elapsed_ms": 18444.99,
+      "mcp_server_calls": 5,
+      "mcp_server_errors": 3,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_japan",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "The current temperature in Tokyo, Japan's capital, is 12.7 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4803,
+        "completion_tokens": 175,
+        "total_tokens": 4978
+      },
+      "elapsed_ms": 19260.69,
+      "mcp_server_calls": 7,
+      "mcp_server_errors": 4,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "arm": "baseline",
+      "budget": 5,
+      "success": true,
+      "answer": "Paris (France) is warmer at 4.9 °C, versus Berlin (Germany) at 0.6 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5309,
+        "completion_tokens": 291,
+        "total_tokens": 5600
+      },
+      "elapsed_ms": 29030.04,
+      "mcp_server_calls": 6,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "Paris (France) is warmer at 4.9 °C, versus Berlin (Germany) at 0.6 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5309,
+        "completion_tokens": 291,
+        "total_tokens": 5600
+      },
+      "elapsed_ms": 31008.64,
+      "mcp_server_calls": 6,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_canberra",
+      "arm": "baseline",
+      "budget": 4,
+      "success": false,
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4568,
+        "completion_tokens": 169,
+        "total_tokens": 4737
+      },
+      "elapsed_ms": 9625.54,
+      "mcp_server_calls": 4,
+      "mcp_server_errors": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_canberra",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "Australia's latest World Bank population is 27,614,411 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3402,
+        "completion_tokens": 137,
+        "total_tokens": 3539
+      },
+      "elapsed_ms": 9104.94,
+      "mcp_server_calls": 4,
+      "mcp_server_errors": 2,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_income_brazil",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "Brazil's World Bank income-level classification is \"Upper middle income.\"",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3347,
+        "completion_tokens": 98,
+        "total_tokens": 3445
+      },
+      "elapsed_ms": 9063.36,
+      "mcp_server_calls": 2,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_income_brazil",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "Brazil is classified as **Upper middle income**.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3421,
+        "completion_tokens": 131,
+        "total_tokens": 3552
+      },
+      "elapsed_ms": 8706.07,
+      "mcp_server_calls": 2,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "arm": "baseline",
+      "budget": 4,
+      "success": false,
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4614,
+        "completion_tokens": 208,
+        "total_tokens": 4822
+      },
+      "elapsed_ms": 6489.54,
+      "mcp_server_calls": 4,
+      "mcp_server_errors": 3,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "httpx 0.28.1 was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3375,
+        "completion_tokens": 124,
+        "total_tokens": 3499
+      },
+      "elapsed_ms": 5981.52,
+      "mcp_server_calls": 6,
+      "mcp_server_errors": 4,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "timeout: simulated upstream timeout (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "arm": "baseline",
+      "budget": 4,
+      "success": false,
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 8,
+      "tool_errors": 6,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4975,
+        "completion_tokens": 365,
+        "total_tokens": 5340
+      },
+      "elapsed_ms": 9863.89,
+      "mcp_server_calls": 8,
+      "mcp_server_errors": 6,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "requests was updated more recently — requests 2.34.2 was released 2026-05-14, while Flask 3.1.3 was released 2026-02-19.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3634,
+        "completion_tokens": 243,
+        "total_tokens": 3877
+      },
+      "elapsed_ms": 9740.5,
+      "mcp_server_calls": 12,
+      "mcp_server_errors": 8,
+      "guard_recoveries": 4,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "server_error: simulated HTTP 503 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "arm": "baseline",
+      "budget": 4,
+      "success": false,
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 4697,
+        "completion_tokens": 235,
+        "total_tokens": 4932
+      },
+      "elapsed_ms": 12142.03,
+      "mcp_server_calls": 4,
+      "mcp_server_errors": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "The user \"pg\" who posted HN item 1 has a karma score of 157,316.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3366,
+        "completion_tokens": 119,
+        "total_tokens": 3485
+      },
+      "elapsed_ms": 9415.06,
+      "mcp_server_calls": 4,
+      "mcp_server_errors": 2,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_user",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "The author of item 8863 is \"dhouston\", whose Hacker News karma score is 3803.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3387,
+        "completion_tokens": 118,
+        "total_tokens": 3505
+      },
+      "elapsed_ms": 9447.35,
+      "mcp_server_calls": 2,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "The HN user \"dhouston\" (who posted item 8863) has a karma score of 3803.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3391,
+        "completion_tokens": 121,
+        "total_tokens": 3512
+      },
+      "elapsed_ms": 8940.73,
+      "mcp_server_calls": 2,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "arm": "baseline",
+      "budget": 3,
+      "success": true,
+      "answer": "1 EUR ≈ **174.18 JPY**.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2312,
+        "completion_tokens": 276,
+        "total_tokens": 2588
+      },
+      "elapsed_ms": 7758.62,
+      "mcp_server_calls": 2,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "arm": "guard",
+      "budget": 3,
+      "success": true,
+      "answer": "The implied EUR/JPY cross rate is 1.097535 × 158.701406 = 174.18, so 1 euro is worth about 174.18 Japanese yen.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2291,
+        "completion_tokens": 157,
+        "total_tokens": 2448
+      },
+      "elapsed_ms": 9620.43,
+      "mcp_server_calls": 2,
+      "mcp_server_errors": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "arm": "baseline",
+      "budget": 3,
+      "success": false,
+      "answer": "",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 3459,
+        "completion_tokens": 168,
+        "total_tokens": 3627
+      },
+      "elapsed_ms": 11615.78,
+      "mcp_server_calls": 4,
+      "mcp_server_errors": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "arm": "guard",
+      "budget": 3,
+      "success": true,
+      "answer": "The combined population of Australia (27,614,411) and Canada (41,651,653) is 69,266,064.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2221,
+        "completion_tokens": 131,
+        "total_tokens": 2352
+      },
+      "elapsed_ms": 11496.22,
+      "mcp_server_calls": 4,
+      "mcp_server_errors": 2,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_population",
+          "error": "rate_limit: simulated HTTP 429 (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "arms": {
+      "baseline": {
+        "tasks": 10,
+        "success": 4,
+        "success_rate": 0.4,
+        "turns": 36,
+        "tool_calls": 41,
+        "tool_errors": 18,
+        "exhausted": 6,
+        "mcp_server_calls": 41,
+        "mcp_server_errors": 18,
+        "guard_recoveries": 0,
+        "usage": {
+          "prompt_tokens": 42768,
+          "completion_tokens": 2181,
+          "total_tokens": 44949
+        }
+      },
+      "guard": {
+        "tasks": 10,
+        "success": 10,
+        "success_rate": 1.0,
+        "turns": 30,
+        "tool_calls": 27,
+        "tool_errors": 0,
+        "exhausted": 0,
+        "mcp_server_calls": 49,
+        "mcp_server_errors": 22,
+        "guard_recoveries": 11,
+        "usage": {
+          "prompt_tokens": 35213,
+          "completion_tokens": 1629,
+          "total_tokens": 36842
+        }
+      }
+    },
+    "paired": {
+      "both_success": 4,
+      "baseline_only": 0,
+      "guard_only": 6,
+      "neither": 0,
+      "mcnemar_exact_p": 0.03125
+    },
+    "guard_repairs_by_rule": {
+      "transient_retry": 11
+    }
+  },
+  "key_findings": [
+    "budgeted: task success baseline 4/10 vs guard 10/10 (McNemar exact p=0.0312)",
+    "budgeted: turns 36 -> 30, MCP calls 41 -> 27, agent-visible tool errors 18 -> 0, tokens 44949 -> 36842",
+    "guard recovered 11 transient MCP errors inside the middleware (agent saw none of them)"
+  ],
+  "limitations": [
+    "Deterministic server-side fault injection, not observed outages: each fault epoch fails the first 2 attempts of a logical MCP call.",
+    "Single model (deepseek-v4-flash) and a single run per task per arm; McNemar is computed over the paired discordant outcomes only.",
+    "A fresh MCP server process is started per arm; the fault surface is deterministic for a logical call, but fault assignment depends on the calls the arm actually makes.",
+    "MCP stdio needs real pipe handles, so this demo runs outside the workspace sandbox; the test suite uses the MCP SDK in-memory transport instead.",
+    "Free public APIs are not production grade and API drift can affect reruns."
+  ],
+  "reproduce": [
+    "python scripts/mcp_toolguard_server.py  # speak MCP to it over stdio",
+    "python scripts/run_mcp_demo.py --output benchmarks/toolguard/mcp_demo.json",
+    "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
+  ]
+}
