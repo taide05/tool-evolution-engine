@@ -205,6 +205,7 @@ def get_hn_item(story_id: int) -> dict[str, Any]:
         "score": payload.get("score"),
         "type": payload.get("type"),
         "by": payload.get("by"),
+        "time": payload.get("time"),
     }
 
 
@@ -342,7 +343,9 @@ class FaultyBackend:
     p_server_error: float = 0.0
     attempts_to_fail: int = 1
     _remaining: dict[str, int] = field(default_factory=dict)
-    stats: dict[str, int] = field(default_factory=lambda: {"injected": 0, "calls": 0, "faulted_calls": 0})
+    stats: dict[str, Any] = field(default_factory=lambda: {
+        "injected": 0, "calls": 0, "faulted_calls": 0, "kinds": {},
+    })
 
     def schemas(self):
         return self.backend.schemas()
@@ -366,10 +369,13 @@ class FaultyBackend:
             selector = _stable_rng(self.seed, key, "kind").random()
             total = self.p_timeout + self.p_rate_limit + self.p_server_error
             if selector < self.p_timeout / total:
-                return CallResult("error", error="timeout: request timed out")
-            if selector < (self.p_timeout + self.p_rate_limit) / total:
-                return CallResult("error", error="rate_limit: HTTP 429 rate limited")
-            return CallResult("error", error=f"server_error: HTTP 503 server error (attempt {attempt_index + 1})")
+                kind, message = "timeout", "timeout: request timed out"
+            elif selector < (self.p_timeout + self.p_rate_limit) / total:
+                kind, message = "rate_limit", "rate_limit: HTTP 429 rate limited"
+            else:
+                kind, message = "server_error", f"server_error: HTTP 503 server error (attempt {attempt_index + 1})"
+            self.stats["kinds"][kind] = self.stats["kinds"].get(kind, 0) + 1
+            return CallResult("error", error=message)
         return self.backend.call(function_name, arguments)
 
 

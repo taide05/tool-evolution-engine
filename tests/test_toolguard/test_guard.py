@@ -37,7 +37,43 @@ def test_live_error_kind_parses_prefixed_messages():
     assert live_error_kind("timeout: request timed out") == "timeout"
     assert live_error_kind("rate_limit: HTTP 429") == "rate_limit"
     assert live_error_kind("invalid_argument: latitude must be a number") == "invalid_argument"
-    assert live_error_kind("No such function name: x") == "invalid_argument"
+    assert live_error_kind("No such function name: x") == "no_such_function"
+    assert live_error_kind("tool_error: Unknown tool: get_weather_forecast") == "no_such_function"
+    assert live_error_kind("request_error: MCP transport failure: broken pipe") == "request_error"
+
+
+def test_requested_function_name_parsing():
+    from tool_evolution.toolguard.guard import requested_function_name
+
+    assert requested_function_name("tool_error: Unknown tool: get_weather_forecast") == "get_weather_forecast"
+    assert requested_function_name("No such function name: get_foo") == "get_foo"
+    assert requested_function_name("timeout: no") is None
+
+
+def test_unknown_tool_name_is_resolved_to_real_tool():
+    backend = FakeBackend([
+        CallResult("error", error="tool_error: Unknown tool: get_weather_forecast"),
+        CallResult("ok", response={"temperature_c": 3.0}),
+    ])
+    guard = ToolGuard(backend, sleep_scale=0.0)
+    result = guard.call("get_weather_forecast", {"latitude": 1.0, "longitude": 2.0})
+    assert result.ok
+    assert backend.calls[-1][0] == "get_weather"
+    assert guard.events[0].rule == "function_name_resolution"
+    assert guard.events[0].repaired_function == "get_weather"
+    assert guard.stats["recovered"] == 1
+
+
+def test_transport_error_is_retried():
+    backend = FakeBackend([
+        CallResult("error", error="request_error: MCP transport failure: broken pipe"),
+        CallResult("ok", response={"ok": True}),
+    ])
+    guard = ToolGuard(backend, sleep_scale=0.01)
+    result = guard.call("get_weather", {"latitude": 1.0, "longitude": 2.0})
+    assert result.ok
+    assert guard.events[0].rule == "transient_retry:1"
+    assert guard.stats["retry_sleep_s"] > 0
 
 
 def test_transient_error_is_retried():

@@ -315,7 +315,248 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"fx_usd_cny_100: {exc}")
 
+    # =========================================================================
+    # V2 harder tasks: derived arithmetic, cross-source comparisons, aggregates
+    # =========================================================================
+    def hn_item_timestamp(story_id: int) -> int:
+        item = safe("get_hn_item", story_id=story_id)
+        timestamp = item.get("time")
+        if not timestamp:
+            raise ToolError("not_found", f"HN item {story_id} has no timestamp")
+        return int(timestamp)
+
+    def hn_item_date(story_id: int) -> str:
+        return datetime.fromtimestamp(hn_item_timestamp(story_id), tz=timezone.utc).strftime("%Y-%m-%d")
+
+    try:
+        country_bern = safe("find_country_by_capital", capital="Bern")["country"]
+        country_canberra = safe("find_country_by_capital", capital="Canberra")["country"]
+        gdp_bern = safe("get_country_gdp_per_capita", country=country_bern)["gdp_per_capita_usd"]
+        gdp_canberra = safe("get_country_gdp_per_capita", country=country_canberra)["gdp_per_capita_usd"]
+        ratio = gdp_bern / gdp_canberra
+        add("gdp_ratio_bern_canberra",
+            "What is the ratio of the GDP per capita of the country whose capital is Bern to the GDP per "
+            "capita of the country whose capital is Canberra? Give it to two decimal places.",
+            {"a": country_bern, "b": country_canberra, "gdp_a": gdp_bern, "gdp_b": gdp_canberra, "ratio": ratio},
+            lambda answer, expected: contains_number(answer, expected["ratio"],
+                                                    max(0.01, expected["ratio"] * 0.015)),
+            4)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"gdp_ratio_bern_canberra: {exc}")
+
+    try:
+        capitals = [("Oslo", "Norway"), ("Wellington", "New Zealand"), ("Canberra", "Australia")]
+        countries, populations = [], []
+        for capital, _ in capitals:
+            country = safe("find_country_by_capital", capital=capital)["country"]
+            countries.append(country)
+            populations.append(safe("get_country_population", country=country)["population"])
+        total = sum(populations)
+        add("population_total_three_capitals",
+            "What is the combined (summed) population of the countries whose capital cities are Oslo, "
+            "Wellington and Canberra? Give the exact integer total.",
+            {"countries": countries, "populations": populations, "total": total},
+            lambda answer, expected: contains_number(answer, expected["total"], expected["total"] * 0.006),
+            5)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"population_total_three_capitals: {exc}")
+
+    try:
+        norway = weather_chain("Norway")
+        portugal = weather_chain("Portugal")
+        gap = abs(norway["temperature_c"] - portugal["temperature_c"])
+        add("temperature_gap_norway_portugal",
+            "How many degrees Celsius colder is the capital city of Norway than the capital city of "
+            "Portugal right now? Give both temperatures and the gap.",
+            {"norway": norway["temperature_c"], "portugal": portugal["temperature_c"], "gap": gap},
+            lambda answer, expected: (
+                contains_number(answer, expected["norway"], 3.0)
+                and contains_number(answer, expected["portugal"], 3.0)
+                and contains_number(answer, expected["gap"], 3.5)
+            ),
+            5)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"temperature_gap_norway_portugal: {exc}")
+
+    try:
+        france = safe("get_country_info", country="France")
+        germany = safe("get_country_info", country="Germany")
+        pop_france = safe("get_country_population", country="France")["population"]
+        pop_germany = safe("get_country_population", country="Germany")["population"]
+        larger = "France" if pop_france > pop_germany else "Germany"
+        add("population_compare_france_germany_region",
+            "Which country has the larger population, France or Germany? Give both populations and the "
+            "World Bank region both countries belong to.",
+            {"france": pop_france, "germany": pop_germany, "larger": larger,
+             "region_france": france["region"], "region_germany": germany["region"]},
+            lambda answer, expected: (
+                (contains_digits(answer, expected["france"])
+                 or contains_number(answer, expected["france"] / 1e6, 0.05))
+                and (contains_digits(answer, expected["germany"])
+                     or contains_number(answer, expected["germany"] / 1e6, 0.05))
+                and contains_text(answer, expected["larger"])
+                and contains_text(answer, expected["region_germany"])
+            ),
+            4)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"population_compare_france_germany_region: {exc}")
+
+    try:
+        httpx_version, httpx_date = latest_release("httpx")
+        hn_date = hn_item_date(1)
+        newer = "httpx" if httpx_date > hn_date else "hacker news"
+        add("release_vs_hn_item_date",
+            "Which happened more recently: the release of the latest version of httpx on PyPI, or the "
+            "posting of Hacker News item 1? Give both dates as YYYY-MM-DD.",
+            {"httpx_release": httpx_date, "hn_item": hn_date, "newer": newer},
+            lambda answer, expected: (
+                contains_text(answer, expected["httpx_release"])
+                and contains_text(answer, expected["hn_item"])
+                and contains_text(answer, expected["newer"])
+            ),
+            4)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"release_vs_hn_item_date: {exc}")
+
+    try:
+        hn_item = safe("get_hn_item", story_id=1)
+        hn_user = safe("get_hn_user", username=hn_item["by"])
+        created_year = int(datetime.fromtimestamp(int(hn_user["created"]), tz=timezone.utc).year)
+        add("hn_item_1_author_account_year",
+            "In which year was the Hacker News account of the user who posted Hacker News item 1 created?",
+            {"username": hn_user["username"], "created": int(hn_user["created"]), "created_year": created_year},
+            lambda answer, expected: contains_number(answer, expected["created_year"], 0.0),
+            3)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"hn_item_1_author_account_year: {exc}")
+
+    try:
+        direct = safe("get_exchange_rate", base="EUR", target="JPY")["rate"]
+        eur_usd = safe("get_exchange_rate", base="EUR", target="USD")["rate"]
+        usd_jpy = safe("get_exchange_rate", base="USD", target="JPY")["rate"]
+        implied = eur_usd * usd_jpy
+        difference = abs(direct - implied)
+        add("fx_triangular_check",
+            "Compare the direct EUR to JPY exchange rate with the rate implied by EUR to USD then USD to "
+            "JPY. Give both rates to two decimal places and their absolute difference.",
+            {"direct": direct, "implied": implied, "difference": difference},
+            lambda answer, expected: (
+                contains_number(answer, expected["direct"], max(0.02, expected["direct"] * 0.01))
+                and contains_number(answer, expected["implied"], max(0.02, expected["implied"] * 0.01))
+                and contains_number(answer, expected["difference"], max(0.5, expected["difference"] * 0.05))
+            ),
+            4)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"fx_triangular_check: {exc}")
+
+    try:
+        dates = {}
+        for package in ("requests", "flask", "httpx"):
+            _, release_date = latest_release(package)
+            dates[package] = release_date
+        earliest = min(dates, key=lambda name: dates[name])
+        add("package_earliest_of_three",
+            "Of the latest versions of requests, flask and httpx on PyPI, which one was released earliest? "
+            "Give all three release dates as YYYY-MM-DD.",
+            {"dates": dates, "earliest": earliest},
+            lambda answer, expected: (
+                all(contains_text(answer, date) for date in expected["dates"].values())
+                and contains_text(answer, expected["earliest"])
+            ),
+            5)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"package_earliest_of_three: {exc}")
+
+    try:
+        chains = {country: weather_chain(country) for country in ("Japan", "Norway", "Portugal")}
+        add("capital_weather_triple",
+            "What is the current temperature in degrees Celsius in the capital cities of Japan, Norway and "
+            "Portugal? Give all three values.",
+            {country: chain["temperature_c"] for country, chain in chains.items()},
+            lambda answer, expected: all(contains_number(answer, value, 3.0) for value in expected.values()),
+            6)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"capital_weather_triple: {exc}")
+
+    try:
+        country = safe("find_country_by_capital", capital="Brasília")["country"]
+        income = safe("get_country_info", country=country)["income_level"]
+        population = safe("get_country_population", country=country)["population"]
+        add("capital_income_population_brazil",
+            "For the country whose capital city is Brasília, give its World Bank income-level "
+            "classification and its latest population.",
+            {"country": country, "income": income, "population": population},
+            lambda answer, expected: (
+                contains_text(answer, expected["income"])
+                and contains_digits(answer, expected["population"])
+            ),
+            4)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"capital_income_population_brazil: {exc}")
+
+    try:
+        country_bern = safe("find_country_by_capital", capital="Bern")["country"]
+        country_ottawa = safe("find_country_by_capital", capital="Ottawa")["country"]
+        gdp_bern = safe("get_country_gdp_per_capita", country=country_bern)["gdp_per_capita_usd"]
+        gdp_ottawa = safe("get_country_gdp_per_capita", country=country_ottawa)["gdp_per_capita_usd"]
+        gap = abs(gdp_bern - gdp_ottawa)
+        add("gdp_gap_bern_ottawa",
+            "What is the absolute difference in GDP per capita (current US dollars) between the country "
+            "whose capital is Bern and the country whose capital is Ottawa?",
+            {"a": country_bern, "b": country_ottawa, "gdp_a": gdp_bern, "gdp_b": gdp_ottawa, "gap": gap},
+            lambda answer, expected: contains_number(answer, expected["gap"], max(1.0, expected["gap"] * 0.015)),
+            4)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"gdp_gap_bern_ottawa: {exc}")
+
+    try:
+        australia = weather_chain("Australia")
+        canada = weather_chain("Canada")
+        gap = abs(australia["temperature_c"] - canada["temperature_c"])
+        warmer = australia["capital"] if australia["temperature_c"] >= canada["temperature_c"] else canada["capital"]
+        add("weather_compare_australia_canada",
+            "Which capital city is warmer right now: the capital of Australia or the capital of Canada? "
+            "Give both temperatures in degrees Celsius and the difference.",
+            {"australia": australia["temperature_c"], "canada": canada["temperature_c"],
+             "gap": gap, "warmer": warmer, "require_warmer": gap > 2.0},
+            lambda answer, expected: (
+                contains_number(answer, expected["australia"], 3.0)
+                and contains_number(answer, expected["canada"], 3.0)
+                and contains_number(answer, expected["gap"], 3.5)
+                and (not expected["require_warmer"] or contains_text(answer, expected["warmer"]))
+            ),
+            6)
+    except Exception as exc:  # noqa: BLE001
+        skipped.append(f"weather_compare_australia_canada: {exc}")
+
+    for task in tasks:
+        task["category"] = _category_for(task["id"])
     return tasks, skipped
+
+
+_CATEGORY_PREFIXES = (
+    ("capital_weather", "weather"),
+    ("weather_compare", "weather"),
+    ("temperature_gap", "weather"),
+    ("capital_population", "worldbank"),
+    ("capital_gdp", "worldbank"),
+    ("capital_income", "worldbank"),
+    ("capital_region", "worldbank"),
+    ("population_", "worldbank"),
+    ("gdp_", "worldbank"),
+    ("pypi_", "pypi"),
+    ("package_", "pypi"),
+    ("release_vs", "pypi"),
+    ("hn_", "hn"),
+    ("fx_", "fx"),
+)
+
+
+def _category_for(task_id: str) -> str:
+    for prefix, category in _CATEGORY_PREFIXES:
+        if task_id.startswith(prefix):
+            return category
+    return "multi"
 
 
 # ---------------------------------------------------------------------------

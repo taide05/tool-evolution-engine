@@ -96,10 +96,14 @@ def run_task(
     tools = backend.schemas()
     tool_calls = tool_errors = turns = 0
     budget = max_turns or client.config.max_turns
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     start = time.perf_counter()
     for turn in range(budget):
         turns += 1
         payload = client.chat(messages, tools)
+        payload_usage = payload.get("usage") or {}
+        for key in usage:
+            usage[key] += int(payload_usage.get(key) or 0)
         message = (payload.get("choices") or [{}])[0].get("message") or {}
         calls = message.get("tool_calls") or []
         if not calls:
@@ -109,7 +113,7 @@ def run_task(
                 turns=turns,
                 tool_calls=tool_calls,
                 tool_errors=tool_errors,
-                usage=dict(client.usage),
+                usage=dict(usage),
                 elapsed_ms=round((time.perf_counter() - start) * 1000, 2),
                 guard_events=middleware.dump_events() if middleware is not None else [],
                 transcript=messages,
@@ -137,7 +141,7 @@ def run_task(
         turns=turns,
         tool_calls=tool_calls,
         tool_errors=tool_errors,
-        usage=dict(client.usage),
+        usage=dict(usage),
         elapsed_ms=round((time.perf_counter() - start) * 1000, 2),
         exhausted=True,
         guard_events=middleware.dump_events() if middleware is not None else [],
