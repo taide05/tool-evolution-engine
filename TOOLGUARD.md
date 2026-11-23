@@ -5,7 +5,7 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 当前版本有三层证据：
 
 1. **离线真实数据评测**：在 **30,120 次真实工具调用 / 1,033 次真实失败**（StableToolBench 公开基线轨迹，Apache-2.0）上验证修复策略，并重点做了**跨任务泛化**：把“重放同一任务的旧调用”升级为“从任务文本学习参数抽取规则”；
-2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 **32 个多步依赖任务**；V2 把交互预算做成**三档扫描 + 重复**，给出成功-预算曲线、Wilson CI 与配对检验；
+2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 **32 个多步依赖任务**；V2 把交互预算做成**三档扫描 + 重复**，给出成功-预算曲线、Wilson CI 与配对检验；第四轮再把同一协议**复制到 3 个模型**（qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max）；
 3. **真实 MCP 集成**：同一套中间件不改一行，接到**两个真实 stdio MCP server** 上，覆盖多 server 路由、server 进程真实崩溃重连、catalog drift 未知工具重解析。
 
 ## 结果（离线确定性评测）
@@ -102,6 +102,32 @@ artifact：[`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_de
 
 > V1 的窄口径 artifact 保留作为演进记录：`live_demo_hard.json`（20 任务单预算，commit `02ac71a`）、`mcp_demo.json`（10 任务单 server，commit `b1d7609`）；对外口径以 V2 为准。
 
+### 第四轮：多模型复制（3 个模型 × 同一协议，回应“单模型”质疑）
+
+单模型结果最大的风险是“只在 DeepSeek 上成立”。第四轮在**完全相同的任务池、故障 seed、预算语义**下跑 3 个模型（`scripts/run_multimodel_live.py`）：每个模型先做 32 次无故障 calibration 定位能力档，再跑 192 个评测格（32 任务 × 2 臂 × clean+1 两 repeat + clean+4）。
+
+| 档位（按价格） | 模型 | provider | 官方价格 $/M（入/出） | 无故障 placement |
+|---|---|---|---|---|
+| cheap | qwen3.8-flash | 阿里百炼 | 0.15 / 0.47 | 26/32（81.3%），4.25 轮 |
+| mid | DeepSeek-V4.1-Flash-1017 | DeepSeek | 0.15 / 0.60 | 31/32（96.9%），3.31 轮 |
+| strong | qwen4-max | 阿里百炼 | 1.413 / 4.24 | 30/32（93.8%），3.50 轮 |
+
+| 模型 | clean+1 baseline | clean+1 guard | McNemar | tokens (b→g) | clean+4 baseline | clean+4 guard |
+|---|---|---|---|---|---|---|
+| qwen3.8-flash | **29/64 (45.3%)** | **61/64 (95.3%)** | **p=4.7e-10** | 531,324→322,135（-39%） | 26/32 (81.3%) | 31/32 (96.9%) |
+| DeepSeek-V4.1-Flash | **34/64 (53.1%)** | **62/64 (96.9%)** | **p=7.5e-09** | 452,099→290,096（-36%） | 28/32 (87.5%) | 31/32 (96.9%) |
+| qwen4-max | **34/64 (53.1%)** | **62/64 (96.9%)** | **p=7.5e-09** | 444,331→284,766（-36%） | 27/32 (84.4%) | 31/32 (96.9%) |
+
+- `guard >= baseline` 在**所有模型 × 所有条件**成立（artifact `consistency` 字段）；
+- **能力越弱，中间件收益越大**：qwen3.8-flash 紧预算提升 **+50.0pp**（45.3%→95.3%），另两个模型 **+43.8pp**；三模型 guard 均 95–97%；
+- **贵模型没有买到“无故障鲁棒性”**：qwen4-max 单价比 qwen3.8-flash 高约 9 倍，但 fault-free placement（30/32、3.50 轮）没有超过 DeepSeek-Flash（31/32、3.31 轮）。三个模型都会踩同一类失败（HN `story_id` 契约不匹配），说明这类问题不是模型能力问题而是**工具契约问题**——正好是中间件该管的；
+- guard 残余失败：每模型 clean+1 各 3 个、clean+4 各 1 个，**均为直播数据漂移/答案格式**：HN 热帖作者的 karma 在约一小时的实验期间持续变化（112→161），而 ground truth 是跑前抓取的；另有 1 个日期换算错误。这些一律计入失败、对 guard 保守，**未做事后剔除**；
+- 成本：评测 $2.21（qwen4-max 占 80%）+ calibration $0.33 ≈ **$2.54**。
+
+artifact：[`benchmarks/toolguard/live_demo_multimodel.json`](benchmarks/toolguard/live_demo_multimodel.json)（576 格逐条记录、三模型 placement、Wilson CI、成本核算、逐条修复事件）。
+
+**这一轮的局限**：3 个模型是复制而非模型间假设检验；cheap/strong 同属 Qwen 家族；每个模型只做 1 次 calibration；故障仍是确定性注入；HN 热帖 karma 这类直播可变 ground truth 会带来少量假阴性（见 artifact limitations）。
+
 ## 架构：一个中间件，三种传输层
 
 中间件只依赖 `ToolBackend` 协议（`schemas()` 返回工具清单，`call(name, arguments)` 返回统一 `CallResult`）：
@@ -160,10 +186,17 @@ python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguar
 python scripts/run_mcp_demo_v2.py --mode calibrate
 python scripts/run_mcp_demo_v2.py --workers 2 --output benchmarks/toolguard/mcp_demo_v2.json
 
+# 多模型复制：需要 TOOLEVO_QWEN_API_KEY（qwen3.8-flash + qwen4-max）与 TOOLEVO_DEEPSEEK_API_KEY
+python scripts/check_providers.py --smoke        # 先验证 key / 工具调用 / model id（不打印 key）
+python scripts/run_multimodel_live.py --mode calibrate
+python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel.json
+python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel.json  # 从 checkpoint 重建 artifact
+
 python -m pytest tests/test_toolguard -q -p no:cacheprovider
 ```
 
-> V1 脚本（`run_live_demo_hard.py` / `run_mcp_demo.py`）仍可复现 V1 artifact，但对外口径以 V2 为准。
+> V1 脚本（`run_live_demo_hard.py` / `run_mcp_demo.py`）仍可复现 V1 artifact，但对外口径以 V2/V3 为准。
+> 多模型模型轴里的 key 放在仓库根 `.env`（见 [.env.example](.env.example)），`.env` 已 gitignore，永不提交。
 
 artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.json)（含完整口径、分规则验证与局限）
 
@@ -173,10 +206,12 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - value agreement 只在“某模型解过同一任务”时可验证，是严格下界；
 - schema 默认值补全的 30 条 cross-group 修复未经验证，属启发式提议；
 - 服务端/瞬态错误（全数据集 96 条）离线不可确定性修复；
-- live 全部为**单模型** `deepseek-v4-flash`（决策：不加模型轴，预算给重复）；重复 seed 只改变注入故障面，不重采样模型行为；
+- live 单模型结果来自 `deepseek-v4-flash`；多模型轮覆盖 **qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max** 三个模型（cheap/strong 同属 Qwen 家族），是**复制**而非模型间假设检验；
 - 故障/崩溃/漂移都是**确定性注入**，不是生产观测；`clean+N` 预算锚定在“每任务一次无故障 calibration”，calibration 本身是点估计；
-- `clean+1` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 44.8%”；正确读法是**成功-预算曲线**：预算越低 baseline 越差、guard 恒定；预算充足时成功率持平、guard 成本更低；
+- `clean+1` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 45–53%”；正确读法是**成功-预算曲线**：预算越低 baseline 越差、guard 恒定；预算充足时成功率持平、guard 成本更低；
+- 直播可变 ground truth：HN 热帖作者的 karma、天气等值在实验期间会变化，造成少量 guard 假阴性（已计入失败、未剔除）；多模型 artifact 的 tasks 元数据如从 checkpoint 重建，数值可能与运行时刻略有差异；
+- qwen4-max 在本任务集上没有表现出比 DeepSeek-Flash 更强的 fault-free 能力（30/32 vs 31/32），"贵模型=更可靠"不成立；
 - MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
 - MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
 - 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
-- 下一步：多模型轴（不同能力 agent 上的收益曲线）；把“默认值补全”类修复变成可验证规则；用真实线上故障 trace 替代部分注入以进一步逼近生产。
+- 下一步：用真实线上故障 trace 替代部分注入以进一步逼近生产；把“默认值补全”类修复变成可验证规则；把 HN 这类直播可变 ground truth 换成稳定校验源。
