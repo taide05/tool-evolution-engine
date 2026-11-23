@@ -25,6 +25,17 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     repair_llm_model: str = "deepseek-v4-flash"  # deepseek-chat 已于 2026-07-24 停用（官方迁移：chat→v4-flash）
+    # --- multi-model experiment providers (all OpenAI-compatible chat completions) ---
+    # cheap tier (Qwen Flash) and strong tier (Qwen4 Max) share one Bailian/DashScope key.
+    qwen_api_key: str | None = None
+    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_model: str = "qwen3.8-flash"
+    qwen_strong_model: str = "qwen4-max"
+    # optional alternative strong tier (only if a key is available)
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-6.2-sol"
+    openai_max_tokens_param: str = "max_tokens"
     repair_concurrency: int = 4
     repair_timeout_s: float = 30.0
     repair_retries: int = 2

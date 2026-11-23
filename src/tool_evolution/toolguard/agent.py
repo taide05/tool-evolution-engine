@@ -1,4 +1,9 @@
-"""Minimal DeepSeek tool-calling agent used by the live demo (baseline vs guarded)."""
+"""Minimal OpenAI-compatible tool-calling agent used by the live demos (baseline vs guarded).
+
+The same loop drives every model family in the multi-model experiment; only the endpoint
+(``base_url``), model id and auth key differ.  ``DeepSeekClient`` is kept as a
+backward-compatible alias of :class:`ChatCompletionsClient`.
+"""
 
 from __future__ import annotations
 
@@ -22,31 +27,42 @@ class LLMConfig:
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-v4-flash"
     max_turns: int = 8
-    temperature: float = 0.0
+    temperature: float | None = 0.0
     max_tokens: int = 800
+    # Some OpenAI reasoning models only accept ``max_completion_tokens``.
+    max_tokens_param: str = "max_tokens"
     timeout_s: float = 60.0
+    name: str = "deepseek"  # label used in error messages
+    extra_headers: dict[str, str] = field(default_factory=dict)
+    extra_body: dict[str, Any] = field(default_factory=dict)
 
 
-class DeepSeekClient:
+class ChatCompletionsClient:
+    """Client for any OpenAI-compatible ``/chat/completions`` endpoint with tool calling."""
+
     def __init__(self, config: LLMConfig):
         self.config = config
         self._client = httpx.Client(timeout=config.timeout_s)
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
-        body = {
+        body: dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
-            "tools": tools,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
         }
+        if tools:
+            body["tools"] = tools
+        if self.config.temperature is not None:
+            body["temperature"] = self.config.temperature
+        body[self.config.max_tokens_param] = self.config.max_tokens
+        body.update(self.config.extra_body)
+        headers = {"Authorization": f"Bearer {self.config.api_key}", **self.config.extra_headers}
         last_error: Exception | None = None
         for attempt in range(3):
             try:
                 response = self._client.post(
                     self.config.base_url.rstrip("/") + "/chat/completions",
-                    headers={"Authorization": f"Bearer {self.config.api_key}"},
+                    headers=headers,
                     json=body,
                 )
             except httpx.HTTPError as exc:
@@ -57,16 +73,20 @@ class DeepSeekClient:
                 time.sleep(0.5 * (attempt + 1))
                 continue
             if response.status_code != 200:
-                raise RuntimeError(f"DeepSeek HTTP {response.status_code}: {response.text[:200]}")
+                raise RuntimeError(f"{self.config.name} HTTP {response.status_code}: {response.text[:200]}")
             payload = response.json()
             usage = payload.get("usage") or {}
             for key in self.usage:
                 self.usage[key] += int(usage.get(key) or 0)
             return payload
-        raise RuntimeError(f"DeepSeek request failed: {last_error}")
+        raise RuntimeError(f"{self.config.name} request failed: {last_error}")
 
     def close(self) -> None:
         self._client.close()
+
+
+# Backward-compatible alias: the DeepSeek demo scripts import this name.
+DeepSeekClient = ChatCompletionsClient
 
 
 @dataclass
