@@ -1,0 +1,2794 @@
+{
+  "artifact_version": 1,
+  "experiment": "ToolGuard_hard_multistep_live_ab",
+  "generated_at": "2026-11-23T04:59:38.777395+00:00",
+  "model": "deepseek-v4-flash",
+  "protocol": {
+    "arms": [
+      "baseline",
+      "guard"
+    ],
+    "conditions": {
+      "budgeted": "per-task turn budget = fault-free turn requirement + 1",
+      "generous": "10 turns for every task"
+    },
+    "calibration": {
+      "description": "one fault-free run per task measured the turn requirement used for the budgeted condition (see --mode calibrate)",
+      "tasks": {
+        "capital_weather_japan": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_weather_norway": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_weather_portugal": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_weather_compare_france_germany": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_weather_compare_norway_portugal": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_population_canberra": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_population_ottawa": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_gdp_switzerland": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_income_brazil": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "capital_region_argentina": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "population_compare_oslo_wellington": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "population_sum_australia_canada": {
+          "turns": 2,
+          "success": true,
+          "exhausted": false
+        },
+        "pypi_release_date_httpx": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "pypi_newer_requests_flask": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "pypi_newer_numpy_pandas": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "hn_item_1_author_karma": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "hn_item_8863_author_karma": {
+          "turns": 5,
+          "success": true,
+          "exhausted": false
+        },
+        "hn_recent_item_author_karma": {
+          "turns": 6,
+          "success": true,
+          "exhausted": false
+        },
+        "fx_eur_jpy_cross": {
+          "turns": 2,
+          "success": true,
+          "exhausted": false
+        },
+        "fx_usd_cny_100": {
+          "turns": 2,
+          "success": true,
+          "exhausted": false
+        }
+      }
+    },
+    "fault_injection": {
+      "model": "deterministic transient fault epochs: the first N attempts of a faulted logical call fail (timeout / HTTP 429 / HTTP 5xx), then the real call runs",
+      "attempts_to_fail": 2,
+      "p_timeout": 0.2,
+      "p_rate_limit": 0.1,
+      "p_server_error": 0.08,
+      "seed": 7,
+      "note": "fault surface is seeded per (function, arguments) and identical across arms"
+    },
+    "tool_surface": {
+      "tools": [
+        "get_country_info",
+        "find_country_by_capital",
+        "get_country_population",
+        "get_country_gdp_per_capita",
+        "geocode_city",
+        "get_weather",
+        "get_package_version",
+        "get_package_release_date",
+        "get_hn_item",
+        "get_hn_user",
+        "get_hn_top_story",
+        "get_exchange_rate"
+      ],
+      "apis": [
+        "api.worldbank.org",
+        "geocoding-api.open-meteo.com",
+        "api.open-meteo.com",
+        "pypi.org",
+        "hacker-news.firebaseio.com",
+        "open.er-api.com"
+      ]
+    },
+    "verification": "programmatic; ground truth computed from the same live APIs before the runs",
+    "task_requirements": "each task needs dependent cross-tool calls over 2-6 stages"
+  },
+  "tasks": [
+    {
+      "id": "capital_weather_japan",
+      "question": "What is the current temperature, in degrees Celsius, in the capital city of Japan? Use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature.",
+      "expected": {
+        "country": "Japan",
+        "capital": "Tokyo",
+        "latitude": 35.6895,
+        "longitude": 139.69171,
+        "temperature_c": 13.3
+      },
+      "min_turns": 4,
+      "clean_turns": 4
+    },
+    {
+      "id": "capital_weather_norway",
+      "question": "What is the current temperature, in degrees Celsius, in the capital city of Norway? Use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature.",
+      "expected": {
+        "country": "Norway",
+        "capital": "Oslo",
+        "latitude": 59.91273,
+        "longitude": 10.74609,
+        "temperature_c": 0.5
+      },
+      "min_turns": 4,
+      "clean_turns": 4
+    },
+    {
+      "id": "capital_weather_portugal",
+      "question": "What is the current temperature, in degrees Celsius, in the capital city of Portugal? Use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature.",
+      "expected": {
+        "country": "Portugal",
+        "capital": "Lisbon",
+        "latitude": 38.72509,
+        "longitude": -9.1498,
+        "temperature_c": 9.7
+      },
+      "min_turns": 4,
+      "clean_turns": 4
+    },
+    {
+      "id": "capital_weather_compare_france_germany",
+      "question": "Which capital city is currently warmer: the capital of France or the capital of Germany? For each country use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature. Give both temperatures in degrees Celsius.",
+      "expected": {
+        "a": {
+          "country": "France",
+          "capital": "Paris",
+          "temperature_c": 5.8
+        },
+        "b": {
+          "country": "Germany",
+          "capital": "Berlin",
+          "temperature_c": 1.0
+        },
+        "warmer_capital": "Paris",
+        "require_warmer": true
+      },
+      "min_turns": 5,
+      "clean_turns": 5
+    },
+    {
+      "id": "capital_weather_compare_norway_portugal",
+      "question": "Which capital city is currently warmer: the capital of Norway or the capital of Portugal? For each country use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature. Give both temperatures in degrees Celsius.",
+      "expected": {
+        "a": {
+          "country": "Norway",
+          "capital": "Oslo",
+          "temperature_c": 0.5
+        },
+        "b": {
+          "country": "Portugal",
+          "capital": "Lisbon",
+          "temperature_c": 9.7
+        },
+        "warmer_capital": "Lisbon",
+        "require_warmer": true
+      },
+      "min_turns": 5,
+      "clean_turns": 5
+    },
+    {
+      "id": "capital_population_canberra",
+      "question": "What is the latest population of the country whose capital city is Canberra? Give the exact integer from the World Bank data.",
+      "expected": {
+        "capital": "Canberra",
+        "country": "Australia",
+        "population": 27614411
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "capital_population_ottawa",
+      "question": "What is the latest population of the country whose capital city is Ottawa? Give the exact integer from the World Bank data.",
+      "expected": {
+        "capital": "Ottawa",
+        "country": "Canada",
+        "population": 41651653
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "capital_gdp_switzerland",
+      "question": "What is the GDP per capita in current US dollars of the country whose capital city is Bern?",
+      "expected": {
+        "capital": "Bern",
+        "country": "Switzerland",
+        "gdp_per_capita_usd": 114769.01
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "capital_income_brazil",
+      "question": "What is the World Bank income-level classification (for example 'High income') of the country whose capital city is Brasília?",
+      "expected": {
+        "capital": "Brasília",
+        "country": "Brazil",
+        "income_level": "Upper middle income"
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "capital_region_argentina",
+      "question": "In which World Bank region is the country whose capital city is Buenos Aires?",
+      "expected": {
+        "capital": "Buenos Aires",
+        "country": "Argentina",
+        "region": "Latin America & Caribbean "
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "population_compare_oslo_wellington",
+      "question": "Which country has the larger population: the country whose capital city is Oslo, or the country whose capital city is Wellington? Give both populations.",
+      "expected": {
+        "countries": [
+          "Norway",
+          "New Zealand"
+        ],
+        "populations": [
+          5610870,
+          5324700
+        ],
+        "larger_country": "Norway"
+      },
+      "min_turns": 4,
+      "clean_turns": 4
+    },
+    {
+      "id": "population_sum_australia_canada",
+      "question": "What is the combined (summed) population of Australia and Canada according to the World Bank? Give the exact integer total.",
+      "expected": {
+        "populations": [
+          27614411,
+          41651653
+        ],
+        "total": 69266064
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "pypi_release_date_httpx",
+      "question": "When was the latest version of the Python package httpx released on PyPI? Give the date as YYYY-MM-DD.",
+      "expected": {
+        "package": "httpx",
+        "version": "0.28.1",
+        "release_date": "2024-12-06"
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "pypi_newer_requests_flask",
+      "question": "Which Python package was updated more recently on PyPI: requests or flask? Give both release dates as YYYY-MM-DD.",
+      "expected": {
+        "a": {
+          "package": "requests",
+          "version": "2.34.2",
+          "release_date": "2026-05-14"
+        },
+        "b": {
+          "package": "flask",
+          "version": "3.1.3",
+          "release_date": "2026-02-19"
+        },
+        "newer": "requests"
+      },
+      "min_turns": 4,
+      "clean_turns": 4
+    },
+    {
+      "id": "pypi_newer_numpy_pandas",
+      "question": "Which Python package was updated more recently on PyPI: numpy or pandas? Give both release dates as YYYY-MM-DD.",
+      "expected": {
+        "a": {
+          "package": "numpy",
+          "version": "2.5.5",
+          "release_date": "2026-11-15"
+        },
+        "b": {
+          "package": "pandas",
+          "version": "3.1.1",
+          "release_date": "2026-11-04"
+        },
+        "newer": "numpy"
+      },
+      "min_turns": 4,
+      "clean_turns": 4
+    },
+    {
+      "id": "hn_item_1_author_karma",
+      "question": "What is the Hacker News karma score of the user who posted Hacker News item 1?",
+      "expected": {
+        "story_id": 1,
+        "username": "pg",
+        "karma": 157316
+      },
+      "min_turns": 4,
+      "clean_turns": 4
+    },
+    {
+      "id": "hn_item_8863_author_karma",
+      "question": "What is the Hacker News karma score of the user who posted Hacker News item 8863?",
+      "expected": {
+        "story_id": 8863,
+        "username": "dhouston",
+        "karma": 3803
+      },
+      "min_turns": 5,
+      "clean_turns": 5
+    },
+    {
+      "id": "hn_recent_item_author_karma",
+      "question": "What is the Hacker News karma score of the user who posted Hacker News item 50606192?",
+      "expected": {
+        "story_id": 50606192,
+        "title": "Free alternative TV network built from the Internet Archive's forgotten videos",
+        "username": "SockThief",
+        "karma": 563
+      },
+      "min_turns": 6,
+      "clean_turns": 6
+    },
+    {
+      "id": "fx_eur_jpy_cross",
+      "question": "What is the implied EUR to JPY cross rate (how many Japanese yen is 1 euro worth) computed through the USD market? Use the EUR-to-USD and USD-to-JPY rates and give the result to two decimal places.",
+      "expected": {
+        "eur_usd": 1.097535,
+        "usd_jpy": 158.701406,
+        "cross_rate": 174.18034763420997
+      },
+      "min_turns": 3,
+      "clean_turns": 3
+    },
+    {
+      "id": "fx_usd_cny_100",
+      "question": "How many Chinese yuan are 100 US dollars worth at the current exchange rate?",
+      "expected": {
+        "usd_cny": 6.681345,
+        "cny_value": 668.1345
+      },
+      "min_turns": 2,
+      "clean_turns": 2
+    }
+  ],
+  "skipped": [],
+  "records": [
+    {
+      "task": "capital_weather_japan",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 5,
+      "success": false,
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7046,
+        "completion_tokens": 270,
+        "total_tokens": 7316
+      },
+      "elapsed_ms": 12932.1,
+      "faults_injected": 3,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_japan",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "The current temperature in Tokyo, Japan's capital, is 13.3 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5559,
+        "completion_tokens": 174,
+        "total_tokens": 5733
+      },
+      "elapsed_ms": 14337.01,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_norway",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 5,
+      "success": false,
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7024,
+        "completion_tokens": 242,
+        "total_tokens": 7266
+      },
+      "elapsed_ms": 15303.7,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_norway",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "The current temperature in Oslo, Norway's capital, is 0.5 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5561,
+        "completion_tokens": 171,
+        "total_tokens": 5732
+      },
+      "elapsed_ms": 13997.07,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_portugal",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 5,
+      "success": false,
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7154,
+        "completion_tokens": 282,
+        "total_tokens": 7436
+      },
+      "elapsed_ms": 14073.17,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_portugal",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "The current temperature in Lisbon, Portugal's capital, is 9.7 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5565,
+        "completion_tokens": 172,
+        "total_tokens": 5737
+      },
+      "elapsed_ms": 13992.39,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 6,
+      "success": false,
+      "answer": "",
+      "turns": 6,
+      "tool_calls": 11,
+      "tool_errors": 6,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 9657,
+        "completion_tokens": 465,
+        "total_tokens": 10122
+      },
+      "elapsed_ms": 23383.72,
+      "faults_injected": 6,
+      "faulted_calls": 3,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 6,
+      "success": true,
+      "answer": "Paris (France) is currently warmer at 5.8 °C, compared to Berlin (Germany) at 1.0 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6085,
+        "completion_tokens": 297,
+        "total_tokens": 6382
+      },
+      "elapsed_ms": 25428.37,
+      "faults_injected": 6,
+      "faulted_calls": 3,
+      "guard_recoveries": 3,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_compare_norway_portugal",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 6,
+      "success": false,
+      "answer": "",
+      "turns": 6,
+      "tool_calls": 9,
+      "tool_errors": 4,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 9550,
+        "completion_tokens": 419,
+        "total_tokens": 9969
+      },
+      "elapsed_ms": 23709.6,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_compare_norway_portugal",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 6,
+      "success": true,
+      "answer": "Lisbon, Portugal's capital, is warmer at 9.7 °C, while Oslo, Norway's capital, is 0.5 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6101,
+        "completion_tokens": 301,
+        "total_tokens": 6402
+      },
+      "elapsed_ms": 25910.18,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_population_canberra",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "Australia's latest World Bank population (2025) is 27,614,411.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3927,
+        "completion_tokens": 114,
+        "total_tokens": 4041
+      },
+      "elapsed_ms": 1981.97,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_canberra",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "The latest World Bank population for Australia (capital Canberra) is 27,614,411 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3905,
+        "completion_tokens": 107,
+        "total_tokens": 4012
+      },
+      "elapsed_ms": 2416.36,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_ottawa",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "The country whose capital is Ottawa is Canada, with a latest World Bank population of 41,651,653 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3902,
+        "completion_tokens": 111,
+        "total_tokens": 4013
+      },
+      "elapsed_ms": 1668.9,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_ottawa",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "The latest World Bank population for Canada (capital: Ottawa) is 41,651,653 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3924,
+        "completion_tokens": 119,
+        "total_tokens": 4043
+      },
+      "elapsed_ms": 2423.45,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "Switzerland's GDP per capita is $114,769 (current US dollars, 2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3911,
+        "completion_tokens": 115,
+        "total_tokens": 4026
+      },
+      "elapsed_ms": 2243.33,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "Switzerland's GDP per capita is about $114,769 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3925,
+        "completion_tokens": 118,
+        "total_tokens": 4043
+      },
+      "elapsed_ms": 3528.62,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_income_brazil",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "Brazil — the country whose capital is Brasília — is classified by the World Bank as **Upper middle income**.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5349,
+        "completion_tokens": 167,
+        "total_tokens": 5516
+      },
+      "elapsed_ms": 5708.1,
+      "faults_injected": 2,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_income_brazil",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "Brazil — the country whose capital is Brasília — is classified by the World Bank as \"Upper middle income.\"",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3920,
+        "completion_tokens": 107,
+        "total_tokens": 4027
+      },
+      "elapsed_ms": 5681.44,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_region_argentina",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": false,
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 5,
+      "tool_errors": 4,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 5366,
+        "completion_tokens": 236,
+        "total_tokens": 5602
+      },
+      "elapsed_ms": 3568.44,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_region_argentina",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "Argentina (capital Buenos Aires) is in the World Bank's Latin America & Caribbean region.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3895,
+        "completion_tokens": 104,
+        "total_tokens": 3999
+      },
+      "elapsed_ms": 5687.78,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 5,
+      "success": true,
+      "answer": "Norway (capital Oslo) has the larger population at 5,610,870, versus New Zealand (capital Wellington) at 5,324,700.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4141,
+        "completion_tokens": 196,
+        "total_tokens": 4337
+      },
+      "elapsed_ms": 2550.97,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 5,
+      "success": false,
+      "answer": "Norway (capital Oslo) has the larger population at about 5.61 million, versus New Zealand (capital Wellington) at about 5.32 million.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4133,
+        "completion_tokens": 192,
+        "total_tokens": 4325
+      },
+      "elapsed_ms": 2004.22,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "The combined population of Australia (27,614,411) and Canada (41,651,653) is 69,266,064.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2597,
+        "completion_tokens": 125,
+        "total_tokens": 2722
+      },
+      "elapsed_ms": 1622.0,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "The combined population of Australia (27,614,411) and Canada (41,651,653) is **69,266,064**.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2597,
+        "completion_tokens": 125,
+        "total_tokens": 2722
+      },
+      "elapsed_ms": 1488.37,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": false,
+      "answer": "",
+      "turns": 4,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 5455,
+        "completion_tokens": 258,
+        "total_tokens": 5713
+      },
+      "elapsed_ms": 3227.99,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "httpx's latest version (0.28.1) was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3948,
+        "completion_tokens": 128,
+        "total_tokens": 4076
+      },
+      "elapsed_ms": 2069.1,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 5,
+      "success": false,
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 7,
+      "tool_errors": 4,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7371,
+        "completion_tokens": 379,
+        "total_tokens": 7750
+      },
+      "elapsed_ms": 4433.63,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "requests was updated more recently (2.34.2 on 2026-05-14) than Flask (3.1.3 on 2026-02-19).",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4177,
+        "completion_tokens": 224,
+        "total_tokens": 4401
+      },
+      "elapsed_ms": 3598.79,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "pypi_newer_numpy_pandas",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 5,
+      "success": false,
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 7,
+      "tool_errors": 4,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7708,
+        "completion_tokens": 443,
+        "total_tokens": 8151
+      },
+      "elapsed_ms": 4815.45,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_newer_numpy_pandas",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "numpy was updated more recently — numpy 2.5.5 released 2026-11-15, pandas 3.1.1 released 2026-11-04.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4229,
+        "completion_tokens": 242,
+        "total_tokens": 4471
+      },
+      "elapsed_ms": 2592.7,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 5,
+      "success": false,
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 5,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 6988,
+        "completion_tokens": 484,
+        "total_tokens": 7472
+      },
+      "elapsed_ms": 6431.72,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 5,
+      "success": true,
+      "answer": "The Hacker News user “pg” has a karma score of 157,316.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7066,
+        "completion_tokens": 294,
+        "total_tokens": 7360
+      },
+      "elapsed_ms": 11816.13,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 1
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 1
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 1
+          },
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 6,
+      "success": false,
+      "answer": "",
+      "turns": 6,
+      "tool_calls": 6,
+      "tool_errors": 6,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 8872,
+        "completion_tokens": 530,
+        "total_tokens": 9402
+      },
+      "elapsed_ms": 6423.95,
+      "faults_injected": 1,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 6,
+      "success": true,
+      "answer": "The user who posted HN item 8863 is **dhouston**, with a karma score of **3803**.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6960,
+        "completion_tokens": 218,
+        "total_tokens": 7178
+      },
+      "elapsed_ms": 9915.24,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 8863
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 8863
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 8863
+          },
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_recent_item_author_karma",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 7,
+      "success": false,
+      "answer": "",
+      "turns": 7,
+      "tool_calls": 8,
+      "tool_errors": 7,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 11258,
+        "completion_tokens": 795,
+        "total_tokens": 12053
+      },
+      "elapsed_ms": 14797.69,
+      "faults_injected": 3,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_recent_item_author_karma",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 7,
+      "success": true,
+      "answer": "The user \"SockThief\" has a Hacker News karma score of 564.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6889,
+        "completion_tokens": 202,
+        "total_tokens": 7091
+      },
+      "elapsed_ms": 10812.03,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 50606192
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 50606192
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 50606192
+          },
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_user",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 4,
+      "success": true,
+      "answer": "1 euro is worth about 174.18 Japanese yen through the USD market.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2685,
+        "completion_tokens": 307,
+        "total_tokens": 2992
+      },
+      "elapsed_ms": 8906.02,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 4,
+      "success": true,
+      "answer": "The implied EUR/JPY cross rate through USD is €1 = ¥174.18 (1.097535 × 158.701406).",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2660,
+        "completion_tokens": 261,
+        "total_tokens": 2921
+      },
+      "elapsed_ms": 8428.75,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_usd_cny_100",
+      "condition": "budgeted",
+      "arm": "baseline",
+      "budget": 3,
+      "success": true,
+      "answer": "100 US dollars is worth about 668.13 Chinese yuan at the current rate of 6.6813 CNY per USD.",
+      "turns": 2,
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2521,
+        "completion_tokens": 98,
+        "total_tokens": 2619
+      },
+      "elapsed_ms": 5105.4,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_usd_cny_100",
+      "condition": "budgeted",
+      "arm": "guard",
+      "budget": 3,
+      "success": true,
+      "answer": "100 US dollars equals about 668.13 Chinese yuan at the current rate of 6.681345 CNY per USD.",
+      "turns": 2,
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2521,
+        "completion_tokens": 98,
+        "total_tokens": 2619
+      },
+      "elapsed_ms": 4783.74,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_japan",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The current temperature in Tokyo, Japan's capital, is 13.3 °C.",
+      "turns": 8,
+      "tool_calls": 7,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 12384,
+        "completion_tokens": 413,
+        "total_tokens": 12797
+      },
+      "elapsed_ms": 17136.65,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_japan",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The current temperature in Tokyo, Japan's capital, is 13.3 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5549,
+        "completion_tokens": 169,
+        "total_tokens": 5718
+      },
+      "elapsed_ms": 14216.7,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_norway",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The current temperature in Oslo, Norway's capital, is 0.5 °C.",
+      "turns": 6,
+      "tool_calls": 5,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 8745,
+        "completion_tokens": 268,
+        "total_tokens": 9013
+      },
+      "elapsed_ms": 16081.8,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_norway",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The current temperature in Oslo, Norway's capital, is 0.5 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5561,
+        "completion_tokens": 171,
+        "total_tokens": 5732
+      },
+      "elapsed_ms": 13885.06,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_portugal",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The current temperature in Lisbon, Portugal's capital, is 9.7 °C.",
+      "turns": 6,
+      "tool_calls": 5,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 8947,
+        "completion_tokens": 315,
+        "total_tokens": 9262
+      },
+      "elapsed_ms": 16096.75,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_portugal",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The current temperature in Lisbon, Portugal's capital, is 9.7 °C.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5586,
+        "completion_tokens": 179,
+        "total_tokens": 5765
+      },
+      "elapsed_ms": 13754.41,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Paris is warmer at 5.8 °C, compared with Berlin at 1.0 °C.",
+      "turns": 8,
+      "tool_calls": 12,
+      "tool_errors": 6,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 14271,
+        "completion_tokens": 598,
+        "total_tokens": 14869
+      },
+      "elapsed_ms": 29234.76,
+      "faults_injected": 6,
+      "faulted_calls": 3,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_compare_france_germany",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "Paris (France) is currently warmer at 5.8 °C, compared with Berlin (Germany) at 1.0 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6073,
+        "completion_tokens": 293,
+        "total_tokens": 6366
+      },
+      "elapsed_ms": 26396.49,
+      "faults_injected": 6,
+      "faulted_calls": 3,
+      "guard_recoveries": 3,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_weather_compare_norway_portugal",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Lisbon, Portugal's capital, is warmer at 9.7 °C versus Oslo, Norway's capital, at 0.5 °C.",
+      "turns": 8,
+      "tool_calls": 10,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 13677,
+        "completion_tokens": 508,
+        "total_tokens": 14185
+      },
+      "elapsed_ms": 26867.2,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_compare_norway_portugal",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "Lisbon, Portugal's capital, is warmer at 9.7 °C, compared with Oslo, Norway's capital, at 0.5 °C.",
+      "turns": 4,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6101,
+        "completion_tokens": 302,
+        "total_tokens": 6403
+      },
+      "elapsed_ms": 26621.18,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_population_canberra",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Australia's latest World Bank population is 27,614,411 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3927,
+        "completion_tokens": 113,
+        "total_tokens": 4040
+      },
+      "elapsed_ms": 2481.01,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_canberra",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The country whose capital is Canberra is Australia, with a latest World Bank population (2025) of 27,614,411.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3905,
+        "completion_tokens": 112,
+        "total_tokens": 4017
+      },
+      "elapsed_ms": 2201.65,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_ottawa",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Canada's latest World Bank population is 41,651,653 (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3902,
+        "completion_tokens": 102,
+        "total_tokens": 4004
+      },
+      "elapsed_ms": 2018.21,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_population_ottawa",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The country with capital Ottawa is Canada, whose latest World Bank population (2025) is 41,651,653.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3902,
+        "completion_tokens": 110,
+        "total_tokens": 4012
+      },
+      "elapsed_ms": 2218.36,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Switzerland’s GDP per capita is $114,769.01 in current US dollars (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4101,
+        "completion_tokens": 228,
+        "total_tokens": 4329
+      },
+      "elapsed_ms": 2775.63,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_gdp_switzerland",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "Switzerland (capital Bern) had a GDP per capita of about $114,769 in current US dollars (2025).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4113,
+        "completion_tokens": 221,
+        "total_tokens": 4334
+      },
+      "elapsed_ms": 2603.69,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_income_brazil",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Brazil is classified by the World Bank as **Upper middle income**.",
+      "turns": 4,
+      "tool_calls": 3,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5421,
+        "completion_tokens": 204,
+        "total_tokens": 5625
+      },
+      "elapsed_ms": 8439.45,
+      "faults_injected": 2,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_income_brazil",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "Brazil (capital Brasília) is classified as **Upper middle income**.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3920,
+        "completion_tokens": 99,
+        "total_tokens": 4019
+      },
+      "elapsed_ms": 5765.15,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "capital_region_argentina",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Argentina is in the World Bank’s Latin America & Caribbean region.",
+      "turns": 6,
+      "tool_calls": 5,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 8663,
+        "completion_tokens": 351,
+        "total_tokens": 9014
+      },
+      "elapsed_ms": 8831.35,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_region_argentina",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "Argentina (capital: Buenos Aires) is in the World Bank's Latin America & Caribbean region.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3895,
+        "completion_tokens": 105,
+        "total_tokens": 4000
+      },
+      "elapsed_ms": 5470.25,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "Norway (capital Oslo) has the larger population at about 5,610,870, versus New Zealand (capital Wellington) at about 5,324,700 (2025).",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4115,
+        "completion_tokens": 188,
+        "total_tokens": 4303
+      },
+      "elapsed_ms": 2061.58,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_compare_oslo_wellington",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "Norway (capital Oslo, population 5,610,870) has a larger population than New Zealand (capital Wellington, population 5,324,700).",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4115,
+        "completion_tokens": 183,
+        "total_tokens": 4298
+      },
+      "elapsed_ms": 2535.0,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The combined population of Australia (27,614,411) and Canada (41,651,653) is 69,266,064.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2597,
+        "completion_tokens": 125,
+        "total_tokens": 2722
+      },
+      "elapsed_ms": 1208.13,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The combined population of Australia (27,614,411) and Canada (41,651,653) is **69,266,064**.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2603,
+        "completion_tokens": 125,
+        "total_tokens": 2728
+      },
+      "elapsed_ms": 1551.16,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The latest httpx version (0.28.1) was released on 2024-12-06.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7083,
+        "completion_tokens": 285,
+        "total_tokens": 7368
+      },
+      "elapsed_ms": 4284.06,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "httpx 0.28.1 was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3948,
+        "completion_tokens": 124,
+        "total_tokens": 4072
+      },
+      "elapsed_ms": 2341.12,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "requests was updated more recently: requests 2026-05-14, Flask 2026-02-19.",
+      "turns": 7,
+      "tool_calls": 8,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 11467,
+        "completion_tokens": 561,
+        "total_tokens": 12028
+      },
+      "elapsed_ms": 6453.73,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_newer_requests_flask",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "requests was updated more recently (2026-05-14) versus Flask (2026-02-19).",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4201,
+        "completion_tokens": 222,
+        "total_tokens": 4423
+      },
+      "elapsed_ms": 3135.83,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "pypi_newer_numpy_pandas",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "numpy was updated more recently (numpy 2.5.5 on 2026-11-15 vs pandas 3.1.1 on 2026-11-04).",
+      "turns": 7,
+      "tool_calls": 8,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 11465,
+        "completion_tokens": 595,
+        "total_tokens": 12060
+      },
+      "elapsed_ms": 5507.23,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_newer_numpy_pandas",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "numpy was updated more recently (numpy 2.5.5 on 2026-11-15 vs. pandas 3.1.1 on 2026-11-04).",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4227,
+        "completion_tokens": 265,
+        "total_tokens": 4492
+      },
+      "elapsed_ms": 2611.21,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The user \"pg\" has a Hacker News karma score of 157,316.",
+      "turns": 7,
+      "tool_calls": 6,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 11199,
+        "completion_tokens": 719,
+        "total_tokens": 11918
+      },
+      "elapsed_ms": 15916.59,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_1_author_karma",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The user \"pg\" (who posted HN item 1, \"Y Combinator\") has a karma score of 157,316.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6810,
+        "completion_tokens": 200,
+        "total_tokens": 7010
+      },
+      "elapsed_ms": 12936.06,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 1
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 1
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 1
+          },
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": false,
+      "answer": "",
+      "turns": 10,
+      "tool_calls": 10,
+      "tool_errors": 9,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 15965,
+        "completion_tokens": 591,
+        "total_tokens": 16556
+      },
+      "elapsed_ms": 12294.77,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_8863_author_karma",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The user who posted item 8863 is dhouston, with a Hacker News karma score of 3803.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6982,
+        "completion_tokens": 226,
+        "total_tokens": 7208
+      },
+      "elapsed_ms": 10293.56,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 1,
+      "guard_events": [
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 8863
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 8863
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 8863
+          },
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "hn_recent_item_author_karma",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The user \"SockThief\" has a Hacker News karma score of 564.",
+      "turns": 7,
+      "tool_calls": 6,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 10534,
+        "completion_tokens": 372,
+        "total_tokens": 10906
+      },
+      "elapsed_ms": 16640.95,
+      "faults_injected": 2,
+      "faulted_calls": 1,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_recent_item_author_karma",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "The HN user \"SockThief\" (poster of item 50606192) has a karma score of 564.",
+      "turns": 5,
+      "tool_calls": 4,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6893,
+        "completion_tokens": 212,
+        "total_tokens": 7105
+      },
+      "elapsed_ms": 12207.46,
+      "faults_injected": 4,
+      "faulted_calls": 2,
+      "guard_recoveries": 2,
+      "guard_events": [
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 50606192
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 50606192
+          },
+          "recovered": false
+        },
+        {
+          "rule": "error_hint_coercion",
+          "function": "get_hn_item",
+          "error": "invalid_argument: story_id must be an integer",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "story_id": 50606192
+          },
+          "recovered": true
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_user",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true
+        }
+      ]
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "The implied EUR/JPY cross rate is 174.18 yen per euro (1.097535 × 158.701406).",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2665,
+        "completion_tokens": 324,
+        "total_tokens": 2989
+      },
+      "elapsed_ms": 8999.81,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_eur_jpy_cross",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "1.097535 × 158.701406 = 174.18, so the implied EUR/JPY cross rate through USD is **174.18 JPY per EUR**.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2667,
+        "completion_tokens": 147,
+        "total_tokens": 2814
+      },
+      "elapsed_ms": 7755.36,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_usd_cny_100",
+      "condition": "generous",
+      "arm": "baseline",
+      "budget": 10,
+      "success": true,
+      "answer": "100 US dollars is worth about 668.13 Chinese yuan (rate 6.681345).",
+      "turns": 2,
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2521,
+        "completion_tokens": 92,
+        "total_tokens": 2613
+      },
+      "elapsed_ms": 4538.64,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_usd_cny_100",
+      "condition": "generous",
+      "arm": "guard",
+      "budget": 10,
+      "success": true,
+      "answer": "At the current rate (1 USD = 6.681345 CNY), 100 US dollars are worth about 668.13 Chinese yuan.",
+      "turns": 2,
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2531,
+        "completion_tokens": 111,
+        "total_tokens": 2642
+      },
+      "elapsed_ms": 4752.5,
+      "faults_injected": 0,
+      "faulted_calls": 0,
+      "guard_recoveries": 0,
+      "guard_events": []
+    }
+  ],
+  "aggregate": {
+    "budgeted": {
+      "arms": {
+        "baseline": {
+          "tasks": 20,
+          "success": 8,
+          "success_rate": 0.4,
+          "turns": 85,
+          "tool_calls": 95,
+          "tool_errors": 51,
+          "exhausted": 12,
+          "faults_injected": 39,
+          "guard_recoveries": 0,
+          "usage": {
+            "prompt_tokens": 122482,
+            "completion_tokens": 6036,
+            "total_tokens": 128518
+          },
+          "elapsed_ms": 162887.85
+        },
+        "guard": {
+          "tasks": 20,
+          "success": 19,
+          "success_rate": 0.95,
+          "turns": 68,
+          "tool_calls": 62,
+          "tool_errors": 6,
+          "exhausted": 0,
+          "faults_injected": 42,
+          "guard_recoveries": 21,
+          "usage": {
+            "prompt_tokens": 93620,
+            "completion_tokens": 3654,
+            "total_tokens": 97274
+          },
+          "elapsed_ms": 170911.74
+        }
+      },
+      "paired": {
+        "both_success": 7,
+        "baseline_only": 1,
+        "guard_only": 12,
+        "neither": 0,
+        "mcnemar_exact_p": 0.00341796875
+      }
+    },
+    "generous": {
+      "arms": {
+        "baseline": {
+          "tasks": 20,
+          "success": 19,
+          "success_rate": 0.95,
+          "turns": 107,
+          "tool_calls": 104,
+          "tool_errors": 51,
+          "exhausted": 1,
+          "faults_injected": 40,
+          "guard_recoveries": 0,
+          "usage": {
+            "prompt_tokens": 163649,
+            "completion_tokens": 6952,
+            "total_tokens": 170601
+          },
+          "elapsed_ms": 207868.3
+        },
+        "guard": {
+          "tasks": 20,
+          "success": 20,
+          "success_rate": 1.0,
+          "turns": 68,
+          "tool_calls": 62,
+          "tool_errors": 6,
+          "exhausted": 0,
+          "faults_injected": 42,
+          "guard_recoveries": 21,
+          "usage": {
+            "prompt_tokens": 93582,
+            "completion_tokens": 3576,
+            "total_tokens": 97158
+          },
+          "elapsed_ms": 173252.2
+        }
+      },
+      "paired": {
+        "both_success": 19,
+        "baseline_only": 0,
+        "guard_only": 1,
+        "neither": 0,
+        "mcnemar_exact_p": 1.0
+      }
+    }
+  },
+  "key_findings": [
+    "budgeted: task success baseline 8/20 vs guard 19/20 (McNemar exact p=0.0034)",
+    "budgeted: turns 85 -> 68, tool calls 95 -> 62, tokens 128518 -> 97274, agent-visible tool errors 51 -> 6",
+    "generous: task success baseline 19/20 vs guard 20/20 (McNemar exact p=1.0000)",
+    "generous: turns 107 -> 68, tool calls 104 -> 62, tokens 170601 -> 97158, agent-visible tool errors 51 -> 6"
+  ],
+  "limitations": [
+    "Deterministic fault injection, not observed production failures: each fault epoch fails the first 2 attempts of a logical call (timeout / HTTP 429 / HTTP 5xx).",
+    "The budgeted condition is a controlled stress condition: per-task turn budget = fault-free calibration turns + 1, so any fault epoch (2 extra turns for a baseline agent) exceeds it. Baseline budgeted success therefore approximates P(no transient fault) and must not be read as a production failure rate.",
+    "Single model (deepseek-v4-flash) and a single run per task per arm; McNemar is computed over the paired discordant outcomes only.",
+    "The single guard failure in the budgeted condition is an answer-formatting miss (population rounded to millions while the verifier requires the exact integer), not a middleware failure; it is left uncorrected in the artifact.",
+    "A repaired call is not retried when the repaired call itself hits a transient fault (found in the HN story_id tasks: 2 wasted turns each); left unchanged in this artifact.",
+    "Free public APIs are not production grade; the GitHub API was excluded because of the key-free rate limit, and API drift can affect reruns."
+  ],
+  "reproduce": [
+    "python scripts/run_live_demo_hard.py --mode calibrate",
+    "python scripts/run_live_demo_hard.py --output benchmarks/toolguard/live_demo_hard.json",
+    "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
+  ]
+}

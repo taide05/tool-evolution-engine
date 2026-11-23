@@ -82,15 +82,22 @@ class AgentRun:
     transcript: list[dict[str, Any]] = field(default_factory=list)
 
 
-def run_task(client: DeepSeekClient, backend: Any, question: str, middleware: Any = None) -> AgentRun:
+def run_task(
+    client: DeepSeekClient,
+    backend: Any,
+    question: str,
+    middleware: Any = None,
+    max_turns: int | None = None,
+) -> AgentRun:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": question},
     ]
     tools = backend.schemas()
     tool_calls = tool_errors = turns = 0
+    budget = max_turns or client.config.max_turns
     start = time.perf_counter()
-    for turn in range(client.config.max_turns):
+    for turn in range(budget):
         turns += 1
         payload = client.chat(messages, tools)
         message = (payload.get("choices") or [{}])[0].get("message") or {}

@@ -18,10 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
-import re
 import sys
-import unicodedata
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,38 +28,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tool_evolution.toolguard.agent import DeepSeekClient, LLMConfig, run_task  # noqa: E402
 from tool_evolution.toolguard.guard import ToolGuard  # noqa: E402
 from tool_evolution.toolguard.live import FaultyBackend, LiveBackend, ToolError  # noqa: E402
+from tool_evolution.toolguard.verify import (  # noqa: E402
+    contains_digits,
+    contains_number,
+    contains_text,
+    mcnemar_exact,
+    norm_text,
+)
 from tool_evolution.utils.config import settings  # noqa: E402
 
 DEFAULT_OUTPUT = ".scratch/toolguard/live_demo.json"
 MODEL = "deepseek-v4-flash"
-
-
-# ---------------------------------------------------------------------------
-# verification helpers
-# ---------------------------------------------------------------------------
-def _norm(text: str) -> str:
-    folded = unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z0-9]+", " ", folded.lower()).strip()
-
-
-def _digits(text: str) -> str:
-    return re.sub(r"\D", "", str(text))
-
-
-def _numbers(text: str) -> list[float]:
-    return [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", str(text).replace(",", ""))]
-
-
-def contains_text(answer: str, expected: str) -> bool:
-    return _norm(expected)[:40] in _norm(answer)
-
-
-def contains_number(answer: str, expected: float, tolerance: float = 0.0) -> bool:
-    return any(abs(value - expected) <= tolerance for value in _numbers(answer))
-
-
-def contains_digits(answer: str, expected: int | str) -> bool:
-    return _digits(expected) in _digits(answer)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +158,7 @@ def build_tasks(backend: LiveBackend, max_tasks: int | None) -> tuple[list[dict]
     for city, latitude, longitude in (("Paris", 48.85, 2.35), ("New York", 40.71, -74.01), ("Sydney", -33.87, 151.21)):
         try:
             weather = safe("get_weather", latitude=latitude, longitude=longitude)
-            add(f"weather_{_norm(city).replace(' ', '_')}",
+            add(f"weather_{norm_text(city).replace(' ', '_')}",
                 f"What is the current temperature in {city} (latitude {latitude}, longitude {longitude}), in Celsius?",
                 {"temperature": weather["temperature_c"]},
                 lambda a, e: contains_number(a, e["temperature"], 1.5))
@@ -197,16 +173,6 @@ def build_tasks(backend: LiveBackend, max_tasks: int | None) -> tuple[list[dict]
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
-def mcnemar_exact(baseline_only: int, guard_only: int) -> float:
-    """Two-sided exact binomial p-value for discordant pairs."""
-    n = baseline_only + guard_only
-    if n == 0:
-        return 1.0
-    k = min(baseline_only, guard_only)
-    tail = sum(math.comb(n, i) for i in range(0, k + 1)) / (2 ** n)
-    return min(1.0, 2 * tail)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-tasks", type=int, default=None)

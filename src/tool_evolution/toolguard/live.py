@@ -10,8 +10,11 @@ reproducing the schema/backend-mismatch failure class measured in the offline da
 
 from __future__ import annotations
 
+import hashlib
 import json
+import random
 import time
+import unicodedata
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -101,17 +104,36 @@ def _world_bank_countries() -> dict[str, dict[str, Any]]:
     return _WB_COUNTRIES
 
 
+def fold_text(text: Any) -> str:
+    """Accent-insensitive lowercase form used for name matching."""
+    folded = unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode("ascii")
+    return " ".join(folded.lower().split())
+
+
+def resolve_country_row(country: str) -> dict[str, Any] | None:
+    """Resolve a free-form country name to a World Bank country row."""
+    if not isinstance(country, str) or not country.strip():
+        return None
+    mapping = _world_bank_countries()
+    key = fold_text(country)
+    row = mapping.get(country.strip().lower())
+    if row is None:
+        for name, candidate in mapping.items():
+            if key and (key in fold_text(name) or fold_text(name) in key):
+                row = candidate
+                break
+    return row
+
+
+def world_bank_country_rows() -> dict[str, dict[str, Any]]:
+    """Access the cached World Bank country rows (name -> row)."""
+    return _world_bank_countries()
+
+
 def get_country_info(country: str) -> dict[str, Any]:
     if not isinstance(country, str) or not country.strip():
         raise ToolError("invalid_argument", "country must be a non-empty string")
-    mapping = _world_bank_countries()
-    key = country.strip().lower()
-    row = mapping.get(key)
-    if row is None:
-        for name, candidate in mapping.items():
-            if key and (key in name or name in key):
-                row = candidate
-                break
+    row = resolve_country_row(country)
     if row is None:
         raise ToolError("not_found", f"country not found: {country}")
     detail = http_get_json(f"https://api.worldbank.org/v2/country/{row['id']}", {"format": "json"})
@@ -177,7 +199,13 @@ def get_hn_item(story_id: int) -> dict[str, Any]:
     payload = http_get_json(f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json")
     if not isinstance(payload, dict) or not payload.get("title"):
         raise ToolError("not_found", f"no Hacker News item: {story_id}")
-    return {"id": story_id, "title": payload.get("title"), "score": payload.get("score"), "type": payload.get("type")}
+    return {
+        "id": story_id,
+        "title": payload.get("title"),
+        "score": payload.get("score"),
+        "type": payload.get("type"),
+        "by": payload.get("by"),
+    }
 
 
 def get_exchange_rate(base: str, target: str) -> dict[str, Any]:
@@ -288,16 +316,33 @@ class LiveBackend:
         return CallResult("ok", response=payload, source="live")
 
 
+def _stable_rng(*parts: Any) -> random.Random:
+    digest = hashlib.blake2b(repr(parts).encode("utf-8"), digest_size=8).digest()
+    return random.Random(int.from_bytes(digest, "big"))
+
+
 @dataclass
 class FaultyBackend:
-    """Deterministically faults the first attempt of each logical call (transient failures)."""
+    """Deterministically injects transient fault *epochs* into a tool backend.
+
+    Each unique logical call (function name + canonical arguments) is rolled once with a
+    seed-derived RNG.  A faulted call fails its first ``attempts_to_fail`` attempts with
+    transient errors (timeout / rate-limit / server error), modelling a short outage,
+    and only then reaches the real backend.  Retries of the same logical call hit the
+    same outage, so recovery requires either in-middleware retry (one agent turn) or
+    extra agent retries (one wasted agent turn each).  Deterministic in
+    ``(seed, function, arguments)`` across processes, so both A/B arms see the same
+    fault surface for identical calls.
+    """
 
     backend: Any
     seed: int = 42
     p_timeout: float = 0.12
     p_rate_limit: float = 0.06
-    faulted: set[str] = field(default_factory=set)
-    stats: dict[str, int] = field(default_factory=lambda: {"injected": 0, "calls": 0})
+    p_server_error: float = 0.0
+    attempts_to_fail: int = 1
+    _remaining: dict[str, int] = field(default_factory=dict)
+    stats: dict[str, int] = field(default_factory=lambda: {"injected": 0, "calls": 0, "faulted_calls": 0})
 
     def schemas(self):
         return self.backend.schemas()
@@ -306,20 +351,25 @@ class FaultyBackend:
         from .backend import CallResult
 
         self.stats["calls"] += 1
-        key = f"{function_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False)}"
-        if key not in self.faulted:
-            import random
-
-            rng = random.Random(hash((self.seed, key)) & 0xFFFFFFFF)
-            roll = rng.random()
-            if roll < self.p_timeout:
-                self.faulted.add(key)
-                self.stats["injected"] += 1
+        key = f"{function_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)}"
+        if key not in self._remaining:
+            total = self.p_timeout + self.p_rate_limit + self.p_server_error
+            roll = _stable_rng(self.seed, key).random()
+            self._remaining[key] = self.attempts_to_fail if total > 0 and roll < total else 0
+            if self._remaining[key]:
+                self.stats["faulted_calls"] += 1
+        remaining = self._remaining[key]
+        if remaining > 0:
+            self._remaining[key] = remaining - 1
+            attempt_index = self.attempts_to_fail - remaining
+            self.stats["injected"] += 1
+            selector = _stable_rng(self.seed, key, "kind").random()
+            total = self.p_timeout + self.p_rate_limit + self.p_server_error
+            if selector < self.p_timeout / total:
                 return CallResult("error", error="timeout: request timed out")
-            if roll < self.p_timeout + self.p_rate_limit:
-                self.faulted.add(key)
-                self.stats["injected"] += 1
+            if selector < (self.p_timeout + self.p_rate_limit) / total:
                 return CallResult("error", error="rate_limit: HTTP 429 rate limited")
+            return CallResult("error", error=f"server_error: HTTP 503 server error (attempt {attempt_index + 1})")
         return self.backend.call(function_name, arguments)
 
 
