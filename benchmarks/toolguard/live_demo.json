@@ -1,0 +1,905 @@
+{
+  "artifact_version": 1,
+  "experiment": "ToolGuard_live_end_to_end_demo",
+  "generated_at": "2026-11-23T02:52:53.921455+00:00",
+  "model": "deepseek-v4-flash",
+  "protocol": {
+    "arms": [
+      "baseline",
+      "guard"
+    ],
+    "apis": [
+      "api.worldbank.org",
+      "pypi.org",
+      "api.open-meteo.com",
+      "api.github.com",
+      "hacker-news.firebaseio.com",
+      "open.er-api.com"
+    ],
+    "verification": "programmatic, expected values computed from the same live APIs before the runs",
+    "note": "transient faults are deterministically injected on the first attempt of each unique logical call; the middleware arm auto-retries/coerces, the baseline arm must recover through the LLM loop",
+    "conditions": [
+      "normal (6 max turns, p_timeout=0.22, p_rate_limit=0.10)",
+      "stress (4 max turns, p_timeout=0.35, p_rate_limit=0.15)"
+    ]
+  },
+  "results": {
+    "normal": {
+      "condition": "normal",
+      "settings": {
+        "max_turns": 6,
+        "fault_injection": {
+          "p_timeout": 0.22,
+          "p_rate_limit": 0.1,
+          "seed": 42,
+          "note": "first attempt of each unique logical call may be faulted once"
+        }
+      },
+      "tasks": 27,
+      "aggregate": {
+        "baseline": {
+          "tasks": 27,
+          "success": 27,
+          "success_rate": 1.0,
+          "tool_calls": 44,
+          "tool_errors": 14,
+          "turns": 68,
+          "usage": {
+            "prompt_tokens": 54262,
+            "completion_tokens": 2780,
+            "total_tokens": 57042
+          },
+          "elapsed_ms": 157541.51,
+          "exhausted": 0,
+          "recoveries": 0
+        },
+        "guard": {
+          "tasks": 27,
+          "success": 27,
+          "success_rate": 1.0,
+          "tool_calls": 31,
+          "tool_errors": 1,
+          "turns": 55,
+          "usage": {
+            "prompt_tokens": 42260,
+            "completion_tokens": 1957,
+            "total_tokens": 44217
+          },
+          "elapsed_ms": 143951.35,
+          "exhausted": 0,
+          "recoveries": 10
+        }
+      },
+      "paired": {
+        "both_success": 27,
+        "baseline_only": 0,
+        "guard_only": 0,
+        "mcnemar_exact_p": 1.0
+      },
+      "per_task": {
+        "country_capital_japan": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_australia": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_pair": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_germany": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "pypi_numpy_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "pypi_requests_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "pypi_newer_package": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 3,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "weather_berlin": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_tokyo": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_compare": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "hn_story_1": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 5,
+            "tool_errors": 4,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 1
+          }
+        },
+        "hn_story_2": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 3,
+            "tool_errors": 2,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "github_stars": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "fx_usd_cny": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "fx_eur_jpy": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "fx_usd_jpy": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "fx_gbp_usd": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_france": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_canada": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "country_capital_brazil": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_india": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "pypi_pandas_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "pypi_django_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "pypi_flask_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_paris": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_new_york": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_sydney": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        }
+      }
+    },
+    "stress": {
+      "condition": "stress",
+      "settings": {
+        "max_turns": 4,
+        "fault_injection": {
+          "p_timeout": 0.35,
+          "p_rate_limit": 0.15,
+          "seed": 42,
+          "note": "first attempt of each unique logical call may be faulted once"
+        }
+      },
+      "tasks": 27,
+      "aggregate": {
+        "baseline": {
+          "tasks": 27,
+          "success": 25,
+          "success_rate": 0.9259,
+          "tool_calls": 48,
+          "tool_errors": 20,
+          "turns": 71,
+          "usage": {
+            "prompt_tokens": 56495,
+            "completion_tokens": 2914,
+            "total_tokens": 59409
+          },
+          "elapsed_ms": 162125.09,
+          "exhausted": 1,
+          "recoveries": 0
+        },
+        "guard": {
+          "tasks": 27,
+          "success": 26,
+          "success_rate": 0.963,
+          "tool_calls": 33,
+          "tool_errors": 4,
+          "turns": 57,
+          "usage": {
+            "prompt_tokens": 44137,
+            "completion_tokens": 2158,
+            "total_tokens": 46295
+          },
+          "elapsed_ms": 164691.56,
+          "exhausted": 0,
+          "recoveries": 13
+        }
+      },
+      "paired": {
+        "both_success": 25,
+        "baseline_only": 0,
+        "guard_only": 1,
+        "mcnemar_exact_p": 1.0
+      },
+      "per_task": {
+        "country_capital_japan": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_australia": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "country_capital_pair": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 3,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "country_capital_germany": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "pypi_numpy_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "pypi_requests_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "pypi_newer_package": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 3,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "weather_berlin": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_tokyo": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_compare": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "hn_story_1": {
+          "baseline": {
+            "success": false,
+            "tool_calls": 4,
+            "tool_errors": 4,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 3,
+            "tool_errors": 2,
+            "recoveries": 1
+          }
+        },
+        "hn_story_2": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 3,
+            "tool_errors": 2,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "github_stars": {
+          "baseline": {
+            "success": false,
+            "tool_calls": 3,
+            "tool_errors": 3,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": false,
+            "tool_calls": 2,
+            "tool_errors": 2,
+            "recoveries": 0
+          }
+        },
+        "fx_usd_cny": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "fx_eur_jpy": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "fx_usd_jpy": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "fx_gbp_usd": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "country_capital_france": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "country_capital_canada": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "country_capital_brazil": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "country_capital_india": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "pypi_pandas_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 2,
+            "tool_errors": 1,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 1
+          }
+        },
+        "pypi_django_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "pypi_flask_version": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_paris": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_new_york": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        },
+        "weather_sydney": {
+          "baseline": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          },
+          "guard": {
+            "success": true,
+            "tool_calls": 1,
+            "tool_errors": 0,
+            "recoveries": 0
+          }
+        }
+      }
+    }
+  },
+  "limitations": [
+    "single model (deepseek-v4-flash), single run per arm",
+    "transient failures are injected deterministically rather than observed live (real APIs were stable during the run)",
+    "task-success ceiling: baseline is already strong on 27 easy auto-verifiable tasks (normal 27/27 vs 27/27; stress 25/27 vs 26/27, McNemar p=1.0)",
+    "guard advantage is mainly tool-error reduction (-93% normal / -80% stress), turns (-19%/-20%) and tokens (-22%/-22%) at equal or slightly better task success",
+    "free public APIs (no keys) are not production-grade; GitHub rate limits and API drift may affect reruns"
+  ],
+  "reproduce": [
+    "python scripts/run_live_demo.py --output .scratch/toolguard/live_demo_normal.json --max-turns 6",
+    "python scripts/run_live_demo.py --output .scratch/toolguard/live_demo_stress.json --max-turns 4 --p-timeout 0.35 --p-rate-limit 0.15"
+  ]
+}

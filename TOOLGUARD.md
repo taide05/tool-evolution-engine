@@ -28,6 +28,21 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 两协议合计：**学习式文本抽取 39/39 全部与真实成功调用一致**。
 
+## Live 端到端 demo（真实公开 API + 真实 DeepSeek agent）
+
+用同一套中间件接口接 **6 个真实公开 API**（World Bank、PyPI、Open-Meteo、Hacker News、GitHub、汇率，全部免 key），DeepSeek `deepseek-v4-flash` 作为 agent，在 **27 个可自动校验任务**上做 middleware on/off 配对 A/B。唯一合成元素是**确定性瞬时故障注入**（每个逻辑调用的首次尝试可能被注入 timeout/rate-limit），用来模拟离线分析里发现的瞬态失败类；其余（LLM 调用、HTTP 请求、任务校验）全部为 live。**DeepSeek API 不可用时 demo 会停止并报错，不会回退离线/mock。**
+
+| 条件 | 任务成功 | 工具调用失败 | 工具调用数 | 轮数 | tokens |
+|---|---|---|---|---|---|
+| normal（6 轮预算）baseline | **27/27** | 14 | 44 | 68 | 57,042 |
+| normal guard | **27/27** | **1**（-93%） | 31（-30%） | 55（-19%） | **44,217（-22.5%）** |
+| stress（4 轮预算 + 更高故障率）baseline | 25/27 | 20 | 48 | 71 | 59,409 |
+| stress guard | **26/27**（+1 任务，McNemar p=1.0） | **4**（-80%） | 33（-31%） | 57（-20%） | **46,295（-22.1%）** |
+
+**诚实结论**：27 个任务对 baseline 来说太容易（normal 双方 27/27），所以**任务成功率没有显著提升**；中间件的价值体现在**工具调用失败 -80%~-93%、tokens -22%、轮数 -19%~-20%**，以及在 4 轮压力预算下多完成 1 个任务（不显著）。这是一个“可靠性与成本”结果，而不是任务成功率结果。全部 live 实验花费约 **1.4 元**（余额 9.93 → 8.50 CNY）。
+
+artifact：[`benchmarks/toolguard/live_demo.json`](benchmarks/toolguard/live_demo.json)
+
 ## 工作原理（五级修复，便宜且通用的优先）
 
 1. **确定性 schema 规则**：函数名纠错、删除/重命名 schema 外参数、schema 默认值补必填、类型转换；
@@ -61,6 +76,10 @@ python scripts/toolguard_cli.py repair \
   --arguments '{"country": "ZZ"}' \
   --error "The country code 'ZZ' is not recognized or not supported."
 
+# live 端到端 demo（需要 .env 中的 TOOLEVO_DEEPSEEK_API_KEY；真实公开 API，无其他 key）
+python scripts/run_live_demo.py
+python scripts/run_live_demo.py --max-turns 4 --p-timeout 0.35 --p-rate-limit 0.15
+
 python -m pytest tests/test_toolguard -q -p no:cacheprovider
 ```
 
@@ -68,8 +87,9 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 
 ## 局限与下一步
 
-- 当前只有离线 replay，没有 live API 端到端 A/B（下一步：GitHub/Wikipedia/Open-Meteo 等免 key 公开 API + DeepSeek agent，middleware on/off 对照）；
-- 缓存只覆盖参考解输入（最终尝试命中率 51.6%），修复验证存在未命中，**未命中不等于失败**；
+- 离线 replay：缓存只覆盖参考解输入（最终尝试命中率 51.6%），修复验证存在未命中，**未命中不等于失败**；
 - value agreement 只在“某模型解过同一任务”时可验证，是严格下界；
 - schema 默认值补全的 30 条 cross-group 修复未经验证，属启发式提议；
-- 服务端/瞬态错误（全数据集 96 条）离线不可确定性修复，归为“可重试”类，留给 live 中间件处理。
+- 服务端/瞬态错误（全数据集 96 条）离线不可确定性修复；
+- live demo：单模型、单次运行；27 个任务对 baseline 太容易，任务成功率无显著差异；瞬时故障为确定性注入而非真实观测；免费公开 API 非生产级（GitHub 限流、API 漂移可能影响复跑）；
+- 下一步：更困难/更长的任务集（多步、多工具协作）以检验任务成功率差异；把 live 中“默认值补全”类修复变成可验证规则；接入真实 MCP server 做产品化验证。
