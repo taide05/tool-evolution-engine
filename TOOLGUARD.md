@@ -5,8 +5,8 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 当前版本有三层证据：
 
 1. **离线真实数据评测**：在 **30,120 次真实工具调用 / 1,033 次真实失败**（StableToolBench 公开基线轨迹，Apache-2.0）上验证修复策略，并重点做了**跨任务泛化**：把“重放同一任务的旧调用”升级为“从任务文本学习参数抽取规则”；
-2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 20 个**多步依赖任务**，在配对实验里量化可靠性与交互成本；
-3. **真实 MCP 集成**：同一套中间件不改一行，接到真实 stdio MCP server 上，验证“换工具层只换 adapter”。
+2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 **32 个多步依赖任务**；V2 把交互预算做成**三档扫描 + 重复**，给出成功-预算曲线、Wilson CI 与配对检验；
+3. **真实 MCP 集成**：同一套中间件不改一行，接到**两个真实 stdio MCP server** 上，覆盖多 server 路由、server 进程真实崩溃重连、catalog drift 未知工具重解析。
 
 ## 结果（离线确定性评测）
 
@@ -34,7 +34,7 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 ## Live 端到端 demo（真实公开 API + 真实 DeepSeek agent）
 
-三轮递进验证，全部使用真实 DeepSeek `deepseek-v4-flash` agent、真实免 key 公开 API、程序化答案校验（**无 LLM judge**）。唯一的合成元素是**确定性瞬时故障注入**；DeepSeek 或公开 API 不可用时 demo 停止报错，**不会回退离线/mock**。
+三轮递进验证，全部使用真实 DeepSeek `deepseek-v4-flash` agent、真实免 key 公开 API、程序化答案校验（**无 LLM judge**）。合成元素只有**确定性的故障/崩溃/配置漂移注入**，全部在 artifact 中逐项披露；DeepSeek 或公开 API 不可用时 demo 停止报错，**不会回退离线/mock**。
 
 ### 第一轮：27 个短任务 / 6 个 API（可靠性与成本口径）
 
@@ -49,72 +49,71 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 **诚实结论**：27 个任务对 baseline 太容易（normal 双方 27/27），所以这一轮**任务成功率没有显著提升**；价值体现在工具失败 **-80%~-93%**、tokens **-22%**、轮数 **-19%~-20%**。这是“可靠性与成本”结果，不是任务成功率结果。artifact：[`benchmarks/toolguard/live_demo.json`](benchmarks/toolguard/live_demo.json)。
 
-### 第二轮：20 个多步依赖任务 / 12 个工具（任务成功率口径）
+### 第二轮：32 个多步依赖任务 × 预算扫描 × 重复（任务成功率口径）
 
-针对第一轮“太容易”的问题重新设计任务集：每个任务需要 **2–6 次有依赖关系的跨工具调用**，例如
+#### 为什么从 V1 重做（自我批评）
 
-- 国家 → 首都 → `geocode_city` 坐标 → 天气（坐标不在题面里，必须走工具链）；
-- 首都 → 反查国家 → 人口 / GDP per capita / 收入等级 / 地区（World Bank）；
-- 包名 → 最新版本 → 该版本的发布日期（PyPI），再比较两个包谁更新；
-- Hacker News item → 作者 → 作者 karma；
-- EUR→USD、USD→JPY 两个真实汇率相乘得到隐含 EUR→JPY 交叉汇率。
+V1（20 任务 / 单预算 / 单次运行）的问题：①任务量和重复不足，只有点估计没有方差；②单预算恰好卡在“无故障需求 +1 轮”，容易被质疑“把预算调到让 baseline 死”；③单模型、指标面窄。V2 把**预算公开成实验变量**并加重复：
 
-**协议**（`scripts/run_live_demo_hard.py`）：
-1. 先跑 20 次**无故障 calibration**，测出每个任务的“无故障最少交互轮数”；
-2. `budgeted` 条件：每任务轮数预算 = calibration 轮数 **+ 1**；
-3. `generous` 条件：所有任务固定 10 轮；
-4. 故障注入：按 (seed, 函数名, 参数) 确定式判定，故障 epoch = 该逻辑调用**前 2 次尝试**失败（timeout / HTTP 429 / HTTP 5xx）。一次 epoch 让 baseline agent 多花 **2 轮**，而 ToolGuard 在**同一个 agent 轮**内重试吸收；
-5. 每任务 baseline/guard 各跑一次，做配对 McNemar exact 检验。
+- 任务池 20 → **32**：新增 5–8 步、派生算术（比值/差值/求和）、跨源日期比较、三国人口聚合等 12 个任务；类别覆盖 weather 8 / worldbank 12 / pypi 5 / hn 4 / fx 3；
+- **预算扫描**：每任务测 `clean+1` / `clean+4` / `10` 三档（clean = 无故障 calibration 轮数），得到**成功-预算曲线**；
+- **重复**：紧预算 `clean+1` 用 3 个故障 seed（96 格/臂），其余各 1 个 seed（32 格/臂）；报告 Wilson 95% CI 与配对 McNemar（按 task×repeat 配对）；
+- 故障注入同 V1（每个逻辑调用前 2 次尝试失败，确定性），单模型 `deepseek-v4-flash`（决策：不加模型轴，预算用于重复）；
+- 共 320 格（3 预算档 × 2 臂 × 32 任务 + 重复），墙钟 1,619s，2 个 worker。
 
-| 条件 | 任务成功 | 轮数 | 工具调用 | 工具错误 | tokens | 预算耗尽 |
+#### 结果
+
+| 预算条件 | 平均预算 | baseline 成功 | guard 成功 | 配对 McNemar | turns/格 (b→g) | tokens (b→g) | agent 可见工具错误 (b→g) |
+|---|---|---|---|---|---|---|---|
+| **clean+1** | 5.0 | **53/96 (55.2%, CI 45.3–64.8%)** | **96/96 (100%, CI 96.2–100%)** | **p=2.27e-13** | 4.41→3.05 | 657,860→430,769 | **266→6** |
+| clean+4 | 8.0 | 29/32 (90.6%) | 32/32 (100%) | p=0.25 (n.s.) | 5.59→3.00 | 299,273→141,751 | 99→0 |
+| 10 | 10.0 | 29/32 (90.6%) | 32/32 (100%) | p=0.25 (n.s.) | 5.75→3.06 | 310,950→143,643 | 104→0 |
+
+**成功-预算曲线**：baseline 55.2% → 90.6% → 90.6%（预算增加才恢复），guard **三档都是 100%** 且 turns/tokens 基本不随预算变化。这直接回答“是不是把预算调死”的质疑：预算越低 baseline 越差、guard 不变；预算充足时两者成功率持平，guard 的成本优势更大（tokens -52.6%）。
+
+其他发现：
+- 即使 10 轮预算，baseline 仍有 **3 个 HN 任务失败**（`story_id` schema/后端类型不匹配让 baseline 反复重试直到耗尽，而 guard 在同一轮内完成类型修复）；
+- clean+1 的 43 个 baseline 失败全部是 `no_answer`（预算耗尽）；guard 侧只有 6 个 agent 可见的残余工具错误；
+- guard 的重试退避总开销 **18s / 96 格 ≈ 187ms/格**（可忽略），换来 118 次轮内恢复；
+- V2 还修掉了 V1 从轨迹里发现的缺陷：修复后的调用若再遇瞬态故障，现在会在同一个 call 内继续重试（`error_hint_coercion+transient_retry`，commit `13af709`）。
+
+artifact：[`benchmarks/toolguard/live_demo_hard_v2.json`](benchmarks/toolguard/live_demo_hard_v2.json)（含逐格记录、calibration、逐条修复事件、Wilson CI、预算曲线、失败模式与局限）。
+
+### 第三轮：真实 MCP 双 server + transport 崩溃 + catalog drift（产品化口径）
+
+V2 的 MCP 验证从“同一中间件在 MCP 上也能重试”升级为**部署/传输层容错**：
+
+- **双 MCP stdio server**：`--group worldbank` 与 `--group market` 两个独立进程，客户端 adapter 合并工具表并按工具路由（真实多 server 部署形态）；
+- **真实 transport 故障**：worldbank server 进程在第 2 次调用时 `os._exit(17)` 硬崩溃，stdio session 真实断链；adapter 在下一个调用时重连新进程，中间件把断链当作可重试的 `request_error` 在同一 agent 轮内重试；
+- **catalog drift / 未知工具**：客户端广告旧名字 `fetch_exchange_rate`，server 实际注册的是 `get_exchange_rate`；调用得到 MCP unknown-tool 错误后，中间件用离线验证过的**函数名相似度规则（≥0.55）**在真实工具表上解析并重路由；
+- server 侧瞬时故障 epoch 照旧；16 个多步任务、预算扫描 `clean+1` / `clean+4`、`clean+1` 两 repeat（96 格），每格**全新两个 server 进程**；模型 `deepseek-v4-flash`。
+
+| 预算条件 | baseline 成功 | guard 成功 | 配对 McNemar | turns/格 (b→g) | tokens (b→g) | agent 可见工具错误 (b→g) |
 |---|---|---|---|---|---|---|
-| **budgeted** baseline | **8/20（40.0%）** | 85 | 95 | 51 | 128,518 | 12 |
-| **budgeted** guard | **19/20（95.0%）** | 68（-20%） | 62（-35%） | **6（-88%）** | **97,274（-24%）** | **0** |
-| **generous** baseline | 19/20（95.0%） | 107 | 104 | 51 | 170,601 | 1 |
-| **generous** guard | **20/20（100%）** | 68（**-36%**） | 62（-40%） | **6（-88%）** | **97,158（-43%）** | 0 |
+| **clean+1** | **11/32 (34.4%, CI 20.4–51.7%)** | **32/32 (100%, CI 89.3–100%)** | **p=9.54e-07** | 4.56→3.25 | 205,600→134,998 | **115→4** |
+| clean+4 | 14/16 (87.5%) | 16/16 (100%) | p=0.5 (n.s.) | 5.81→3.13 | 138,002→63,679 | 63→1 |
 
-配对结果：budgeted **guard_only 12 / baseline_only 1，McNemar p=0.0034**；generous 双方 19/20 vs 20/20（p=1.0）。
+- 真实崩溃/重连在整个实验里发生 **17–20 次**（`mcp_restarts`），全部被中间件在同一 agent 轮内吸收；
+- guard 修复规则计数：`transient_retry` 77 次、**`function_name_resolution` 9 次**（另有 6 次与瞬态重试叠加）——catalog drift 确实由离线学到的函数名解析规则救回；
+- 传输无关性验证：`ToolGuard` 本体一行未改，新增的是 `MCPBridge`（含重连）/`MCPMultiBackend`（多 server 路由 + 未注册别名）adapter；
+- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；全仓 toolguard 测试 **50 passed**。
 
-**怎么读这个结果（面试口径）**：
-- `budgeted` 的预算是按“无故障需求 + 1 轮”校准的；任何一次故障 epoch 都要求 baseline 额外花 2 轮，因此 baseline 在该条件下成功 ≈ “全程未遇到瞬时故障”的概率。这是**指标定义下的必然结果**，度量的是“把瞬态错误暴露给计划循环”的隐藏交互成本，不是模型能力差异。
-- `generous` 条件交叉验证：预算充足时成功率无显著差异（19/20 vs 20/20），但 guard 轮数 **-36%**、tokens **-43%**、工具错误 **-88%**。两条件一起说明：差异来自**交互预算**，中间件不改变答案质量。
-- guard 唯一失败是**答案格式问题**（回答把人口四舍五入成 "5.61 million"，校验器要求精确整数），与中间件无关；artifact 保留原判定（对 guard 更保守），未做事后修正。
-- 从轨迹里发现的真实改进点：类型修复后的调用（如 HN `story_id` 字符串→整数）如果**本身**被注入瞬态故障，当前中间件不会在同一个 call 内继续重试修复后的调用（只重试原始调用），hn 任务各浪费 2 轮；本轮 artifact 保持该行为未改，列入下一步。
+artifact：[`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_demo_v2.json)
 
-artifact：[`benchmarks/toolguard/live_demo_hard.json`](benchmarks/toolguard/live_demo_hard.json)（含 calibration、逐任务结果、逐条修复事件、协议与局限）。
-
-### 第三轮：真实 MCP server 集成（产品化口径）
-
-把同一套中间件接到真实 **MCP（Model Context Protocol）** 工具层：
-
-- `scripts/mcp_toolguard_server.py`：真实的 stdio MCP server（`mcp` SDK 1.26.0 / FastMCP），暴露与第二轮相同的 **12 个 live 工具**；工具错误以 MCP `isError` 返回，并带 `TOOL_ERROR[kind]` 结构化标记；
-- `src/tool_evolution/toolguard/mcp_backend.py`：`MCPBridge` 在后台事件循环里跑真实 stdio session（子进程 + stdin/stdout 管道），`MCPBackend` 把 `tools/list` 的 `inputSchema` 转成 function schema，把 `tools/call` 的 `isError` 映射回中间件离线学到的错误 taxonomy（timeout / rate_limit / invalid_argument / …）；
-- **`ToolGuard` 中间件一行未改**：同一套 retry / coercion / fallback 规则直接作用于 MCP 工具层。
-
-**协议**：10 个多步任务（第二轮任务集的子集），同样的 calibration（无故障 MCP 运行）+1 轮预算；故障注入放在 **MCP server 侧**（确定性 `isError` epoch），每个 arm 启动**全新 server 进程**，两侧面对同一故障面。
-
-| 条件 | 任务成功 | 轮数 | MCP 调用 | agent 可见工具错误 | tokens | 预算耗尽 |
-|---|---|---|---|---|---|---|
-| baseline | **4/10（40%）** | 36 | 41 | 18 | 44,949 | 6 |
-| guard | **10/10（100%）** | 30（-17%） | 27（-34%） | **0** | **36,842（-18%）** | **0** |
-
-配对：guard_only 6 / baseline_only 0，**McNemar p=0.031**；guard 内部完成 **11 次 `transient_retry`**（server 实际返回 22 次错误、agent 只看到 0 次）。这说明中间件对 MCP 工具层是“传输无关”的：换协议只需换 adapter（约 250 行），规则与证据链不变。
-
-MCP 集成测试：`tests/test_toolguard/test_mcp_backend.py` 使用 MCP SDK 的**内存 transport** 做真实协议集成测试（无网络、无子进程），覆盖 schema 转换、`isError`→taxonomy、error-hint 参数修复、transient 重试、非瞬态不重试；`test_fault_epoch.py` 固定故障 epoch 语义。当前 **39 tests passed**。
-
-artifact：[`benchmarks/toolguard/mcp_demo.json`](benchmarks/toolguard/mcp_demo.json)
+> V1 的窄口径 artifact 保留作为演进记录：`live_demo_hard.json`（20 任务单预算，commit `02ac71a`）、`mcp_demo.json`（10 任务单 server，commit `b1d7609`）；对外口径以 V2 为准。
 
 ## 架构：一个中间件，三种传输层
 
 中间件只依赖 `ToolBackend` 协议（`schemas()` 返回工具清单，`call(name, arguments)` 返回统一 `CallResult`）：
 
-| 后端 | 用途 |
-|---|---|
-| `RecordedBackend` | 离线真实轨迹 + 发布方响应缓存复放 |
-| `LiveBackend` / `LiveHardBackend` | 真实公开 HTTP API（6 / 12 工具） |
-| `MCPBackend` + `MCPBridge` | 真实 MCP stdio server（12 工具） |
+| 后端 | 用途 | 额外能力 |
+|---|---|---|
+| `RecordedBackend` | 离线真实轨迹 + 发布方响应缓存复放 | — |
+| `LiveBackend` / `LiveHardBackend` | 真实公开 HTTP API（6 / 12 工具） | — |
+| `MCPBackend` + `MCPBridge` | 单个真实 MCP stdio server（12 工具） | transport 断链检测 + 自动重连 |
+| `MCPMultiBackend` + `MCPBridge` | 多个 MCP server 合并工具表 | 多 server 路由、隐藏工具、catalog drift 别名 |
 
-因此“接入新工具层”是 adapter 级别的工作，不是重写中间件；MCP demo 里 `ToolGuard` 本体零改动。
+因此“接入新工具层”是 adapter 级别的工作，不是重写中间件；MCP demo 里 `ToolGuard` 本体零改动。MCP V2 覆盖的三类真实故障（server 进程硬崩溃/断链重连、server 侧 isError epoch、未知工具名漂移）最终都归一到中间件的同一套 `CallResult` 错误 taxonomy 上。
 
 ## 工作原理（五级修复，便宜且通用的优先）
 
@@ -153,15 +152,18 @@ python scripts/toolguard_cli.py repair \
 python scripts/run_live_demo.py
 python scripts/run_live_demo.py --max-turns 4 --p-timeout 0.35 --p-rate-limit 0.15
 
-# 困难多步任务集：先校准无故障轮数，再跑 budgeted + generous 两个条件（约 20 分钟）
-python scripts/run_live_demo_hard.py --mode calibrate
-python scripts/run_live_demo_hard.py --output benchmarks/toolguard/live_demo_hard.json
+# V2 困难多步任务集：先校准无故障轮数，再跑 3 档预算扫描 + 重复（约 27 分钟，2 worker）
+python scripts/run_live_demo_hard_v2.py --mode calibrate
+python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v2.json
 
-# MCP 集成 demo：真实 stdio MCP server 子进程（需要真实管道，不能在工作区沙箱内运行）
-python scripts/run_mcp_demo.py --output benchmarks/toolguard/mcp_demo.json
+# V2 MCP 集成：双 stdio server + server 崩溃重连 + catalog drift（需要真实进程管道，不能在工作区沙箱内运行）
+python scripts/run_mcp_demo_v2.py --mode calibrate
+python scripts/run_mcp_demo_v2.py --workers 2 --output benchmarks/toolguard/mcp_demo_v2.json
 
 python -m pytest tests/test_toolguard -q -p no:cacheprovider
 ```
+
+> V1 脚本（`run_live_demo_hard.py` / `run_mcp_demo.py`）仍可复现 V1 artifact，但对外口径以 V2 为准。
 
 artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.json)（含完整口径、分规则验证与局限）
 
@@ -171,10 +173,10 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - value agreement 只在“某模型解过同一任务”时可验证，是严格下界；
 - schema 默认值补全的 30 条 cross-group 修复未经验证，属启发式提议；
 - 服务端/瞬态错误（全数据集 96 条）离线不可确定性修复；
-- live demo 全部是**单模型、单次运行**（每任务每臂 1 次），统计功效有限；McNemar 只基于配对 discordant 数；
-- 故障注入是**确定性构造**，不是真实观测；epoch 长度（2 次尝试）与预算定义共同决定 budgeted 差异；`budgeted` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 60%”；
-- guard 在第二轮的唯一失败是答案格式问题（人口被四舍五入），不是中间件失效；artifact 未做事后修正；
-- 修复调用的二次瞬态重试缺失：类型修复后的调用若被注入瞬态故障，当前实现不会在同一 call 内继续重试修复后的调用（只重试原始调用），hn 任务因此各浪费 2 轮；
-- MCP demo 是单模型、10 任务、单次运行；MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP 内存 transport 规避该环境限制；
-- 免费公开 API 非生产级：GitHub 限流已从困难任务集移除，API 漂移可能影响复跑；
-- 下一步：把修复后的调用也纳入瞬时重试；把 live 中“默认值补全”类修复变成可验证规则；扩到多模型/多次运行以给任务成功率差异置信区间。
+- live 全部为**单模型** `deepseek-v4-flash`（决策：不加模型轴，预算给重复）；重复 seed 只改变注入故障面，不重采样模型行为；
+- 故障/崩溃/漂移都是**确定性注入**，不是生产观测；`clean+N` 预算锚定在“每任务一次无故障 calibration”，calibration 本身是点估计；
+- `clean+1` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 44.8%”；正确读法是**成功-预算曲线**：预算越低 baseline 越差、guard 恒定；预算充足时成功率持平、guard 成本更低；
+- MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
+- MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
+- 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
+- 下一步：多模型轴（不同能力 agent 上的收益曲线）；把“默认值补全”类修复变成可验证规则；用真实线上故障 trace 替代部分注入以进一步逼近生产。
