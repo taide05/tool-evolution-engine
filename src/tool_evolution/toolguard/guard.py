@@ -92,23 +92,15 @@ class ToolGuard:
         elif kind == "invalid_argument":
             hinted = self._coerce_from_error_hint(arguments, result.error or "")
             if hinted is not None:
-                event.rule = "error_hint_coercion"
-                event.repaired_arguments = hinted
-                result = self.backend.call(function_name, hinted)
-                event.recovered = result.ok
+                result = self._attempt_repaired(function_name, hinted, event, "error_hint_coercion")
                 if result.ok:
-                    self.stats["recovered"] += 1
                     self.events.append(event)
                     return result
             parameters = self._schemas.get(function_name) or {}
             coerced = coerce_arguments(function_name, arguments, parameters)
             if coerced != arguments:
-                event.rule = "schema_coercion"
-                event.repaired_arguments = coerced
-                result = self.backend.call(function_name, coerced)
-                event.recovered = result.ok
+                result = self._attempt_repaired(function_name, coerced, event, "schema_coercion")
                 if result.ok:
-                    self.stats["recovered"] += 1
                     self.events.append(event)
                     return result
         elif kind == "not_found":
@@ -119,6 +111,29 @@ class ToolGuard:
         return result
 
     # -- repair strategies --------------------------------------------------
+    def _attempt_repaired(self, function_name: str, repaired_arguments: dict[str, Any],
+                          event: GuardEvent, rule: str):
+        """Try a repaired call; transient faults on the *repaired* call are retried too.
+
+        Found from the live traces: a type repair (e.g. HN ``story_id`` string -> int)
+        used to surface a transient fault on the repaired call straight back to the agent,
+        which then spent extra turns retrying.  The repaired call now gets the same
+        in-middleware transient retry as an original call.
+        """
+        event.rule = rule
+        event.repaired_arguments = repaired_arguments
+        result = self.backend.call(function_name, repaired_arguments)
+        if not result.ok and live_error_kind(result.error) not in _TRANSIENT:
+            return result
+        if not result.ok:
+            result = self._retry(function_name, repaired_arguments, result, event, count_recovery=False)
+            if result.ok:
+                event.rule = f"{rule}+{event.rule}"
+        event.recovered = result.ok
+        if result.ok:
+            self.stats["recovered"] += 1
+        return result
+
     def _coerce_from_error_hint(self, arguments: dict[str, Any], error: str) -> dict[str, Any] | None:
         """Use the tool's own error text, e.g. ``story_id must be an integer``."""
         match = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s+must be (?:an?\s+)?(integer|number)", error.lower())
@@ -137,14 +152,16 @@ class ToolGuard:
             return repaired
         return None
 
-    def _retry(self, function_name: str, arguments: dict[str, Any], result, event: GuardEvent):
+    def _retry(self, function_name: str, arguments: dict[str, Any], result, event: GuardEvent,
+               count_recovery: bool = True):
         for attempt in range(1, self.max_retries + 1):
             sleep_s(self.sleep_scale * attempt)
             candidate = self.backend.call(function_name, arguments)
             if candidate.ok:
                 event.rule = f"transient_retry:{attempt}"
                 event.recovered = True
-                self.stats["recovered"] += 1
+                if count_recovery:
+                    self.stats["recovered"] += 1
                 return candidate
             result = candidate
         return result
