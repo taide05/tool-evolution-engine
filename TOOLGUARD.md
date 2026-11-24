@@ -79,6 +79,8 @@ V1（20 任务 / 单预算 / 单次运行）的问题：①任务量和重复不
 
 artifact：[`benchmarks/toolguard/live_demo_hard_v2.json`](benchmarks/toolguard/live_demo_hard_v2.json)（含逐格记录、calibration、逐条修复事件、Wilson CI、预算曲线、失败模式与局限）。
 
+> **V3 任务集修订**：V2 之后发现 HN `karma` 类任务是**直播可变 ground truth**（同一作者 karma 在一小时内 112→161），会把数据漂移误记成修复失败。V3 用**同样的两工具链**把 3 个 karma 任务换成**不可变**的“账号创建年份”任务，任务池变为 **31 个**（weather 8 / worldbank 12 / pypi 5 / hn 3 / fx 3）；多模型评测还在**每个模型块开始前重建 ground truth**，把漂移窗口从整轮约 1 小时压缩到单个模型块（约 20 分钟）。V2 的 32 任务数字由 commit `43c4e89` 的代码产生，保留为历史。
+
 ### 第三轮：真实 MCP 双 server + transport 崩溃 + catalog drift（产品化口径）
 
 V2 的 MCP 验证从“同一中间件在 MCP 上也能重试”升级为**部署/传输层容错**：
@@ -104,29 +106,29 @@ artifact：[`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_de
 
 ### 第四轮：多模型复制（3 个模型 × 同一协议，回应“单模型”质疑）
 
-单模型结果最大的风险是“只在 DeepSeek 上成立”。第四轮在**完全相同的任务池、故障 seed、预算语义**下跑 3 个模型（`scripts/run_multimodel_live.py`）：每个模型先做 32 次无故障 calibration 定位能力档，再跑 192 个评测格（32 任务 × 2 臂 × clean+1 两 repeat + clean+4）。
+单模型结果最大的风险是“只在 DeepSeek 上成立”。第四轮在**完全相同的任务池、故障 seed、预算语义**下跑 3 个模型（`scripts/run_multimodel_live.py`）：每个模型先做 31 次无故障 calibration 定位能力档，再跑 186 个评测格（31 任务 × 2 臂 × clean+1 两 repeat + clean+4）。V3 版本还做了两处 ground-truth 加固：把直播可变的 HN karma 任务换成**不可变**的“账号创建年份”任务，并在**每个模型块开始前重建 ground truth**（漂移窗口从整轮 ~1h 压到单模型块 ~20min）。
 
 | 档位（按价格） | 模型 | provider | 官方价格 $/M（入/出） | 无故障 placement |
 |---|---|---|---|---|
-| cheap | qwen3.8-flash | 阿里百炼 | 0.15 / 0.47 | 26/32（81.3%），4.25 轮 |
-| mid | DeepSeek-V4.1-Flash-1017 | DeepSeek | 0.15 / 0.60 | 31/32（96.9%），3.31 轮 |
-| strong | qwen4-max | 阿里百炼 | 1.413 / 4.24 | 30/32（93.8%），3.50 轮 |
+| cheap | qwen3.8-flash | 阿里百炼 | 0.15 / 0.47 | 27/31（87.1%），4.00 轮 |
+| mid | DeepSeek-V4.1-Flash-1017 | DeepSeek | 0.15 / 0.60 | 31/31（100%），3.32 轮 |
+| strong | qwen4-max | 阿里百炼 | 1.413 / 4.24 | 29/31（93.5%），3.29 轮 |
 
 | 模型 | clean+1 baseline | clean+1 guard | McNemar | tokens (b→g) | clean+4 baseline | clean+4 guard |
 |---|---|---|---|---|---|---|
-| qwen3.8-flash | **29/64 (45.3%)** | **61/64 (95.3%)** | **p=4.7e-10** | 531,324→322,135（-39%） | 26/32 (81.3%) | 31/32 (96.9%) |
-| DeepSeek-V4.1-Flash | **34/64 (53.1%)** | **62/64 (96.9%)** | **p=7.5e-09** | 452,099→290,096（-36%） | 28/32 (87.5%) | 31/32 (96.9%) |
-| qwen4-max | **34/64 (53.1%)** | **62/64 (96.9%)** | **p=7.5e-09** | 444,331→284,766（-36%） | 27/32 (84.4%) | 31/32 (96.9%) |
+| qwen3.8-flash | **28/62 (45.2%)** | **57/62 (91.9%, CI 82.5–96.5%)** | **p=1.3e-07** | 482,951→313,253（-35%） | 25/31 (80.6%) | 31/31 (100%) |
+| DeepSeek-V4.1-Flash | **32/62 (51.6%)** | **62/62 (100%)** | **p=1.9e-09** | 427,751→286,278（-33%） | 30/31 (96.8%) | 31/31 (100%) |
+| qwen4-max | **34/62 (54.8%)** | **62/62 (100%)** | **p=7.5e-09** | 412,151→272,604（-34%） | 28/31 (90.3%) | 31/31 (100%) |
 
 - `guard >= baseline` 在**所有模型 × 所有条件**成立（artifact `consistency` 字段）；
-- **能力越弱，中间件收益越大**：qwen3.8-flash 紧预算提升 **+50.0pp**（45.3%→95.3%），另两个模型 **+43.8pp**；三模型 guard 均 95–97%；
-- **贵模型没有买到“无故障鲁棒性”**：qwen4-max 单价比 qwen3.8-flash 高约 9 倍，但 fault-free placement（30/32、3.50 轮）没有超过 DeepSeek-Flash（31/32、3.31 轮）。三个模型都会踩同一类失败（HN `story_id` 契约不匹配），说明这类问题不是模型能力问题而是**工具契约问题**——正好是中间件该管的；
-- guard 残余失败：每模型 clean+1 各 3 个、clean+4 各 1 个，**均为直播数据漂移/答案格式**：HN 热帖作者的 karma 在约一小时的实验期间持续变化（112→161），而 ground truth 是跑前抓取的；另有 1 个日期换算错误。这些一律计入失败、对 guard 保守，**未做事后剔除**；
-- 成本：评测 $2.21（qwen4-max 占 80%）+ calibration $0.33 ≈ **$2.54**。
+- **能力越弱，中间件收益越大**：qwen3.8-flash 紧预算提升 **+46.7pp**（45.2%→91.9%），另两个模型 **+48.4pp / +45.2pp**；但 guard 绝对水平上，两个较强模型做到 **100%（62/62）**，弱模型 91.9%；
+- **贵模型没有买到“无故障鲁棒性”**：qwen4-max 单价比 qwen3.8-flash 高约 9 倍，但 fault-free placement（29/31、3.29 轮）没有超过 DeepSeek-Flash（31/31、3.32 轮）。三个模型都会踩同一类失败（HN `story_id` 契约不匹配），说明这类问题不是模型能力问题而是**工具契约问题**——正好是中间件该管的；
+- **V3 后 guard 残余失败已不再是数据漂移**：qwen3.8-flash 的 5 个 clean+1 guard 失败全部可归因于**弱模型自身行为**（如声称 `get_weather` 不可用、GDP 数值编造 $106,588、答非所问回答 France），另两个模型 guard 失败为 0。V2 里那些 HN karma 漂移造成的假阴性已消失；
+- 成本：评测 $2.08（qwen4-max 占 80%）+ calibration $0.30 ≈ **$2.38**（数据集比 V2 少一个任务，故略低）。
 
-artifact：[`benchmarks/toolguard/live_demo_multimodel.json`](benchmarks/toolguard/live_demo_multimodel.json)（576 格逐条记录、三模型 placement、Wilson CI、成本核算、逐条修复事件）。
+artifact：[`benchmarks/toolguard/live_demo_multimodel_v3.json`](benchmarks/toolguard/live_demo_multimodel_v3.json)（558 格逐条记录、三模型 placement、Wilson CI、成本核算、逐条修复事件、`tasks_per_model` 与每条记录的 `expected` 快照）。V2 版 artifact（`benchmarks/toolguard/live_demo_multimodel.json`，含 karma 任务）保留为演进记录，复现见 commit `fb13a1f`。
 
-**这一轮的局限**：3 个模型是复制而非模型间假设检验；cheap/strong 同属 Qwen 家族；每个模型只做 1 次 calibration；故障仍是确定性注入；HN 热帖 karma 这类直播可变 ground truth 会带来少量假阴性（见 artifact limitations）。
+**这一轮的局限**：3 个模型是复制而非模型间假设检验；cheap/strong 同属 Qwen 家族；每个模型只做 1 次 calibration；故障仍是确定性注入；两个较强模型的紧预算 guard 为 100%，存在 ceiling effect（进一步提升空间只能靠更难的题）。
 
 ## 架构：一个中间件，三种传输层
 
@@ -209,9 +211,9 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - live 单模型结果来自 `deepseek-v4-flash`；多模型轮覆盖 **qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max** 三个模型（cheap/strong 同属 Qwen 家族），是**复制**而非模型间假设检验；
 - 故障/崩溃/漂移都是**确定性注入**，不是生产观测；`clean+N` 预算锚定在“每任务一次无故障 calibration”，calibration 本身是点估计；
 - `clean+1` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 45–53%”；正确读法是**成功-预算曲线**：预算越低 baseline 越差、guard 恒定；预算充足时成功率持平、guard 成本更低；
-- 直播可变 ground truth：HN 热帖作者的 karma、天气等值在实验期间会变化，造成少量 guard 假阴性（已计入失败、未剔除）；多模型 artifact 的 tasks 元数据如从 checkpoint 重建，数值可能与运行时刻略有差异；
+- 直播可变 ground truth：V3 已把会漂移的 HN karma 换成不可变账号创建年份，并在每个模型块前重建 ground truth；但天气/FX 仍是当前值，跨模型块的瞬时偏差仍可能带来极小量假阴性（V3 guard 残余失败已全部可归因于模型自身行为）；artifact 的 tasks 元数据如从 checkpoint 重建，数值可能与运行时刻略有差异；
 - qwen4-max 在本任务集上没有表现出比 DeepSeek-Flash 更强的 fault-free 能力（30/32 vs 31/32），"贵模型=更可靠"不成立；
 - MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
 - MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
 - 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
-- 下一步：用真实线上故障 trace 替代部分注入以进一步逼近生产；把“默认值补全”类修复变成可验证规则；把 HN 这类直播可变 ground truth 换成稳定校验源。
+- 下一步：用真实线上故障 trace 替代部分注入以进一步逼近生产；把“默认值补全”类修复变成可验证规则；两个较强模型的紧预算 guard 已到 100%，需要更难的题/更紧的预算才有提升空间。
