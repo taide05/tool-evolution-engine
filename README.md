@@ -1,5 +1,7 @@
 # Tool Evolution Engine — Agent 工具调用自适应优化引擎
 
+> **当前分支状态（`feat/toolguard`）**：本 README 描述的是项目历史底座（TEE 数据分析管道），其中指标为历史口径、不作为当前证据。当前工作与全部可复现证据在 **[TOOLGUARD.md](TOOLGUARD.md)**：工具调用可靠性中间件（离线真实轨迹评测 + live 端到端 A/B + 真实 MCP 集成 + 多模型复制）。
+
 > TEE 本身不是 Agent——它不包含 LLM 调用、prompt engineering 或 Agent 编排。它是运行在 Agent 和工具之间的**数据分析管道**：采集 Agent 的工具调用轨迹，用统计/机器学习/图算法分析优化，把结果反馈给 Agent 系统。
 
 让 Agent 的工具调用能力从"瞎试"变成"越用越聪明"——采集每次工具调用的轨迹数据，分析失败模式、学习参数分布、挖掘技能组合，最终通过信用评分和灰度路由安全地把优化部署上线。

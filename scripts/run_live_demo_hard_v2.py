@@ -238,9 +238,13 @@ V2_LIMITATIONS = [
     "surface only, they do not re-sample model behaviour.",
     "The budget sweep uses per-task budgets calibrated from one fault-free run per task; "
     "the calibrated turn requirement is itself a point estimate (no repeat of calibration).",
-    "The V1 artifact (benchmarks/toolguard/live_demo_hard.json) was produced by commit "
-    "02ac71a with the 20-task pool; the task pool has since grown to 32 tasks, so reproduce "
-    "V2 from this runner and the V1 numbers from that commit.",
+    "Task-pool provenance: V1 artifact = 20 tasks (commit 02ac71a), V2 artifact = 32 tasks "
+    "(commit 43c4e89), V3 artifact = 31 tasks with drift-hardened ground truth (HN karma "
+    "replaced by immutable account-creation year, commit 8ad347e). This runner now produces "
+    "the V3 task-pool artifact; older artifacts are reproduced from their commits.",
+    "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX "
+    "are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has "
+    "no live-mutable HN karma tasks.",
     "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over "
     "the expected scalars, not an LLM judgement.",
     "Free public APIs are not production grade; API drift can affect reruns, and the GitHub "
@@ -395,10 +399,12 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
     aggregate_block = aggregate(records)
     summary = {
         "artifact_version": 2,
-        "experiment": "ToolGuard_hard_multistep_live_ab_v2_budget_sweep",
+        "experiment": "ToolGuard_hard_multistep_live_ab_v3_task_pool",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
         "protocol": {
+            "task_pool": "V3 drift-hardened 31-task pool: HN account-creation year instead of live "
+                         "karma; ground truth built from the same live APIs before the eval",
             "arms": list(ARMS),
             "budget_conditions": {
                 condition: ("per-task turn budget = fault-free calibration turns + "

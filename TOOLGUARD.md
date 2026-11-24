@@ -2,10 +2,10 @@
 
 ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工具调用 → 分类失败 → 从真实失败轨迹中学习修复策略 → 运行时修复并记录指标**。它不训练模型、不改工具实现，只做工具层的确定性修复，因此可解释、低成本、易部署。
 
-当前版本有三层证据：
+当前版本有四层证据：
 
 1. **离线真实数据评测**：在 **30,120 次真实工具调用 / 1,033 次真实失败**（StableToolBench 公开基线轨迹，Apache-2.0）上验证修复策略，并重点做了**跨任务泛化**：把“重放同一任务的旧调用”升级为“从任务文本学习参数抽取规则”；
-2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 **32 个多步依赖任务**；V2 把交互预算做成**三档扫描 + 重复**，给出成功-预算曲线、Wilson CI 与配对检验；第四轮再把同一协议**复制到 3 个模型**（qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max）；
+2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 **31 个多步依赖任务（V3 漂移加固任务池）**；V2 把交互预算做成**三档扫描 + 重复**，给出成功-预算曲线、Wilson CI 与配对检验；第四轮再把同一协议**复制到 3 个模型**（qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max）；
 3. **真实 MCP 集成**：同一套中间件不改一行，接到**两个真实 stdio MCP server** 上，覆盖多 server 路由、server 进程真实崩溃重连、catalog drift 未知工具重解析。
 
 ## 结果（离线确定性评测）
@@ -34,7 +34,7 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 ## Live 端到端 demo（真实公开 API + 真实 DeepSeek agent）
 
-三轮递进验证，全部使用真实 DeepSeek `deepseek-v4-flash` agent、真实免 key 公开 API、程序化答案校验（**无 LLM judge**）。合成元素只有**确定性的故障/崩溃/配置漂移注入**，全部在 artifact 中逐项披露；DeepSeek 或公开 API 不可用时 demo 停止报错，**不会回退离线/mock**。
+四轮递进验证，全部使用真实 DeepSeek `deepseek-v4-flash` agent、真实免 key 公开 API、程序化答案校验（**无 LLM judge**）。合成元素只有**确定性的故障/崩溃/配置漂移注入**，全部在 artifact 中逐项披露；DeepSeek 或公开 API 不可用时 demo 停止报错，**不会回退离线/mock**。
 
 ### 第一轮：27 个短任务 / 6 个 API（可靠性与成本口径）
 
@@ -49,37 +49,38 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 **诚实结论**：27 个任务对 baseline 太容易（normal 双方 27/27），所以这一轮**任务成功率没有显著提升**；价值体现在工具失败 **-80%~-93%**、tokens **-22%**、轮数 **-19%~-20%**。这是“可靠性与成本”结果，不是任务成功率结果。artifact：[`benchmarks/toolguard/live_demo.json`](benchmarks/toolguard/live_demo.json)。
 
-### 第二轮：32 个多步依赖任务 × 预算扫描 × 重复（任务成功率口径）
+### 第二轮：多步依赖任务 × 预算扫描 × 重复（任务成功率口径）
 
 #### 为什么从 V1 重做（自我批评）
 
 V1（20 任务 / 单预算 / 单次运行）的问题：①任务量和重复不足，只有点估计没有方差；②单预算恰好卡在“无故障需求 +1 轮”，容易被质疑“把预算调到让 baseline 死”；③单模型、指标面窄。V2 把**预算公开成实验变量**并加重复：
 
-- 任务池 20 → **32**：新增 5–8 步、派生算术（比值/差值/求和）、跨源日期比较、三国人口聚合等 12 个任务；类别覆盖 weather 8 / worldbank 12 / pypi 5 / hn 4 / fx 3；
+- 任务池 20 → **32**（V2）→ **31**（V3，任务集修订见本节末）；类别覆盖 weather / worldbank / pypi / hn / fx；
 - **预算扫描**：每任务测 `clean+1` / `clean+4` / `10` 三档（clean = 无故障 calibration 轮数），得到**成功-预算曲线**；
-- **重复**：紧预算 `clean+1` 用 3 个故障 seed（96 格/臂），其余各 1 个 seed（32 格/臂）；报告 Wilson 95% CI 与配对 McNemar（按 task×repeat 配对）；
+- **重复**：紧预算 `clean+1` 用 3 个故障 seed（93 格/臂），其余各 1 个 seed（31 格/臂）；报告 Wilson 95% CI 与配对 McNemar（按 task×repeat 配对）；
 - 故障注入同 V1（每个逻辑调用前 2 次尝试失败，确定性），单模型 `deepseek-v4-flash`（决策：不加模型轴，预算用于重复）；
-- 共 320 格（3 预算档 × 2 臂 × 32 任务 + 重复），墙钟 1,619s，2 个 worker。
+- V3 共 **310 格**（3 预算档 × 2 臂 × 31 任务 + 重复），墙钟 1,367s，2 个 worker。
 
-#### 结果
+#### 结果（V3 当前主口径）
 
 | 预算条件 | 平均预算 | baseline 成功 | guard 成功 | 配对 McNemar | turns/格 (b→g) | tokens (b→g) | agent 可见工具错误 (b→g) |
 |---|---|---|---|---|---|---|---|
-| **clean+1** | 5.0 | **53/96 (55.2%, CI 45.3–64.8%)** | **96/96 (100%, CI 96.2–100%)** | **p=2.27e-13** | 4.41→3.05 | 657,860→430,769 | **266→6** |
-| clean+4 | 8.0 | 29/32 (90.6%) | 32/32 (100%) | p=0.25 (n.s.) | 5.59→3.00 | 299,273→141,751 | 99→0 |
-| 10 | 10.0 | 29/32 (90.6%) | 32/32 (100%) | p=0.25 (n.s.) | 5.75→3.06 | 310,950→143,643 | 104→0 |
+| **clean+1** | 5.06 | **51/93 (54.8%, CI 44.7–64.6%)** | **93/93 (100%, CI 96.0–100%)** | **p=4.55e-13** | 4.52→3.07 | 660,703→419,964（**-36.4%**） | **263→5** |
+| clean+4 | 8.06 | 28/31 (90.3%) | 31/31 (100%) | p=0.25 (n.s.) | 5.45→3.07 | 282,878→140,551（-50.3%） | 100→0 |
+| 10 | 10.0 | 30/31 (96.8%) | 30/31 (96.8%) | p=1.0 (n.s.) | 5.45→2.94 | 281,229→133,991（-52.4%） | 91→0 |
 
-**成功-预算曲线**：baseline 55.2% → 90.6% → 90.6%（预算增加才恢复），guard **三档都是 100%** 且 turns/tokens 基本不随预算变化。这直接回答“是不是把预算调死”的质疑：预算越低 baseline 越差、guard 不变；预算充足时两者成功率持平，guard 的成本优势更大（tokens -52.6%）。
+**成功-预算曲线**：baseline 54.8% → 90.3% → 96.8%（预算增加才恢复），guard **100% → 100% → 96.8%**，且 turns/tokens 基本不随预算变化。这直接回答“是不是把预算调死”的质疑：预算越低 baseline 越差、guard 不变；预算充足时两者成功率持平，guard 的成本优势更大（tokens -36%~-52%）。
 
 其他发现：
-- 即使 10 轮预算，baseline 仍有 **3 个 HN 任务失败**（`story_id` schema/后端类型不匹配让 baseline 反复重试直到耗尽，而 guard 在同一轮内完成类型修复）；
-- clean+1 的 43 个 baseline 失败全部是 `no_answer`（预算耗尽）；guard 侧只有 6 个 agent 可见的残余工具错误；
-- guard 的重试退避总开销 **18s / 96 格 ≈ 187ms/格**（可忽略），换来 118 次轮内恢复；
+- clean+1 的 42 个 baseline 失败**全部是 `no_answer`（预算耗尽）**；guard 在 clean+1/clean+4 全部成功，10 轮有 1 个失败（模型把人口四舍五入成 “5.61 million”，未命中精确校验——模型回答格式问题，不是中间件失败）；
+- 即使 10 轮预算，baseline 仍有 HN 任务失败（`story_id` schema/后端类型不匹配让 baseline 反复重试直到耗尽，而 guard 在同一轮内完成类型修复）；
+- 全 V3 运行共注入 **382 个瞬态故障 epoch**（timeout / rate_limit / server_error），全部在中间件内吸收；clean+1 的 agent 可见工具错误 263 → 5；
+- guard 的重试退避总开销 **18.15s / 93 格 ≈ 195ms/格**（可忽略），换来 120 次轮内恢复；
 - V2 还修掉了 V1 从轨迹里发现的缺陷：修复后的调用若再遇瞬态故障，现在会在同一个 call 内继续重试（`error_hint_coercion+transient_retry`，commit `13af709`）。
 
-artifact：[`benchmarks/toolguard/live_demo_hard_v2.json`](benchmarks/toolguard/live_demo_hard_v2.json)（含逐格记录、calibration、逐条修复事件、Wilson CI、预算曲线、失败模式与局限）。
+artifact：[`benchmarks/toolguard/live_demo_hard_v3.json`](benchmarks/toolguard/live_demo_hard_v3.json)（含逐格记录、calibration、逐条修复事件、Wilson CI、预算曲线、失败模式与局限）。V2 的 32 任务 artifact（`live_demo_hard_v2.json`，commit `43c4e89`）保留为演进记录。
 
-> **V3 任务集修订**：V2 之后发现 HN `karma` 类任务是**直播可变 ground truth**（同一作者 karma 在一小时内 112→161），会把数据漂移误记成修复失败。V3 用**同样的两工具链**把 3 个 karma 任务换成**不可变**的“账号创建年份”任务，任务池变为 **31 个**（weather 8 / worldbank 12 / pypi 5 / hn 3 / fx 3）；多模型评测还在**每个模型块开始前重建 ground truth**，把漂移窗口从整轮约 1 小时压缩到单个模型块（约 20 分钟）。V2 的 32 任务数字由 commit `43c4e89` 的代码产生，保留为历史。
+> **V3 任务集/验证器修订**：①HN `karma` 是**直播可变 ground truth**（同一作者 karma 在一小时内 112→161），V3 用同样两工具链把 3 个 karma 任务换成**不可变**的“账号创建年份”任务，任务池 32 → **31**；②验证器的数字解析修复了 Unicode 负号（模型常写 “−3.4” 而不是 “-3.4”，旧验证器会解析成正数并误判正确答案为失败）；③多模型评测在每个模型块前重建 ground truth，把漂移窗口压到单模型块。V2 的 32 任务数字由 commit `43c4e89` 的代码产生，保留为历史。
 
 ### 第三轮：真实 MCP 双 server + transport 崩溃 + catalog drift（产品化口径）
 
@@ -126,7 +127,7 @@ artifact：[`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_de
 - **V3 后 guard 残余失败已不再是数据漂移**：qwen3.8-flash 的 5 个 clean+1 guard 失败全部可归因于**弱模型自身行为**（如声称 `get_weather` 不可用、GDP 数值编造 $106,588、答非所问回答 France），另两个模型 guard 失败为 0。V2 里那些 HN karma 漂移造成的假阴性已消失；
 - 成本：评测 $2.08（qwen4-max 占 80%）+ calibration $0.30 ≈ **$2.38**（数据集比 V2 少一个任务，故略低）。
 
-artifact：[`benchmarks/toolguard/live_demo_multimodel_v3.json`](benchmarks/toolguard/live_demo_multimodel_v3.json)（558 格逐条记录、三模型 placement、Wilson CI、成本核算、逐条修复事件、`tasks_per_model` 与每条记录的 `expected` 快照）。V2 版 artifact（`benchmarks/toolguard/live_demo_multimodel.json`，含 karma 任务）保留为演进记录，复现见 commit `fb13a1f`。
+artifact：[`benchmarks/toolguard/live_demo_multimodel_v3.json`](benchmarks/toolguard/live_demo_multimodel_v3.json)（558 格逐条记录、三模型 placement、Wilson CI、成本核算、逐条修复事件、`tasks_per_model` 与每条记录的 `expected` 快照）。V2 版 artifact（`benchmarks/toolguard/live_demo_multimodel.json`，含 karma 任务）保留为演进记录，复现见 commit `fb13a1f`。该 artifact 产生于验证器 Unicode 负号修复之前；离线核对显示 12 条含 `−`（U+2212）的答案当时均已判成功，因此成功率不受该修复影响。
 
 **这一轮的局限**：3 个模型是复制而非模型间假设检验；cheap/strong 同属 Qwen 家族；每个模型只做 1 次 calibration；故障仍是确定性注入；两个较强模型的紧预算 guard 为 100%，存在 ceiling effect（进一步提升空间只能靠更难的题）。
 
@@ -162,6 +163,24 @@ artifact：[`benchmarks/toolguard/live_demo_multimodel_v3.json`](benchmarks/tool
 - 真实响应缓存：ToolBench Apr-2024 缓存（仅用于修复结果的补充验证；覆盖参考解输入，最终尝试命中率 51.6%）
 - 数据不随仓库提交；`scripts/download_toolguard_data.py` 从 HuggingFace 镜像下载
 
+## 产物与复现溯源
+
+每个 artifact 都能追溯到产生它的代码/任务池版本。**任务池随版本演进**（V1 20 任务 → V2 32 任务 → V3 31 任务、漂移加固 GT），因此历史 artifact 的数字与当前脚本默认输出不保证逐位一致；历史数字用对应 commit 的代码复现，当前主口径用 V3。
+
+| Artifact | 实验 | 产生 commit | 复现 |
+|---|---|---|---|
+| `metrics.json` | 离线真实轨迹评测 v2（LOMO / cross_model / cross_group） | `15baa59` + `6f8b300` | 下载/解析轨迹后 `python scripts/eval_toolguard_rules.py` |
+| `live_demo.json` | live v1：6 API / 27 短任务 / 两条件 | `b0564ae` | `python scripts/run_live_demo.py` |
+| `live_demo_hard.json` | 困难任务 V1：20 任务 / 单预算 | `02ac71a` | checkout `02ac71a` 后运行 V1 脚本 |
+| `live_demo_hard_v2.json` | 单模型预算扫描 V2：32 任务 / 3 档预算 / 重复 | `43c4e89` | checkout `43c4e89` 后运行 `run_live_demo_hard_v2.py` |
+| `live_demo_hard_v3.json` | 单模型预算扫描 V3：31 任务 / 漂移加固 GT（当前单模型主口径） | 本分支收口 commit（HEAD） | `--mode calibrate` + `--workers 2`（见快速开始） |
+| `mcp_demo.json` | MCP V1：单 server / 10 任务 | `b1d7609` | checkout `b1d7609` |
+| `mcp_demo_v2.json` | MCP V2：双 server / 崩溃重连 / catalog drift / 16 任务 | `a1f8b23` | checkout `a1f8b23` |
+| `live_demo_multimodel.json` | 多模型 V2：3 模型 / 576 格（含直播 karma 任务） | `fb13a1f` | checkout `fb13a1f` |
+| `live_demo_multimodel_v3.json` | 多模型 V3：3 模型 / 558 格 / 漂移加固 GT（当前多模型主口径） | `dcd5f20` | `run_multimodel_live.py --mode calibrate` + `--mode eval` |
+
+一致性由 `python scripts/validate_toolguard_artifacts.py`（以及 `tests/test_toolguard/test_artifact_contracts.py`）检查：artifact 的 aggregate 必须与逐条 records 对得上、必须有 limitations/reproduce、复现脚本必须存在。
+
 ## 快速开始
 
 ```bash
@@ -180,25 +199,29 @@ python scripts/toolguard_cli.py repair \
 python scripts/run_live_demo.py
 python scripts/run_live_demo.py --max-turns 4 --p-timeout 0.35 --p-rate-limit 0.15
 
-# V2 困难多步任务集：先校准无故障轮数，再跑 3 档预算扫描 + 重复（约 27 分钟，2 worker）
-python scripts/run_live_demo_hard_v2.py --mode calibrate
-python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v2.json
+# 单模型预算扫描（V3 任务池 31 任务 + 漂移加固 GT）：先校准无故障轮数，再跑 3 档预算 + 重复（约 30 分钟，2 worker）
+python scripts/run_live_demo_hard_v2.py --mode calibrate --calibration .scratch/toolguard/hard_calibration_v3.json
+python scripts/run_live_demo_hard_v2.py --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json \
+  --output benchmarks/toolguard/live_demo_hard_v3.json
 
-# V2 MCP 集成：双 stdio server + server 崩溃重连 + catalog drift（需要真实进程管道，不能在工作区沙箱内运行）
+# MCP 集成：双 stdio server + server 崩溃重连 + catalog drift（需要真实进程管道，不能在工作区沙箱内运行）
 python scripts/run_mcp_demo_v2.py --mode calibrate
 python scripts/run_mcp_demo_v2.py --workers 2 --output benchmarks/toolguard/mcp_demo_v2.json
 
 # 多模型复制：需要 TOOLEVO_QWEN_API_KEY（qwen3.8-flash + qwen4-max）与 TOOLEVO_DEEPSEEK_API_KEY
 python scripts/check_providers.py --smoke        # 先验证 key / 工具调用 / model id（不打印 key）
 python scripts/run_multimodel_live.py --mode calibrate
-python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel.json
-python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel.json  # 从 checkpoint 重建 artifact
+python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel_v3.json
+python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json  # 从 checkpoint 重建 artifact
+
+# artifact 一致性（aggregate ↔ records、reproduce/limitations 完整）
+python scripts/validate_toolguard_artifacts.py
 
 python -m pytest tests/test_toolguard -q -p no:cacheprovider
 ```
 
-> V1 脚本（`run_live_demo_hard.py` / `run_mcp_demo.py`）仍可复现 V1 artifact，但对外口径以 V2/V3 为准。
-> 多模型模型轴里的 key 放在仓库根 `.env`（见 [.env.example](.env.example)），`.env` 已 gitignore，永不提交。
+> task-pool 版本：V1 20 任务、V2 32 任务、V3 31 任务（漂移加固）。历史 artifact 用对应 commit 的代码复现（见上表），**当前主口径：单模型 `live_demo_hard_v3.json`，多模型 `live_demo_multimodel_v3.json`，MCP `mcp_demo_v2.json`**。
+> 多模型轴的 key 放在仓库根 `.env`（见 [.env.example](.env.example)），`.env` 已 gitignore，永不提交。
 
 artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.json)（含完整口径、分规则验证与局限）
 
@@ -211,8 +234,10 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - live 单模型结果来自 `deepseek-v4-flash`；多模型轮覆盖 **qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max** 三个模型（cheap/strong 同属 Qwen 家族），是**复制**而非模型间假设检验；
 - 故障/崩溃/漂移都是**确定性注入**，不是生产观测；`clean+N` 预算锚定在“每任务一次无故障 calibration”，calibration 本身是点估计；
 - `clean+1` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 45–53%”；正确读法是**成功-预算曲线**：预算越低 baseline 越差、guard 恒定；预算充足时成功率持平、guard 成本更低；
-- 直播可变 ground truth：V3 已把会漂移的 HN karma 换成不可变账号创建年份，并在每个模型块前重建 ground truth；但天气/FX 仍是当前值，跨模型块的瞬时偏差仍可能带来极小量假阴性（V3 guard 残余失败已全部可归因于模型自身行为）；artifact 的 tasks 元数据如从 checkpoint 重建，数值可能与运行时刻略有差异；
-- qwen4-max 在本任务集上没有表现出比 DeepSeek-Flash 更强的 fault-free 能力（30/32 vs 31/32），"贵模型=更可靠"不成立；
+- 任务池随版本演进（V1 20 / V2 32 / V3 31 任务，且 V3 换了 ground truth）：**不同 artifact 的绝对数字不要横向逐位比较**；同一 artifact 内的 baseline-vs-guard 配对才是有效证据，跨版本请以 V3 主口径为准；
+- 直播可变 ground truth：V3 已把会漂移的 HN karma 换成不可变账号创建年份，并在每个模型块前重建 ground truth；但天气/FX 仍是当前值，跨模型块/跨 run 的瞬时偏差仍可能带来极小量假阴性；artifact 的 tasks 元数据如从 checkpoint 重建，数值可能与运行时刻略有差异；
+- 验证器修复记录：V3 收口修了数字解析对 Unicode 负号（`−3.4`）的处理，单模型 V3 重跑即生效；多模型 V3 artifact 产生于修复前，但离线核对 12 条含 U+2212 的答案当时均判成功，成功率不变。公开 API 的瞬时 timeout/连接错误现在会做有界重试（不改变成功语义，只是不再因为一次网络抖动丢任务）；
+- qwen4-max 在本任务集上没有表现出比 DeepSeek-Flash 更强的 fault-free 能力（V3：29/31 vs 31/31），"贵模型=更可靠"不成立；
 - MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
 - MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
 - 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
