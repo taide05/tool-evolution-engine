@@ -222,6 +222,7 @@ def run_one(client: ChatCompletionsClient, spec: dict, item: dict, args: argpars
                 "fault_seed": faulty.seed,
                 "arm": item["arm"],
                 "success": success,
+                "expected": task["expected"],
                 "failure_mode": None if success else classify_failure(run.answer, task["expected"]),
                 "answer": run.answer[:400],
                 "turns": run.turns,
@@ -313,11 +314,25 @@ def run_eval(tasks: list[dict], skipped: list[str], specs: list[dict], condition
 
     output = Path(args.output)
     all_records: list[dict] = []
+    tasks_per_model: dict[str, list[dict]] = {}
     started = time.perf_counter()
     lock = threading.Lock()
+    wanted_ids = {task["id"] for task in tasks}
 
     for spec in specs:
         key = spec["key"]
+        # Refresh the live ground truth immediately before each model's block: the
+        # previous model run takes ~20 minutes, and values such as weather/FX can drift.
+        fresh_tasks, fresh_skipped = build_tasks(LiveHardBackend())
+        if fresh_skipped:
+            print(f"  warning: ground-truth refresh skips for {key}: {fresh_skipped}")
+        fresh_tasks = [task for task in fresh_tasks if task["id"] in wanted_ids]
+        missing_ids = wanted_ids - {task["id"] for task in fresh_tasks}
+        if missing_ids:
+            print(f"ERROR: ground-truth refresh for {key} missed tasks: {sorted(missing_ids)}",
+                  file=sys.stderr)
+            return 2
+        tasks_per_model[key] = fresh_tasks
         calibration = calibrations.get(key, {}).get("tasks", {})
         missing = [task["id"] for task in tasks if task["id"] not in calibration]
         if missing:
@@ -325,7 +340,7 @@ def run_eval(tasks: list[dict], skipped: list[str], specs: list[dict], condition
             return 2
         items: list[dict] = []
         for condition in conditions:
-            for task in tasks:
+            for task in fresh_tasks:
                 clean_turns = max(task["min_turns"], int(calibration.get(task["id"], {}).get("turns") or 0))
                 budget = resolve_budget(condition, clean_turns)
                 for repeat in range(repeats[condition]):
@@ -358,13 +373,13 @@ def run_eval(tasks: list[dict], skipped: list[str], specs: list[dict], condition
             client.close()
     wall_seconds = round(time.perf_counter() - started, 1)
     return finalize(all_records, specs, calibrations, calibration_payload, tasks, skipped,
-                    args, conditions, repeats, wall_seconds, output)
+                    args, conditions, repeats, wall_seconds, output, tasks_per_model)
 
 
 def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibration_payload: dict,
              tasks: list[dict], skipped: list[str], args: argparse.Namespace,
              conditions: list[str], repeats: dict[str, int], wall_seconds: float | None,
-             output: Path) -> int:
+             output: Path, tasks_per_model: dict[str, list[dict]] | None = None) -> int:
     """Aggregate records (fresh run or rebuilt from a checkpoint) and write the artifact."""
     aggregates: dict[str, dict] = {}
     for spec in specs:
@@ -426,9 +441,17 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
                 "seed": args.seed,
             },
             "verification": "programmatic; ground truth computed from the same live APIs before the runs",
+            "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift "
+                                    "(weather/FX); every record carries the `expected` snapshot it was "
+                                    "verified against",
         },
         "calibration": calibration_payload,
         "tasks": [{key: value for key, value in task.items() if key != "verifier"} for task in tasks],
+        "tasks_per_model": {
+            key: [{field: value for field, value in task.items() if field != "verifier"}
+                  for task in model_tasks]
+            for key, model_tasks in (tasks_per_model or {}).items()
+        },
         "skipped": skipped,
         "records": records,
         "aggregate": {"models": aggregates, "cross_model": cross},
@@ -447,6 +470,10 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
             "Live-mutable ground truth: the HN top-story author's karma and current weather can change "
             "between task construction and a run; a few guard failures are ground-truth drift or answer "
             "formatting (failure_mode/answer in the records), not middleware failures.",
+            "V3 task-set change: the three HN karma tasks were replaced by immutable account-creation-year "
+            "tasks (same two-tool chain). HN karma is live-mutable: during the V2 multi-model run one "
+            "active author's karma changed 112 -> 161 within an hour, which made that task's ground truth "
+            "noise. The V2 multi-model artifact (commit fb13a1f) still contains the karma tasks.",
             "When the artifact is finalised from a checkpoint (no re-run), task definitions are rebuilt "
             "after the run; per-cell success flags were computed at run time with the then-fresh ground "
             "truth, so drifting values in the metadata may differ slightly.",

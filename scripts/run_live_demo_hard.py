@@ -85,12 +85,14 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
         release_date = safe("get_package_release_date", package=package, version=version)["release_date"]
         return version, release_date
 
-    def author_karma(story_id: int) -> tuple[str, int]:
+    def hn_author_created_year(story_id: int) -> tuple[str, int]:
+        """Author account creation year: immutable, unlike live karma."""
         item = safe("get_hn_item", story_id=story_id)
         if not item.get("by"):
             raise ToolError("not_found", f"HN item {story_id} has no author")
         user = safe("get_hn_user", username=item["by"])
-        return item["by"], int(user["karma"])
+        created = int(user["created"])
+        return item["by"], datetime.fromtimestamp(created, tz=timezone.utc).year
 
     # -- dependent weather chains (country -> capital -> coordinates -> weather) -----
     # The questions explicitly ask for geocoding so the chain is a real dependent call
@@ -260,15 +262,20 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
         except Exception as exc:  # noqa: BLE001
             skipped.append(f"{task_id}: {exc}")
 
-    # -- Hacker News item -> author -> karma chains -------------------------------
-    for task_id, story_id in (("hn_item_1_author_karma", 1), ("hn_item_8863_author_karma", 8863)):
+    # -- Hacker News item -> author -> immutable account-creation year -------------
+    # V3 change: the original tasks asked for the author's live karma. Karma is a
+    # live-mutable value (during the multi-model run one active author's karma went
+    # 112 -> 161 within an hour), which turned ground truth into noise unrelated to the
+    # middleware. Account-creation year uses the same two-tool chain and is immutable.
+    for task_id, story_id in (("hn_item_1_author_account_year", 1),
+                              ("hn_item_8863_author_account_year", 8863)):
         try:
-            username, karma = author_karma(story_id)
+            username, created_year = hn_author_created_year(story_id)
             add(task_id,
-                f"What is the Hacker News karma score of the user who posted Hacker News item {story_id}?",
-                {"story_id": story_id, "username": username, "karma": karma},
-                lambda answer, expected: contains_number(answer, expected["karma"],
-                                                        max(5.0, expected["karma"] * 0.01)),
+                f"In which year was the Hacker News account of the user who posted Hacker News "
+                f"item {story_id} created?",
+                {"story_id": story_id, "username": username, "created_year": created_year},
+                lambda answer, expected: contains_number(answer, expected["created_year"], 0.0),
                 3)
         except Exception as exc:  # noqa: BLE001
             skipped.append(f"{task_id}: {exc}")
@@ -278,15 +285,17 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
         username = top.get("by")
         if not username:
             raise ToolError("not_found", "top HN story has no author")
-        karma = int(safe("get_hn_user", username=username)["karma"])
-        add("hn_recent_item_author_karma",
-            f"What is the Hacker News karma score of the user who posted Hacker News item {top['id']}?",
-            {"story_id": top["id"], "title": top.get("title"), "username": username, "karma": karma},
-            lambda answer, expected: contains_number(answer, expected["karma"],
-                                                    max(5.0, expected["karma"] * 0.01)),
+        created = int(safe("get_hn_user", username=username)["created"])
+        created_year = datetime.fromtimestamp(created, tz=timezone.utc).year
+        add("hn_recent_item_author_account_year",
+            f"In which year was the Hacker News account of the user who posted Hacker News item "
+            f"{top['id']} created?",
+            {"story_id": top["id"], "title": top.get("title"), "username": username,
+             "created": created, "created_year": created_year},
+            lambda answer, expected: contains_number(answer, expected["created_year"], 0.0),
             3)
     except Exception as exc:  # noqa: BLE001
-        skipped.append(f"hn_recent_item_author_karma: {exc}")
+        skipped.append(f"hn_recent_item_author_account_year: {exc}")
 
     # -- FX chains ---------------------------------------------------------------
     try:
@@ -417,18 +426,6 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
             4)
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"release_vs_hn_item_date: {exc}")
-
-    try:
-        hn_item = safe("get_hn_item", story_id=1)
-        hn_user = safe("get_hn_user", username=hn_item["by"])
-        created_year = int(datetime.fromtimestamp(int(hn_user["created"]), tz=timezone.utc).year)
-        add("hn_item_1_author_account_year",
-            "In which year was the Hacker News account of the user who posted Hacker News item 1 created?",
-            {"username": hn_user["username"], "created": int(hn_user["created"]), "created_year": created_year},
-            lambda answer, expected: contains_number(answer, expected["created_year"], 0.0),
-            3)
-    except Exception as exc:  # noqa: BLE001
-        skipped.append(f"hn_item_1_author_account_year: {exc}")
 
     try:
         direct = safe("get_exchange_rate", base="EUR", target="JPY")["rate"]

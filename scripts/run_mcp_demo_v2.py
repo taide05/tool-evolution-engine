@@ -84,8 +84,8 @@ TASK_IDS = (
     "population_compare_oslo_wellington",
     "pypi_release_date_httpx",
     "pypi_newer_requests_flask",
-    "hn_item_1_author_karma",
-    "hn_item_8863_author_karma",
+    "hn_item_1_author_account_year",
+    "hn_item_8863_author_account_year",
     "fx_eur_jpy_cross",
     "fx_triangular_check",
 )
