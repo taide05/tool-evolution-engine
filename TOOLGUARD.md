@@ -2,6 +2,8 @@
 
 ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工具调用 → 分类失败 → 从真实失败轨迹中学习修复策略 → 运行时修复并记录指标**。它不训练模型、不改工具实现，只做工具层的确定性修复，因此可解释、低成本、易部署。
 
+> **外部审阅请从 [REVIEW.md](REVIEW.md) 开始**：它给出不依赖作者自述的核验路径（3 条命令）、每个 claim → artifact → 复核命令、本次会话 commit 清单、已知局限与审阅 checklist。
+
 当前版本有四层证据：
 
 1. **离线真实数据评测**：在 **30,120 次真实工具调用 / 1,033 次真实失败**（StableToolBench 公开基线轨迹，Apache-2.0）上验证修复策略，并重点做了**跨任务泛化**：把“重放同一任务的旧调用”升级为“从任务文本学习参数抽取规则”；
@@ -216,6 +218,8 @@ python scripts/run_multimodel_live.py --from-records --output benchmarks/toolgua
 
 # artifact 一致性（aggregate ↔ records、reproduce/limitations 完整）
 python scripts/validate_toolguard_artifacts.py
+# 从 artifact 重算所有主数字（供审阅/复核，无需 API key）
+python scripts/toolguard_evidence_summary.py
 
 python -m pytest tests/test_toolguard -q -p no:cacheprovider
 ```
