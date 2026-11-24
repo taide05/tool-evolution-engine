@@ -54,13 +54,24 @@ class _Response:
 
 
 def http_get_json(url: str, params: dict[str, Any] | None = None) -> Any:
+    """GET JSON with bounded retries for transient transport failures.
+
+    Timeouts / connection errors are retried (the public APIs used by the live demos are
+    occasionally slow); this keeps ground-truth construction from silently dropping tasks.
+    """
     last_status = None
     for attempt in range(3):
         try:
             response = httpx.get(url, params=params, timeout=TIMEOUT_S, headers=_HEADERS, follow_redirects=True)
         except httpx.TimeoutException as exc:
+            if attempt < 2:
+                time.sleep(1.0 * (attempt + 1))
+                continue
             raise ToolError("timeout", f"request timed out after {TIMEOUT_S}s") from exc
         except httpx.HTTPError as exc:
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+                continue
             raise ToolError("request_error", str(exc)[:200]) from exc
         last_status = response.status_code
         if response.status_code == 429 or response.status_code >= 500:

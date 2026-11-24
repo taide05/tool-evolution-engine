@@ -20,6 +20,10 @@ data/
 # ToolGuard local fixtures / scratch (downloaded benchmark data, never committed)
 .scratch/
 
+# Local working notes kept out of the repository by convention
+docs/
+STATUS.md
+
 # Env
 .env
 benchmarks/runs/

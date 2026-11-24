@@ -10,6 +10,18 @@ import math
 import re
 import unicodedata
 
+# Unicode dash/minus variants that LLM answers commonly emit instead of ASCII '-'
+# (e.g. "Oslo −3.4 °C"), plus the fullwidth minus.
+_MINUS_TRANSLATION = str.maketrans({
+    "\u2212": "-",  # minus sign
+    "\u2013": "-",  # en dash
+    "\u2014": "-",  # em dash
+    "\u2012": "-",  # figure dash
+    "\u2010": "-",  # hyphen
+    "\u2011": "-",  # non-breaking hyphen
+    "\uff0d": "-",  # fullwidth hyphen-minus
+})
+
 
 def norm_text(text: str) -> str:
     """Lowercase, ASCII-folded, punctuation-free form used for substring matching."""
@@ -22,7 +34,8 @@ def digits(text: str) -> str:
 
 
 def numbers(text: str) -> list[float]:
-    return [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", str(text).replace(",", ""))]
+    normalized = str(text).translate(_MINUS_TRANSLATION).replace(",", "")
+    return [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", normalized)]
 
 
 def contains_text(answer: str, expected: str) -> bool:
