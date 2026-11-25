@@ -48,6 +48,7 @@ RECORD_BASED = (
     "live_demo_hard.json",
     "mcp_demo_v3.json",
     "mcp_demo_v2.json",
+    "live_demo_multimodel_v4.json",
     "live_demo_multimodel_v3.json",
     "live_demo_multimodel.json",
     "live_demo.json",
@@ -316,7 +317,8 @@ def collect(root: Path | None = None) -> dict:
         data = _load(name, root)
         if data:
             summary[name.removesuffix(".json")] = _mcp(data)
-    for name in ("live_demo_multimodel_v3.json", "live_demo_multimodel.json"):
+    for name in ("live_demo_multimodel_v4.json", "live_demo_multimodel_v3.json",
+                 "live_demo_multimodel.json"):
         data = _load(name, root)
         if data:
             summary[name.removesuffix(".json")] = _multimodel(data)

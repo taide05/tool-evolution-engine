@@ -455,6 +455,15 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
                 "p_server_error": args.p_server_error,
                 "seed": args.seed,
             },
+            "calibration": {
+                "source": str(getattr(args, "calibration", "")),
+                "description": (
+                    "per-model fault-free calibration reused from the V3 run so that the HN "
+                    "schema is the only manipulated variable between the V3 and V4 artifacts"
+                    if getattr(args, "from_records", False) is False
+                    and "multimodel_calibration" in str(getattr(args, "calibration", "")) else
+                    "per-model fault-free calibration payload stored at the top level"),
+            },
             "verification": "programmatic; ground truth computed from the same live APIs before the runs",
             "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift "
                                     "(weather/FX); every record carries the `expected` snapshot it was "
@@ -494,11 +503,21 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
             "truth, so drifting values in the metadata may differ slightly.",
             "Prices are the published list prices at run time and are used only for the cost estimate.",
             "Free public APIs are not production grade; API drift can affect reruns.",
+            ("HN contract: this is the V4 run with the consistent integer get_hn_item.story_id "
+             "schema (2026-11-25 review decision); the V3 drift artifact is kept as the contract-"
+             "repair capability demo. Per-model budget calibration is reused from the V3 run so "
+             "the HN schema is the only manipulated variable."
+             if getattr(args, "hn_schema", "consistent") == "consistent" else
+             "HN contract drift mode: get_hn_item advertises story_id as string while the backend "
+             "requires an integer (historical V3 protocol)."),
         ],
         "reproduce": [
             "python scripts/run_multimodel_live.py --mode calibrate",
-            "python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel_v3.json",
-            "python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json",
+            "python scripts/run_multimodel_live.py --mode eval --hn-schema consistent --workers 2 "
+            "--calibration .scratch/toolguard/multimodel_calibration.json "
+            "--output benchmarks/toolguard/live_demo_multimodel_v4.json",
+            "python scripts/run_multimodel_live.py --from-records "
+            "--output benchmarks/toolguard/live_demo_multimodel_v4.json",
             "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
         ],
     }
