@@ -129,7 +129,8 @@ def main() -> int:
     args = parser.parse_args()
 
     artifacts = ("live_demo_hard_v2.json", "live_demo_hard_v3.json",
-                 "live_demo_multimodel.json", "live_demo_multimodel_v3.json")
+                 "live_demo_hard_v4.json", "live_demo_multimodel.json",
+                 "live_demo_multimodel_v3.json")
     results = [rescore_artifact(name) for name in artifacts]
     totals = {
         "comparison_records": sum(item["comparison_records"] for item in results),

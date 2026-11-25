@@ -134,7 +134,7 @@ def run_calibration(tasks: list[dict], specs: list[dict], args: argparse.Namespa
         tasks_calibration: dict[str, dict] = {}
         try:
             for task in tasks:
-                backend = LiveHardBackend()
+                backend = LiveHardBackend(hn_schema=getattr(args, "hn_schema", "consistent"))
                 run = run_task(client, backend, task["question"], None, max_turns=args.clean_max_turns)
                 success = bool(task["verifier"](run.answer, task["expected"]))
                 tasks_calibration[task["id"]] = {
@@ -197,7 +197,7 @@ def run_one(client: ChatCompletionsClient, spec: dict, item: dict, args: argpars
     task = item["task"]
     for attempt in range(2):
         try:
-            backend = LiveHardBackend()
+            backend = LiveHardBackend(hn_schema=getattr(args, "hn_schema", "consistent"))
             faulty = FaultyBackend(
                 backend,
                 seed=args.seed + item["repeat"] * 101,
@@ -323,7 +323,8 @@ def run_eval(tasks: list[dict], skipped: list[str], specs: list[dict], condition
         key = spec["key"]
         # Refresh the live ground truth immediately before each model's block: the
         # previous model run takes ~20 minutes, and values such as weather/FX can drift.
-        fresh_tasks, fresh_skipped = build_tasks(LiveHardBackend())
+        fresh_tasks, fresh_skipped = build_tasks(
+            LiveHardBackend(hn_schema=getattr(args, "hn_schema", "consistent")))
         if fresh_skipped:
             print(f"  warning: ground-truth refresh skips for {key}: {fresh_skipped}")
         fresh_tasks = [task for task in fresh_tasks if task["id"] in wanted_ids]
@@ -433,6 +434,13 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
             "wall_seconds": wall_seconds,
             "finalised_from_checkpoint": bool(getattr(args, "from_records", False)),
             "failure_modes_recomputed": bool(getattr(args, "from_records", False)),
+            "hn_schema": getattr(args, "hn_schema", "consistent"),
+            "hn_schema_note": ("consistent contract: get_hn_item.story_id is an integer in the "
+                               "agent-visible schema, matching the backend and the real HN API"
+                               if getattr(args, "hn_schema", "consistent") == "consistent" else
+                               "legacy drifting contract: get_hn_item advertises story_id as a "
+                               "string while the backend requires an integer (historical V2/V3 "
+                               "protocol)"),
             "failure_modes_note": (
                 "rebuilt from the checkpoint: failure-mode labels were recomputed from "
                 "answer+expected with the fixed metadata-aware classifier (2026-11-24 review), "
@@ -589,9 +597,21 @@ def main() -> int:
     parser.add_argument("--p-server-error", type=float, default=0.08)
     parser.add_argument("--attempts-to-fail", type=int, default=2)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--hn-schema", choices=("drifting", "consistent"), default="consistent",
+                        help="consistent (default): get_hn_item.story_id integer in the "
+                             "agent-visible schema; drifting: legacy mismatched schema kept only "
+                             "for rebuilding the historical drift artifact")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     args = parser.parse_args()
+
+    if args.from_records and Path(args.output).exists():
+        checkpoint = json.loads(Path(args.output).read_text(encoding="utf-8"))
+        protocol = checkpoint.get("protocol") or {}
+        if "hn_schema" in protocol:
+            args.hn_schema = protocol["hn_schema"]
+        else:  # legacy drift artifacts (V2/V3) predate the field
+            args.hn_schema = "drifting"
 
     conditions = parse_budgets(args.budgets)
     repeats = parse_repeats(args.repeats, conditions)
@@ -603,7 +623,7 @@ def main() -> int:
         print(f"  {spec['tier']:6s} {spec['label']:26s} model={spec['model']:18s} "
               f"{spec['provider']:38s} {state}")
 
-    clean = LiveHardBackend()
+    clean = LiveHardBackend(hn_schema=args.hn_schema)
     tasks, skipped = build_tasks(clean)
     if args.max_tasks is not None:
         tasks = tasks[:args.max_tasks]

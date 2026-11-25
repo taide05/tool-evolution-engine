@@ -378,3 +378,31 @@ def test_guard_records_unavailable_schema_instead_of_silently_passing() -> None:
     assert event.schema_unavailable is True
     assert event.schema_validated is False
     assert guard.stats["schema_unchecked"] == 1
+
+
+# ---------------------------------------------------------------------------
+# HN contract: consistent by default, drifting only as an explicit demo mode
+# ---------------------------------------------------------------------------
+def test_live_hard_backend_hn_schema_modes() -> None:
+    """The main protocol advertises the consistent integer HN contract (2026-11-25 fix).
+
+    The drifting string schema is still reachable only when explicitly requested, so the
+    targeted contract-repair demo remains reproducible without contaminating the main run.
+    """
+    import pytest
+
+    from tool_evolution.toolguard.live_hard import LiveHardBackend
+
+    def story_id_type(backend: LiveHardBackend) -> str:
+        for schema in backend.schemas():
+            function = schema["function"]
+            if function["name"] == "get_hn_item":
+                properties = function["parameters"]["properties"]
+                return properties["story_id"]["type"]
+        raise AssertionError("get_hn_item not advertised")
+
+    assert story_id_type(LiveHardBackend()) == "integer"
+    assert story_id_type(LiveHardBackend(hn_schema="consistent")) == "integer"
+    assert story_id_type(LiveHardBackend(hn_schema="drifting")) == "string"
+    with pytest.raises(ValueError):
+        LiveHardBackend(hn_schema="bogus")

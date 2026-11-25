@@ -400,7 +400,8 @@ def validate_artifacts(root: Path | None = None) -> list[str]:
                 elif "cross_model" in aggregate:
                     _check_multimodel(name, data, problems)
                 elif "conditions" in aggregate:
-                    v2 = name.endswith("_v2.json") or name.endswith("_v3.json")
+                    v2 = name.endswith("_v2.json") or name.endswith("_v3.json") \
+                        or name.endswith("_v4.json")
                     _check_conditions_artifact(name, data, problems, v2=v2)
                 elif aggregate and all(isinstance(block, dict) and "arms" in block
                                        for block in aggregate.values()):

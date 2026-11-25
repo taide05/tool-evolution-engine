@@ -11,9 +11,13 @@ tools that make *dependent* multi-step chains possible:
 * ``get_hn_user`` / ``get_hn_top_story`` -- Hacker News users and current top story
 
 Every handler talks to a real public API.  Two failure classes measured in the offline
-trace data are kept on purpose: ``get_hn_item`` declares ``story_id`` as a string while
-the backend requires an integer (schema/backend mismatch), and transient HTTP failures
-are injected by the runner (not here).
+trace data are modelled on purpose: the HN schema/backend type mismatch
+(``get_hn_item`` can advertise ``story_id`` as a string while the backend requires an
+integer, selected explicitly with ``LiveHardBackend(hn_schema="drifting")``), and
+transient HTTP failures (injected by the runner, not here).  The default is the
+*consistent* contract (``story_id`` integer), which is the main protocol after the
+2026-11-25 review decision; the drifting variant exists only for the targeted
+contract-repair demonstration.
 """
 
 from __future__ import annotations
@@ -311,7 +315,7 @@ HARD_TOOLS: dict[str, ToolSpec] = {
         description="Get a Hacker News item (story) by numeric id.",
         parameters={
             "type": "object",
-            "properties": {"story_id": {"type": "string", "description": "Numeric HN item id (as string)"}},
+            "properties": {"story_id": {"type": "integer", "description": "Numeric HN item id"}},
             "required": ["story_id"],
         },
         handler=get_hn_item,
@@ -348,30 +352,36 @@ HARD_TOOLS: dict[str, ToolSpec] = {
 class LiveHardBackend:
     """Calls real public APIs over the extended tool set.
 
-    ``hn_schema_consistent=True`` advertises the *consistent* HN contract
-    (``story_id`` integer) instead of the deliberately mismatched released schema
-    (string).  This exists only to run the 2026-11-24 review's controlled experiment:
-    same tasks / same fault seeds, one arm where the contract bug is removed, so the
-    contribution of the HN schema drift to the baseline-vs-guard gap can be measured.
+    ``hn_schema`` selects the advertised HN contract:
+
+    * ``"consistent"`` (default, main protocol since the 2026-11-25 review decision):
+      ``story_id`` is an integer, matching the backend and the real Hacker News API.
+    * ``"drifting"``: the schema advertises ``story_id`` as a string while the backend
+      requires an integer.  This reproduces a real contract-mismatch failure class and is
+      kept only for the targeted contract-repair demonstration (same tasks / same fault
+      seeds), so the contribution of the drift to the baseline-vs-guard gap can be
+      measured against the consistent run.
     """
 
     def __init__(self, tools: dict[str, ToolSpec] | None = None,
-                 hn_schema_consistent: bool = False):
+                 hn_schema: str = "consistent"):
+        if hn_schema not in ("consistent", "drifting"):
+            raise ValueError(f"hn_schema must be 'consistent' or 'drifting', got {hn_schema!r}")
         self.tools = tools or HARD_TOOLS
-        self.hn_schema_consistent = hn_schema_consistent
+        self.hn_schema = hn_schema
         self.stats = {"calls": 0, "ok": 0, "errors": 0}
 
     def schemas(self) -> list[dict[str, Any]]:
         schemas = [tool.openai_schema() for tool in self.tools.values()]
-        if self.hn_schema_consistent:
+        if self.hn_schema == "drifting":
             for schema in schemas:
                 function = schema.get("function") or {}
                 if function.get("name") == "get_hn_item":
                     properties = function.setdefault("parameters", {}).setdefault(
                         "properties", {})
                     properties["story_id"] = {
-                        "type": "integer",
-                        "description": "Numeric HN item id",
+                        "type": "string",
+                        "description": "Numeric HN item id (as string)",
                     }
         return schemas
 

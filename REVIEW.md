@@ -2,11 +2,11 @@
 
 > **给外部审阅者（AI 或人）**：这份文档告诉你交付了什么、证据在哪里、如何**不依赖作者自述**地核对这些数字、以及哪些结论**不能**采信。若只读三份文件：本文件 → [TOOLGUARD.md](TOOLGUARD.md)（设计与结果）→ `benchmarks/toolguard/*.json`（逐格证据）。
 >
-> **2026-11-24 证据链修复轮（未提交，等待作者确认）**：针对外部审阅的 3 个 P0 + P1/P2，本轮只修证据链、不加功能：证据汇总从 records 重算全部派生字段并加篡改负例、完整 JSON Schema 校验 + schema 漏斗、比较类 verifier 改为关系断言 + 离线重判、离线 metrics 改为确定性生成 + LOMO 协议如实标注、P2 文档/复现修复。**未 commit / 未 push / 未重跑任何 live 实验**（重跑预算见 TOOLGUARD 局限与下一步）。
+> **2026-11-24 证据链修复轮 + 2026-11-25 HN 契约修正（已本地提交，未 push）**：针对外部审阅的 3 个 P0 + P1/P2，本轮只修证据链、不加功能：证据汇总从 records 重算全部派生字段并加篡改负例、完整 JSON Schema 校验 + schema 漏斗、比较类 verifier 改为关系断言 + 离线重判、离线 metrics 改为确定性生成 + LOMO 协议如实标注、P2 文档/复现修复；随后按评审决定修正 HN schema 契约并重跑出 V4 主口径（见 §3/§5）。**未 push**；重跑预算见 TOOLGUARD 局限与下一步。
 
-- 分支：`feat/toolguard`（基线 `opt/tee-tools` @ `7fd644c`）；HEAD = `3e35e47`，与 `origin/feat/toolguard` 同步
-- 工作区状态：HEAD 之上有**未提交的证据链修复改动**（见 §6 末表）；本文件描述的是“HEAD + 工作区改动”这一审阅状态
-- 审阅包内容：`REVIEW.md`（本文）+ `TOOLGUARD.md`（正式结果文档）+ 11 个 JSON artifact + 代码/测试
+- 分支：`feat/toolguard`（基线 `opt/tee-tools` @ `7fd644c`）；本轮修复在本地 commit（`git log -1`），**未 push**
+- 工作区状态：干净；本文件描述的是“本轮修复 commit”这一审阅状态（之前的 `3e35e47` 是被审阅的交付基线）
+- 审阅包内容：`REVIEW.md`（本文）+ `TOOLGUARD.md`（正式结果文档）+ 12 个 JSON artifact + 代码/测试
 - 作者：AI coding agent（单次会话），所以本文档按“可被反驳”的方式写：每个结论都给了可执行核验方式
 
 ---
@@ -14,8 +14,8 @@
 ## 0. 30 秒核验路径（不需要 API key、不联网）
 
 ```bash
-python -m pytest tests/test_toolguard -q -p no:cacheprovider   # 期望：115 passed
-python scripts/validate_toolguard_artifacts.py                # 期望：11 artifacts, all consistent
+python -m pytest tests/test_toolguard -q -p no:cacheprovider   # 期望：116 passed
+python scripts/validate_toolguard_artifacts.py                # 期望：12 artifacts, all consistent
 python scripts/toolguard_evidence_summary.py                  # 所有派生数字从 records 重算
 python scripts/rescore_toolguard_verifier.py                  # 新关系验证器离线重判已提交答案
 ```
@@ -26,23 +26,23 @@ python scripts/rescore_toolguard_verifier.py                  # 新关系验证�
 - `toolguard_evidence_summary.py` 输出中 `live_*` / `mcp_*` 段是 records 重算值（不读 aggregate 的这些字段），`offline` 段是离线 artifact 的 counts + 重算比率（StableToolBench 原始数据不随仓库提交，无法进一步重算计数）。
 - 如果输出与 TOOLGUARD.md 不一致，以重算结果为准，并把差异作为 finding 记录。
 
-想看“HEAD 之后改了什么”：
+想看“本轮修复改了什么”：
 
 ```bash
-git status --short          # 本轮证据链修复的未提交改动
-git diff --stat             # 同上
-git diff -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
+git log --oneline -3         # 本轮证据链修复 commit（含 V4 HN 修正；未 push）
+git show --stat HEAD         # 最近一次修复的内容
+git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 ```
 
 ---
 
 ## 1. 审阅范围与不在范围
 
-**交付内容**（`feat/toolguard` 分支；16 个功能 commit + 本轮未提交的证据链修复）：
+**交付内容**（`feat/toolguard` 分支；16 个功能 commit + 本轮证据链修复/HN 修正 commit）：
 
 1. **ToolGuard 中间件**：离线（30,120 次记录调用）→ live 端到端（真实公开 API + 真实 LLM agent）→ 真实 MCP（双 stdio server、进程崩溃重连、catalog drift）→ 多模型复制（3 模型）。核心代码在 `src/tool_evolution/toolguard/`。
-2. **实验与证据**：4 轮 live 实验、11 个 artifact、逐格记录 + 逐条修复事件 + 局限声明、Wilson CI / 配对 McNemar；离线修复评测带完整 schema 漏斗与定量协议说明。
-3. **证据链修复（本轮）**：records 重算 + 篡改负例、完整 schema 校验、关系型比较 verifier、确定性 metrics 生成器、LOMO 协议如实化、P1/P2 口径修正。
+2. **实验与证据**：4 轮 live 实验、12 个 artifact、逐格记录 + 逐条修复事件 + 局限声明、Wilson CI / 配对 McNemar；离线修复评测带完整 schema 漏斗与定量协议说明。
+3. **证据链修复（本轮）**：records 重算 + 篡改负例、完整 schema 校验、关系型比较 verifier、确定性 metrics 生成器、LOMO 协议如实化、P1/P2 口径修正；单模型 HN 契约修正并重跑 V4 主口径。
 
 **明确不在本次范围**：
 
@@ -62,13 +62,13 @@ git diff -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `src/tool_evolution/toolguard/engine.py` | 修复阶梯 + **两层证据**：先 schema 校验（含 `schema_type_coercion` 类型转换修复），schema 不通过的候选记录在 `candidates`，若逐字命中同 task/function 真实成功调用则按 `recorded_success_match` 接受（value-verified） | 被拒提议是否被记录而不是静默丢弃；schema_valid_rate 是否确实 <100%；value-verified 是否单独报告 |
 | `src/tool_evolution/toolguard/guard.py` | live 中间件：重试/coercion/name resolution；**发 backend 前做 schema 校验** | 被拒修复是否记录 `schema_errors`；backend error-hint 的 type override 是否被披露 |
 | `src/tool_evolution/toolguard/artifact_metrics.py` | **所有 artifact 派生字段的 records 重算**（success/rate/Wilson/turns/tokens/p/placement/cost） | 是否直接读 aggregate 的派生字段（应读 records） |
-| `src/tool_evolution/toolguard/artifact_contracts.py` | artifact 契约：逐字段重算比对 + metrics 导出量对账 | 11 个 artifact 全过；篡改字段是否会被抓 |
+| `src/tool_evolution/toolguard/artifact_contracts.py` | artifact 契约：逐字段重算比对 + metrics 导出量对账 | 12 个 artifact 全过；篡改字段是否会被抓 |
 | `src/tool_evolution/toolguard/verify.py` | 程序化验证：关系断言、否定词、million 等单位、版本比较 | 反向答案是否判失败（见 `tests/test_toolguard/test_relation_verifier.py`） |
 | `scripts/toolguard_evidence_summary.py` | 审阅者核验路径：records 重算输出 | 是否打印 records 值而非 artifact aggregate 值 |
 | `scripts/build_metrics_artifact.py` | 离线 `metrics.json` 的确定性生成器 | 文档命令能否重建 artifact |
 | `scripts/rescore_toolguard_verifier.py` | 用新 verifier 只读重判已提交答案 | success 变化清单 |
-| `tests/test_toolguard/` | 115 个测试 | 规则/命名/guard/backend/MCP/故障 epoch/统计/契约/篡改负例/schema 负例/关系验证器 |
-| `benchmarks/toolguard/*.json` | 11 个 artifact（含本轮新增 HN 一致 schema 对照与 MCP v3） | 见 §3 证据地图与 TOOLGUARD 的“产物与复现溯源”表 |
+| `tests/test_toolguard/` | 116 个测试 | 规则/命名/guard/backend/MCP/故障 epoch/统计/契约/篡改负例/schema 负例/关系验证器/HN schema 模式 |
+| `benchmarks/toolguard/*.json` | 12 个 artifact（含 V4 主口径、HN 归因对照、V3 drift 演示与 MCP v3） | 见 §3 证据地图与 TOOLGUARD 的“产物与复现溯源”表 |
 
 ---
 
@@ -81,17 +81,18 @@ git diff -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | LOMO 协议诚实性：主口径是“固定三模型训练 universe、逐模型留出”，gpt-4 家族从不训练；真 LOMO 敏感性 **542/969=55.9%** | `metrics.json` | `protocol.lomo`、`results.lomo_per_fold[*].train_models_used`、`results.lomo_sensitivity_exclude_fold` |
 | schema/修复的两层证据：schema-valid（含 coercion，单独计数）+ value-verified（与同 task/function 真实成功调用逐字一致）；声明 schema 本身有保真度缺陷（api_list 把日期参数声明成 number 等） | `metrics.json` + `engine.py`/`schema_check.py` | `results.*.{schema_passed, coerced_repairs, value_verified_repairs, schema_rejected_proposals}`；`protocol.schema_funnel`；复算脚本 `.scratch/evidence/analyze_rejection_reasons.py`、`recoverability_probe.py` |
 | live V1：27 短任务，normal 双方 27/27；stress 25/27 vs 26/27；工具失败 -80%~-93%、tokens -22% | `live_demo.json` | `results.normal/stress`（per_task 27 条） |
-| 单模型 V3：clean+1 baseline **51/93 (54.8%)** vs guard **93/93 (100%)**，McNemar **p=4.55e-13**，tokens -36.4%；clean+4 90.3%→100%；10 轮 96.8%→96.8%；**注入 epoch baseline 382 / guard 400** | `live_demo_hard_v3.json`（310 格） | `evidence_summary.py` 的 `live_demo_hard_v3`（含 `faults_injected_total`）；aggregate 与 records 由契约强制一致。本轮用 `--from-records` 从 checkpoint 重建（重算 failure_mode、修 reproduce，**数字未变**） |
-| **HN schema drift 一致 schema 对照（本轮新增）**：drift 运行 baseline clean+1 51/93（HN 子集 2/12、非 HN 49/81）→ 一致 schema 运行 baseline **61/93（65.6%）**（HN 12/12、非 HN 49/81 逐格相同）；guard 两种 schema 均 93/93。HN 契约缺陷占 baseline-vs-guard 差距 **10/42 = 23.8%** | `live_demo_hard_v3_hnconsistent.json`（186 格） | 只改 `get_hn_item.story_id` 类型，其余同 V3：`--budgets clean+1 --repeats clean+1:3 --hn-schema consistent`；对比两次 records 的 HN/非 HN 子集 |
+| **单模型 V4（当前主口径，HN 契约修正后）**：clean+1 baseline **59/93 (63.4%)** vs guard **93/93 (100%)**，McNemar **p=1.16e-10**（配对 `guard_only=34 / baseline_only=0`），tokens -33.3%；clean+4 双方 31/31；10 轮 31/31 vs 30/31；注入 epoch baseline 365 / guard 382，guard 轮内恢复 191、agent 可见工具错误 216→0 | `live_demo_hard_v4.json`（310 格） | `evidence_summary.py` 的 `live_demo_hard_v4`；aggregate 与 records 由契约强制一致；预算锚点复用 V3 calibration（`protocol.calibration.source`），V3→V4 只改 HN schema |
+| 单模型 V3（**历史**，HN schema drift 契约修复能力演示）：clean+1 baseline 51/93 (54.8%) vs guard 93/93，p=4.55e-13，tokens -36.4%；clean+4 90.3%→100%；10 轮 96.8%→96.8%；epoch baseline 382 / guard 400；guard 用 backend error-hint coercion 使 HN 子集 12/12 | `live_demo_hard_v3.json`（310 格） | 与 V4 对比 HN/非 HN 子集：HN 子集 baseline 2/12→12/12；本轮 `--from-records` 重建过 failure_mode/reproduce，**数字未变** |
+| **HN 归因对照（促成 V4 修复）**：同 V3 calibration 下，仅把 `get_hn_item.story_id` 改成 integer → baseline clean+1 **51/93→61/93**（HN 子集 2/12→12/12；非 HN 49/81 逐格相同，证明因果） | `live_demo_hard_v3_hnconsistent.json`（186 格） | `--budgets clean+1 --repeats clean+1:3 --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v3.json`；对比 records 的 HN/非 HN 子集 |
 | **MCP baseline/guard 分开校准（本轮新增，P1-2）**：两臂各测无故障轮数，预算锚定 baseline（`budget_anchor=baseline`）；旧 V2 用 guard 校准 | `mcp_demo_v3.json`（96 格） | `protocol.budget_anchor`、`calibration.tasks[*].baseline_turns/guard_turns`；`--budget-anchor baseline` |
 | 多模型 V3：placement 27/31、31/31、29/31；clean+1 baseline 45.2%/51.6%/54.8% → guard 91.9%/100%/100%（p=1.3e-7/1.9e-9/7.5e-9） | `live_demo_multimodel_v3.json`（558 格） | `evidence_summary.py`；`tasks_per_model` 快照与每条记录 `expected` 由契约比对。本轮 `--from-records` 重建：failure_mode 20→3 format_miss、`tasks_per_model` 由记录快照恢复、reproduce 修正，**成功率未变** |
 | MCP V2：双 server 96 格，clean+1 baseline 11/32 vs guard 32/32（p=9.54e-7）；17–20 次真实崩溃/重连 | `mcp_demo_v2.json` | `guard_repairs_by_rule`（从 guard_events 重算）；records 的 `mcp_restarts` |
 | MCP V3（本轮重跑，P1-2 修正）：两臂分开校准、预算锚定 baseline；clean+1 baseline **13/32（40.6%）** vs guard **32/32（100%）**（p=3.81e-6），clean+4 14/16 vs 16/16；$0.098/667s；artifact 用 `--from-records` 重建生成元数据（records/aggregate 未变） | `mcp_demo_v3.json` | `protocol.budget_anchor=baseline`、`calibration.tasks[*].baseline_turns/guard_turns`；`guard_repairs_by_rule` 从 guard_events 重算；`--from-records` 可重建 |
-| 比较类 verifier：反向答案判失败；已提交数据重判 success 变化 0/504 | `verify.py` + `rescore_toolguard_verifier.py` | 跑 rescore；负例见 `test_relation_verifier.py`；重判只读、不改 artifact |
-| 契约可自证：任意改 tokens/rate/turns/tool_errors/Wilson/p 都失败 | `artifact_contracts.py` + `test_artifact_tamper.py` | `pytest tests/test_toolguard/test_artifact_tamper.py`（临时副本篡改，**11 个 artifact** 复制后逐字段改） |
+| 比较类 verifier：反向答案判失败；已提交数据重判 success 变化 0/594（含 V4） | `verify.py` + `rescore_toolguard_verifier.py` | 跑 rescore；负例见 `test_relation_verifier.py`；重判只读、不改 artifact |
+| 契约可自证：任意改 tokens/rate/turns/tool_errors/Wilson/p 都失败 | `artifact_contracts.py` + `test_artifact_tamper.py` | `pytest tests/test_toolguard/test_artifact_tamper.py`（临时副本篡改，**12 个 artifact** 复制后逐字段改） |
 | 成本：多模型 V3 评测 $2.08 + calibration $0.30 | `live_demo_multimodel_v3.json` | 由 records usage × `protocol.models` 公开单价可重算（`artifact_metrics.recompute_multimodel`） |
 
-**历史 artifact（不要在跨版本间逐位比较）**：`live_demo_hard.json`（V1 20 任务）、`live_demo_hard_v2.json`（V2 32 任务）、`live_demo_multimodel.json`（多模型 V2，含直播可变 karma 任务）。任务池随版本演进：V1 20 → V2 32 → V3 31。
+**历史 artifact（不要在跨版本间逐位比较）**：`live_demo_hard.json`（V1 20 任务）、`live_demo_hard_v2.json`（V2 32 任务）、`live_demo_hard_v3.json`（V3 HN drift 演示）、`live_demo_multimodel.json`（多模型 V2，含直播可变 karma 任务）。任务池随版本演进：V1 20 → V2 32 → V3/V4 31（V4 与 V3 同任务池，只修 HN schema）。
 
 ---
 
@@ -120,16 +121,16 @@ git diff -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 2. **LOMO 名不副实已如实标注**：主口径固定三模型训练 universe，gpt-4 家族只做测试；真 LOMO 敏感性 **55.9%**。
 3. **故障/崩溃/漂移是确定性注入**，不是生产观测。`clean+1` 是受控压力条件，不能读作“生产失败率”；正确口径是成功-预算曲线。
 4. **天气/FX ground truth 是直播值**：V3 换了不可变 HN 任务 + 每模型重建 GT；仍有极小漂移。
-5. **预算锚点**：单模型/多模型仍是每任务 1 次无故障 calibration（点估计）；MCP 已改为两臂分别校准并锚定 baseline（`mcp_demo_v3.json`，clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6），旧 V2 的 guard 锚定保留为历史。
-6. **多模型是复制而非模型间假设检验**：3 个模型；cheap/strong 同属 Qwen 家族；**“越弱收益越大”不成立**（mid 最大）；HN schema drift 占 baseline 失败 20.6%–25.0%，去掉 HN 后提升为 +40.7/+42.6/+38.9pp（mid 仍最大）。单模型 HN 一致 schema 对照实验已做（baseline 51/93→61/93；HN 子集 2/12→12/12；非 HN 49/81 两 run 逐格相同；HN 契约缺陷占差距 10/42=23.8%），**多模型尚未做该对照**。
+5. **预算锚点**：单模型 V4 复用 V3 calibration（同一预算锚点，schema 是唯一变量；`protocol.calibration.source` 已记录），不是独立新校准；多模型仍是每任务 1 次无故障 calibration（点估计）；MCP 已改为两臂分别校准并锚定 baseline（`mcp_demo_v3.json`，clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6），旧 V2 的 guard 锚定保留为历史。
+6. **多模型是复制而非模型间假设检验**：3 个模型；cheap/strong 同属 Qwen 家族；**“越弱收益越大”不成立**（mid 最大）；多模型 V3 仍是 **HN drift schema**（HN 占 baseline 失败 20.6%–25.0%，去掉 HN 后提升为 +40.7/+42.6/+38.9pp，mid 仍最大）。**单模型已修正 HN 契约（V4）**：baseline 51/93→59/93、HN 子集 2/12→12/12（受控对照 51→61/93，非 HN 逐格相同）；多模型尚未做同样的修正重跑（558 格 / 约 $2.1 / 1h，见 TOOLGUARD 下一步）。
 7. **两个强模型紧预算 guard 已 100%**（ceiling effect）。
 8. **离线修复覆盖 ≠ 端到端成功**：value agreement 只在“其他模型解过同任务”时可验证（严格下界）；schema 默认值补全是未验证提议。
-9. **验证器**：比较类已改关系断言，离线重判 504 条 0 变化；旧成功率只能视为上界。V1 两个 artifact 无逐条 answer，无法重判。
+9. **验证器**：比较类已改关系断言，离线重判 594 条（含 V4）0 变化；旧成功率只能视为上界。V1 两个 artifact 无逐条 answer，无法重判。
 10. **失败模式标签**：旧 `classify_failure()` 会被 metadata 标量误触发；本轮已用 `--from-records` 从 checkpoint 免费重建两个 V3 artifact 并重算标签（多模型 format_miss 20→3、no_expected_value 2→19；单模型无变化），reproduce 路径同修复；**未重跑 live**，旧 V2 artifact 标签仍为历史分类。
 11. **MCP V2 任务池是 V2 时代**（16 任务子集），与 V3 单模型/多模型数字不同源。
 12. **解析器**把 20 条无法解析的 observation 当成功（0.07%）；30,120 是记录调用/重试次数，不是独立任务数。
 13. **免费公开 API 非生产级**：GitHub 限流已从任务集移除；API 漂移可能影响复跑。
-14. **没有 push 本轮改动、没有 CI**：本轮未 commit / 未 push / 未重跑 live；审阅者复跑 live 会有随机波动（LLM 非确定性、live 数据变化），允许 ±1–2 格差异，但不能出现方向性反转。
+14. **本轮修复已在本地 commit（未 push、无 CI）**：V4 是修正后的主口径，但 live 数字仍有 LLM 采样随机性（单模型复跑 ±2 格级波动，非 HN 子集在对照实验与 V4 完整重跑间出现 2 格差异是正常的）；审阅者复跑允许 ±1–2 格差异，但不能出现方向性反转。
 
 ---
 
@@ -166,33 +167,35 @@ git diff -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `scripts/toolguard_evidence_summary.py` | 重写：records 重算所有 live 指标；offline 段为 counts + 重算比率 |
 | `scripts/eval_toolguard_rules.py` | schema 漏斗统计（proposed/rejected/passed）、LOMO 训练策略可选（`--lomo-train-policy`）、诚实协议文本 |
 | `scripts/build_metrics_artifact.py`（新） | 离线 metrics.json 确定性生成器（含 skipped_no_schema 解释、真 LOMO 敏感性） |
-| `benchmarks/toolguard/metrics.json` | 由上述生成器重跑生成（本轮唯一被改写的 artifact） |
+| `benchmarks/toolguard/metrics.json` | 由上述生成器重跑生成（本轮被改写的 artifact 之一） |
 | `src/tool_evolution/toolguard/schema_check.py`（新） | 完整 JSON-Schema 子集校验（类型/enum/format/范围/数组/嵌套） |
 | `src/tool_evolution/toolguard/{memory,rules,engine}.py` | 接入严格校验；RepairResult 增加 proposed/schema_errors/rejected_proposals/candidates/value_verified；引擎记录被拒提议；`coerce_values_to_schema()` 先做声明类型转换（`schema_type_coercion`）；schema 不通过但逐字命中同 task/function 真实成功调用时按 `recorded_success_match`（value-verified 层）接受 |
 | `src/tool_evolution/toolguard/guard.py` | live 修复后发 backend 前校验；被拒记录 `schema_rejected`/`schema_errors`；backend error-hint type override 披露 |
 | `src/tool_evolution/toolguard/verify.py` | 关系型比较验证（关系断言/否定词/million 单位/多个候选/截断保护）、版本号比较、negation-aware contains |
 | `scripts/{run_live_demo_hard,run_live_demo}.py` | 比较类任务改用关系验证器；V1 版本比较修正 |
-| `scripts/run_live_demo_hard_v2.py` | failure-mode 分类只考虑答案字段；`--from-records` 从 checkpoint 重建 artifact（重算 aggregate/failure_mode、修 reproduce）；`--hn-schema consistent` HN 一致 schema 对照；reproduce 输出指向 V3 |
-| `src/tool_evolution/toolguard/live_hard.py` | `hn_schema_consistent` 选项（只用于 HN 对照实验，不改默认行为） |
-| `scripts/run_mcp_demo_v2.py` | 校准改为两臂分别测量（`baseline_turns`/`guard_turns`）；`--budget-anchor baseline` 修正 P1-2 的预算不对称；reproduce/limitation 相应更新 |
-| `scripts/run_multimodel_live.py` | reproduce 输出指向 V3；`--from-records` 从 records 重建 `tasks_per_model`，重建时重算 failure_mode |
+| `scripts/run_live_demo_hard_v2.py` | failure-mode 分类只考虑答案字段；`--from-records` 从 checkpoint 重建 artifact（重算 aggregate/failure_mode、修 reproduce）；`--hn-schema {consistent,drifting}`（默认 consistent）与 calibration source 记录；V4 复现命令 |
+| `src/tool_evolution/toolguard/live_hard.py` | **HN 契约修正**：`HARD_TOOLS.get_hn_item.story_id` 默认 integer；`LiveHardBackend(hn_schema="consistent")` 为默认，`"drifting"` 仅保留为契约修复能力演示（V3） |
+| `scripts/run_multimodel_live.py` | reproduce 输出指向 V3；`--from-records` 从 records 重建 `tasks_per_model`，重建时重算 failure_mode；新增 `--hn-schema`（默认 consistent，from-records 自动沿用 checkpoint 旧值） |
+| `scripts/run_mcp_demo_v2.py` | 校准改为两臂分别测量（`baseline_turns`/`guard_turns`）；`--budget-anchor baseline` 修正 P1-2 的预算不对称；`--from-records` 重建生成元数据（experiment id 等，records/aggregate 不变） |
+| `benchmarks/toolguard/live_demo_hard_v4.json`（新） | **V4 主口径**：HN 契约修正后 310 格重跑（clean+1 baseline 59/93 vs guard 93/93，p=1.16e-10；复用 V3 calibration 作受控对照） |
 | `scripts/rescore_toolguard_verifier.py`（新） | 新 verifier 离线只读重判已提交答案 |
 | `benchmarks/toolguard/mcp_demo_v3.json`（新） | MCP baseline/guard 分开校准重跑（96 格；clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6） |
 | `benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json`（新） | HN 一致 schema 对照（186 格；baseline 51/93→61/93，HN 子集 2/12→12/12） |
 | `benchmarks/toolguard/{live_demo_hard_v3,live_demo_multimodel_v3}.json` | `--from-records` 免费重建：重算 failure_mode、恢复 `tasks_per_model`、修 reproduce；**数字未变** |
 | `scripts/parse_toolbench_trajectories.py` | 统计 unparseable observation 数 |
 | `scripts/download_toolguard_data.py` | 修正下一步命令的 baselines 路径 |
-| `tests/test_toolguard/`（+5 个文件） | 篡改负例、schema 负例、关系验证器负例、失败模式分类负例、coercion/value-verified 负例；测试数 55 → 115 |
-| `TOOLGUARD.md` / `REVIEW.md` | 数字与口径按上述修正（离线主表、LOMO 标注、382/782、HN 占比、50→115、四层→三层、HN/MCP 待重跑项等） |
+| `tests/test_toolguard/`（+5 个文件） | 篡改负例、schema 负例、关系验证器负例、失败模式分类负例、coercion/value-verified/HN schema 模式负例；测试数 55 → 116 |
+| `TOOLGUARD.md` / `REVIEW.md` | 数字与口径按上述修正（离线主表、LOMO 标注、382/782、HN 占比与 V4 修正、50→116、四层→三层、待重跑项等） |
 
 ---
 
 ## 7. 审阅 checklist（可勾选）
 
-- [ ] `pytest tests/test_toolguard` **115 passed**；`validate_toolguard_artifacts.py` 11 artifacts 全过
+- [ ] `pytest tests/test_toolguard` **116 passed**；`validate_toolguard_artifacts.py` 12 artifacts 全过
 - [ ] 篡改 tokens/rate/turns/tool_errors/Wilson/p 后 validator 必须报错（`test_artifact_tamper.py`）
 - [ ] `toolguard_evidence_summary.py` 输出与 TOOLGUARD.md 主数字一致；live 段确为 records 重算
 - [ ] `metrics.json` 可由 `build_metrics_artifact.py` 从评测输出重建；`proposed = schema_passed + schema_rejected_failures` 且 `accepted = schema_passed + value_verified_repairs` 自洽
+- [ ] HN 契约：`LiveHardBackend()` 默认广告 integer `story_id`，仅 `hn_schema="drifting"` 才注入 string 漂移（`test_live_hard_backend_hn_schema_modes`）；V4 artifact `protocol.hn_schema=consistent`、`protocol.calibration.source` 指向 V3 锚点
 - [ ] `schema_valid_rate` 确实 < 100%（LOMO 81.0% / cross-model 71.1% / cross-group 52.6%）；被拒提议、coercion、value-verified 分别计数
 - [ ] coercion 修复与 value-verified 层有负例/正例测试（不可转换值不得被硬转；未逐字命中真实成功调用不得计入）
 - [ ] LOMO 协议字段如实说明“固定三模型训练、gpt-4 只做测试”，且敏感性数字在 artifact 内
@@ -214,5 +217,5 @@ git diff -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 - `.env`（DeepSeek/百炼 key）**永不提交**、`.env.example` 只有占位符；审阅无需 key；
 - `docs/`、`STATUS.md` 是作者本地笔记（gitignored），不随仓库分发；
 - 本会话与上一轮所有 API 消耗由作者承担；审阅者不必复跑；
-- 本轮修复未 commit / 未 push，等待作者确认；不修改旧 TEE 的 25 条历史指标；
+- 本轮修复已在**本地 commit**（作者已确认；**未 push**）；不修改旧 TEE 的 25 条历史指标；
 - 若审阅者发现“文档数字与 artifact 不一致”，优先修复文档并记录 finding，而不是改 artifact。

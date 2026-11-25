@@ -7,7 +7,7 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 当前版本有三层证据：
 
 1. **离线真实数据评测**：在 **30,120 次记录调用（7,636 条解析 trace 展开；764 个唯一 query、2,303 个唯一 (query, tool) 组合）/ 1,033 次真实失败**（StableToolBench 公开基线轨迹，Apache-2.0）上验证修复策略，并重点做了**跨任务泛化**；修复提议现在按“提议修复 / 被 schema 拒绝 / 通过”的漏斗统计（完整结构校验：类型、必填/多余参数、enum、format、数值范围）；
-2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 **31 个多步依赖任务（V3 漂移加固任务池）**；V2 把交互预算做成**三档扫描 + 重复**，给出成功-预算曲线、Wilson CI 与配对检验；第四轮再把同一协议**复制到 3 个模型**（qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max）；比较类任务的答案校验改为**关系断言**（见下文）；
+2. **live 端到端 A/B**：真实 DeepSeek agent + 真实免 key 公开 API，从 27 个短任务到 **31 个多步依赖任务（V4：V3 任务池 + HN 契约修正，2026-11-25）**；V2 把交互预算做成**三档扫描 + 重复**，给出成功-预算曲线、Wilson CI 与配对检验；第四轮再把同一协议**复制到 3 个模型**（qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max）；比较类任务的答案校验改为**关系断言**（见下文）；
 3. **真实 MCP 集成**：同一套中间件不改一行，接到**两个真实 stdio MCP server** 上，覆盖多 server 路由、server 进程真实崩溃重连、catalog drift 未知工具重解析。
 
 ## 结果（离线确定性评测）
@@ -68,46 +68,61 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 V1（20 任务 / 单预算 / 单次运行）的问题：①任务量和重复不足，只有点估计没有方差；②单预算恰好卡在“无故障需求 +1 轮”，容易被质疑“把预算调到让 baseline 死”；③单模型、指标面窄。V2 把**预算公开成实验变量**并加重复：
 
-- 任务池 20 → **32**（V2）→ **31**（V3，任务集修订见本节末）；类别覆盖 weather / worldbank / pypi / hn / fx；
+- 任务池 20 → **32**（V2）→ **31**（V3，任务集修订见本节末；V4 沿用 31 任务只修 HN 契约）；
 - **预算扫描**：每任务测 `clean+1` / `clean+4` / `10` 三档（clean = 无故障 calibration 轮数），得到**成功-预算曲线**；
 - **重复**：紧预算 `clean+1` 用 3 个故障 seed（93 格/臂），其余各 1 个 seed（31 格/臂）；报告 Wilson 95% CI 与配对 McNemar（按 task×repeat 配对）；
 - 故障注入同 V1（每个逻辑调用前 2 次尝试失败，确定性），单模型 `deepseek-v4-flash`（决策：不加模型轴，预算用于重复）；
-- V3 共 **310 格**（3 预算档 × 2 臂 × 31 任务 + 重复），墙钟 1,367s，2 个 worker。
+- V4 共 **310 格**（3 预算档 × 2 臂 × 31 任务 + 重复），墙钟 1,278s，2 个 worker；预算锚点复用 V3 calibration（逐任务无故障轮数相同），因此 V3→V4 仅 HN schema 不同。
 
-#### 结果（V3 当前主口径）
+#### 结果（V4 当前主口径：HN 契约修正后，2026-11-25）
+
+> **V4 = V3 任务池 + HN schema 修正**：按 2026-11-25 评审决定，主口径不再注入 `get_hn_item` 的合成“schema 声明 string / 后端要求 integer”类型不一致；其它任务、故障 seed、预算锚定（复用 V3 calibration 的逐任务 fault-free 轮数，mean budget 与 V3 相同）完全不变，因此 V3→V4 只改了这一件事。V3 drift 版保留为目的明确的“契约修复能力演示”（见下）。
 
 | 预算条件 | 平均预算 | baseline 成功 | guard 成功 | 配对 McNemar | turns/格 (b→g) | tokens (b→g) | agent 可见工具错误 (b→g) |
 |---|---|---|---|---|---|---|---|
-| **clean+1** | 5.06 | **51/93 (54.8%, CI 44.7–64.6%)** | **93/93 (100%, CI 96.0–100%)** | **p=4.55e-13** | 4.52→3.07 | 660,703→419,964（**-36.4%**） | **263→5** |
-| clean+4 | 8.06 | 28/31 (90.3%) | 31/31 (100%) | p=0.25 (n.s.) | 5.45→3.07 | 282,878→140,551（-50.3%） | 100→0 |
-| 10 | 10.0 | 30/31 (96.8%) | 30/31 (96.8%) | p=1.0 (n.s.) | 5.45→2.94 | 281,229→133,991（-52.4%） | 91→0 |
+| **clean+1** | 5.06 | **59/93 (63.4%, CI 53.3–72.5%)** | **93/93 (100%, CI 96.0–100%)** | **p=1.16e-10** | 4.38→3.07 | 629,744→420,019（**-33.3%**） | **216→0** |
+| clean+4 | 8.06 | 31/31 (100%) | 31/31 (100%) | p=1.0 (n.s.) | 4.90→3.13 | 246,194→143,466（-41.7%） | 75→0 |
+| 10 | 10.0 | 31/31 (100%) | 30/31 (96.8%) | p=1.0 (n.s.) | 4.97→3.00 | 248,333→137,369（-44.7%） | 75→0 |
 
-**成功-预算曲线**：baseline 54.8% → 90.3% → 96.8%（预算增加才恢复），guard **100% → 100% → 96.8%**，且 turns/tokens 基本不随预算变化。这直接回答“是不是把预算调死”的质疑：预算越低 baseline 越差、guard 不变；预算充足时两者成功率持平，guard 的成本优势更大（tokens -36%~-52%）。
+**成功-预算曲线**：baseline **63.4% → 100% → 100%**，guard **100% → 100% → 96.8%**，turns/tokens 基本不随预算变化。clean+1 的 34 个 baseline 失败**全部是 `no_answer`（预算耗尽）**且全部被 guard 在同轮内救回（McNemar 配对：`guard_only=34`、`baseline_only=0`）；guard 在 10 轮有 1 个 `format_miss`（GDP 比值答案格式问题，与 V3 是同一个**非 HN** 单元格，不是中间件失败）。预算越低 baseline 越差、guard 不变；预算充足时成功率持平，guard 成本优势更大（tokens -33%~-45%）。
 
 其他发现：
-- clean+1 的 42 个 baseline 失败**全部是 `no_answer`（预算耗尽）**；guard 在 clean+1/clean+4 全部成功，10 轮有 1 个失败（模型把人口四舍五入成 “5.61 million”，未命中精确校验——模型回答格式问题，不是中间件失败）；
-- 即使 10 轮预算，baseline 仍有 HN 任务失败（`story_id` schema/后端类型不匹配让 baseline 反复重试直到耗尽，而 guard 在同一轮内完成类型修复）；
-- 全 V3 运行共注入 **782 个瞬态故障 epoch**（timeout / rate_limit / server_error）：baseline 臂 **382 个**（该臂无中间件，这些 epoch 直接暴露给 agent，是其 263 个 agent 可见工具错误的来源）、guard 臂 **400 个**（中间件吸收后 agent 可见工具错误仅 5 个）。旧文案“382 全部在中间件内吸收”不成立；本项数字全部可由 artifact records 的 `faults_injected`/`fault_kinds` 重算；
-- guard 的重试退避总开销 **18.15s / 93 格 ≈ 195ms/格**（可忽略），换来 120 次轮内恢复；
+- **HN 契约修复的直接效果**：HN 子集 baseline clean+1 **2/12 → 12/12**（clean+4 1/4→4/4、10 轮 3/4→4/4）；V4 整体 clean+1 比 V3 多 **+8 格**（HN +10，非 HN 独立复跑波动 -2），差距从 42 格降到 **34 格**，且这 34 格**全部来自真实瞬态故障修复**，不再混入合成契约 bug；
+- 全 V4 运行注入 **747 个瞬态故障 epoch**：baseline 臂 **365 个**（agent 可见工具错误 366）、guard 臂 **382 个**（全部被中间件轮内吸收，**agent 可见工具错误 0**），guard 记录 **191 次**轮内恢复；数字全部可由 records 的 `faults_injected`/`guard_recoveries` 重算；
+- guard 重试退避总开销 **28.65s / 155 格 ≈ 185ms/格**（可忽略）；
+- V4 主口径下 **schema coercion 事件为 0**（没有合成类型不匹配）；V3 的 HN coercion 演示保留在历史 artifact 中；
 - V2 还修掉了 V1 从轨迹里发现的缺陷：修复后的调用若再遇瞬态故障，现在会在同一个 call 内继续重试（`error_hint_coercion+transient_retry`，commit `13af709`）。
 
-artifact：[`benchmarks/toolguard/live_demo_hard_v3.json`](benchmarks/toolguard/live_demo_hard_v3.json)（含逐格记录、calibration、逐条修复事件、Wilson CI、预算曲线、失败模式与局限）。V2 的 32 任务 artifact（`live_demo_hard_v2.json`，commit `43c4e89`）保留为演进记录。
+artifact：[`benchmarks/toolguard/live_demo_hard_v4.json`](benchmarks/toolguard/live_demo_hard_v4.json)（310 格逐格记录、calibration（复用 V3 锚点）、逐条修复事件、Wilson CI、预算曲线、失败模式与局限）。V2 的 32 任务 artifact（`live_demo_hard_v2.json`，commit `43c4e89`）保留为演进记录。
 
-> **V3 任务集/验证器修订**：①HN `karma` 是**直播可变 ground truth**（同一作者 karma 在一小时内 112→161），V3 用同样两工具链把 3 个 karma 任务换成**不可变**的“账号创建年份”任务，任务池 32 → **31**；②验证器的数字解析修复了 Unicode 负号（模型常写 “−3.4” 而不是 “-3.4”，旧验证器会解析成正数并误判正确答案为失败）；③多模型评测在每个模型块前重建 ground truth，把漂移窗口压到单模型块。V2 的 32 任务数字由 commit `43c4e89` 的代码产生，保留为历史。
+> **V3 任务集/验证器修订**：①HN `karma` 是**直播可变 ground truth**（同一作者 karma 在一小时内 112→161），V3 用同样两工具链把 3 个 karma 任务换成**不可变**的“账号创建年份”任务，任务池 32 → **31**；②验证器的数字解析修复了 Unicode 负号（模型常写 “−3.4” 而不是 “-3.4”，旧验证器会解析成正数并误判正确答案为失败）；③多模型评测在每个模型块前重建 ground truth，把漂移窗口压到单模型块；④V4 沿用 V3 的 31 任务池，只修 HN 契约。V2 的 32 任务数字由 commit `43c4e89` 的代码产生，保留为历史。
 
-#### HN schema drift：一致 schema 对照实验（2026-11-24 新增，回应 P1-1）
+#### 历史对照：V3（HN schema drift，保留为“契约修复能力演示”）
 
-背景：`get_hn_item` 的 agent-visible schema 故意声明 `story_id: string`，后端要求 integer；baseline 踩中后只能反复重试直到预算耗尽，guard 用 backend error-hint coercion 在同一轮内修复。为量化这部分“工具契约缺陷”对 headline 的贡献，本轮做了**一致 schema 对照**：只把 `get_hn_item.story_id` 改成 integer（其余任务、seed、预算、重复完全相同），跑 clean+1 × 31 任务 × 3 repeats × 2 臂 = **186 格**。
+V3 主口径故意让 `get_hn_item` 的 agent-visible schema 声明 `story_id: string` 而后端要求 `int`，用来演示中间件如何用 backend error-hint coercion 修好工具契约错误。**该版本已不再是主口径**，仅作为针对性能力演示保留：
+
+| 预算条件 | baseline 成功 | guard 成功 | 配对 McNemar | turns/格 (b→g) | tokens (b→g) | agent 可见工具错误 (b→g) |
+|---|---|---|---|---|---|---|
+| clean+1 | 51/93 (54.8%) | 93/93 (100%) | p=4.55e-13 | 4.52→3.07 | 660,703→419,964（-36.4%） | 263→5 |
+| clean+4 | 28/31 (90.3%) | 31/31 (100%) | p=0.25 | 5.45→3.07 | 282,878→140,551（-50.3%） | 100→0 |
+| 10 | 30/31 (96.8%) | 30/31 (96.8%) | p=1.0 | 5.45→2.94 | 281,229→133,991（-52.4%） | 91→0 |
+
+- V3 的 42 格 clean+1 差距中 **10 格（23.8%）** 来自合成契约 bug（HN 子集 baseline 2/12，guard 用 coercion 达 12/12）；另有 1 格来自 10 轮下的非 HN 格式问题。V4 修正后这 10 格消失；
+- 该 artifact 仍是“后端错误提示→类型修复”这条能力的**真实证据**（coercion 也出现在离线数据中：150/30/30 条），只是不再计入主 headline。artifact：[`benchmarks/toolguard/live_demo_hard_v3.json`](benchmarks/toolguard/live_demo_hard_v3.json)。
+
+#### HN schema drift：归因实验（促成 V4 修复，2026-11-24 新增，回应 P1-1）
+
+为在修与不修之间做决定，先做了**一致 schema 对照**：只把 `get_hn_item.story_id` 改成 integer（其余任务、seed、**沿用 V3 calibration 的同一预算锚点**），跑 clean+1 × 31 任务 × 3 repeats × 2 臂 = **186 格**。
 
 | 运行 | baseline clean+1 | 其中 HN 子集 | 非 HN 子集 | guard clean+1 |
 |---|---|---|---|---|
-| V3 主口径（schema 故意不一致） | 51/93（54.8%） | **2/12** | 49/81（60.5%） | 93/93（HN 12/12，非 HN 81/81） |
-| **一致 schema 对照（新增）** | **61/93（65.6%）** | **12/12** | 49/81（60.5%，与旧 run 逐格相同） | 93/93（HN 12/12，非 HN 81/81） |
+| V3（schema 故意不一致） | 51/93（54.8%） | **2/12** | 49/81（60.5%） | 93/93（HN 12/12，非 HN 81/81） |
+| 一致 schema 对照（186 格） | **61/93（65.6%）** | **12/12** | 49/81（60.5%，与 V3 逐格相同） | 93/93（HN 12/12，非 HN 81/81） |
+| **V4 主口径（完整 310 格，重新独立跑）** | **59/93（63.4%）** | **12/12** | 47/81（58.0%） | 93/93 |
 
-- **归因**：HN 契约缺陷贡献了 baseline-vs-guard 差距的 **10/42 = 23.8%**；剩下 32 格差距来自真实的瞬态故障修复（重试/coercion/name resolution 等）。非 HN 子集两次运行**逐格相同**，说明对照干净、差异确实来自 schema 修复；
-- guard 在两种 schema 下都是 100%，说明 guard 的 coercion 修复与“一致 schema”效果相同（对它不是作弊，而是把工具契约错误修好了）；
-- 成本：**$0.18 / 658s / 186 格**（DeepSeek 价格）。artifact：[`benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json`](benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json)；复现：`--budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2`；
-- 注意：这只覆盖单模型；多模型复制仍用原 schema（其 HN 失败占比 20.6%–25.0%，见第四轮），扩展到多模型留作下一步。
+- **因果归因**：对照实验的非 HN 子集与 V3 **逐格相同**、HN 子集 2/12→12/12 ⇒ 10 格差异完全来自 HN 契约缺陷；V4 完整重跑中非 HN 有 ±2 格独立波动（LLM 采样导致调用序列变化），因此 headline 用 V4 的 59/93；
+- 成本：对照 **$0.18 / 658s / 186 格**；V4 完整重跑 **$0.31 / 1278s / 310 格**（DeepSeek 价格）。artifact：[`benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json`](benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json)；
+- 多模型复制仍是 V3 时代的 drift schema，**尚未做同样的修正**（其 HN 失败占比 20.6%–25.0%，重跑成本见“下一步”）。
 
 ### 第三轮：真实 MCP 双 server + transport 崩溃 + catalog drift（产品化口径）
 
@@ -135,7 +150,7 @@ V2 的 MCP 验证从“同一中间件在 MCP 上也能重试”升级为**部�
 - 结论：修正预算不对称后，guard 相对 baseline 的优势仍然成立（clean+1 **+59.4pp**，V2 口径 +65.6pp；差距主要是 baseline 在 fx 任务上获得了更多预算），且 guard 在两种锚点下都是 100%。
 
 - 传输无关性验证：`ToolGuard` 本体一行未改，新增的是 `MCPBridge`（含重连）/`MCPMultiBackend`（多 server 路由 + 未注册别名）adapter；
-- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **115 passed**（全仓 403 passed，另有 1 failed + 20 errors 为与本仓库无关的 Windows 临时目录 ACL 环境错误）。
+- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **116 passed**（全仓 403 passed，另有 1 failed + 20 errors 为与本仓库无关的 Windows 临时目录 ACL 环境错误）。
 
 artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_demo_v2.json)（历史协议），V3 [`benchmarks/toolguard/mcp_demo_v3.json`](benchmarks/toolguard/mcp_demo_v3.json)（当前主口径；`experiment=ToolGuard_mcp_multiserver_live_ab_v3_baseline_anchor`、`protocol.budget_anchor=baseline`；本轮用 `--from-records` 从 checkpoint 重建生成元数据，records/aggregate 未变）。
 
@@ -159,7 +174,7 @@ artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp
 
 - `guard >= baseline` 在**所有模型 × 所有条件**成立（artifact `consistency` 字段）；
 - **“能力越弱，中间件收益越大”不成立**：qwen3.8-flash 紧预算提升 **+46.7pp**（45.2%→91.9%），mid/strong 为 **+48.4pp / +45.2pp**，最大的是 mid 而不是最弱模型；去掉 HN 任务后三个模型的提升变为 **+40.7 / +42.6 / +38.9pp**（cheap / mid / strong），mid 仍然最大——排序不变，但幅度下降，说明 HN 契约缺陷放大了 guard 收益；
-- **HN schema drift 占比披露（P1-1）**：两臂共享同一个故意不一致的 `get_hn_item` schema（schema 声明 string，后端要求 int；baseline 踩中后失败，guard 用 error-hint coercion 修复，这不是单向作弊）。但它在 headline 中占比不小：单模型 clean+1 baseline 的 42 个失败里 **10 个（23.8%）** 是 HN 相关任务；多模型 baseline 失败中 HN 占比 **deepseek 23.3% / qwen-flash 20.6% / qwen4-max 25.0%**。因此“placement 27/31、29/31”是“模型 + 是否踩到被故意做坏的 schema”的混合结果，**不是纯模型能力**；去掉 HN 任务后的主数字见上一条。把 HN 单独成臂 + 一致 schema 对照需要重跑 live（预算与成本见本轮修复报告，待批准），本轮没有重跑；
+- **HN schema drift 占比披露（P1-1）**：多模型 V3 两臂共享同一个故意不一致的 `get_hn_item` schema（schema 声明 string，后端要求 int；baseline 踩中后失败，guard 用 error-hint coercion 修复）。它在多模型 baseline 失败中占比 **deepseek 23.3% / qwen-flash 20.6% / qwen4-max 25.0%**，因此“placement 27/31、29/31”是“模型 + 是否踩到被故意做坏的 schema”的混合结果，**不是纯模型能力**；去掉 HN 任务后的主数字见上一条。**单模型已在 V4 主口径修正该 schema（见第二轮结果）；多模型仍是 drift 版本、本轮未重跑**，其重跑成本约 558 格 / $2.1 / 1h，见“下一步”；
 - **贵模型没有买到“无故障鲁棒性”**：qwen4-max 单价比 qwen3.8-flash 高约 9 倍，但 fault-free placement（29/31、3.29 轮）没有超过 DeepSeek-Flash（31/31、3.32 轮）。三个模型都会踩同一类失败（HN `story_id` 契约不匹配），说明这类问题不是模型能力问题而是**工具契约问题**——正好是中间件该管的；
 - **V3 后 guard 残余失败已不再是数据漂移**：qwen3.8-flash 的 5 个 clean+1 guard 失败全部可归因于**弱模型自身行为**（如声称 `get_weather` 不可用、GDP 数值编造 $106,588、答非所问回答 France），另两个模型 guard 失败为 0。V2 里那些 HN karma 漂移造成的假阴性已消失；
 - 成本：评测 $2.08（qwen4-max 占 80%）+ calibration $0.30 ≈ **$2.38**（数据集比 V2 少一个任务，故略低）。
@@ -202,7 +217,7 @@ artifact：[`benchmarks/toolguard/live_demo_multimodel_v3.json`](benchmarks/tool
 
 ## 产物与复现溯源
 
-每个 artifact 都能追溯到产生它的代码/任务池版本。**任务池随版本演进**（V1 20 任务 → V2 32 任务 → V3 31 任务、漂移加固 GT），因此历史 artifact 的数字与当前脚本默认输出不保证逐位一致；历史数字用对应 commit 的代码复现，当前主口径用 V3。
+每个 artifact 都能追溯到产生它的代码/任务池版本。**任务池随版本演进**（V1 20 任务 → V2 32 任务 → V3 31 任务、漂移加固 GT → V4 同任务池仅修 HN 契约），因此历史 artifact 的数字与当前脚本默认输出不保证逐位一致；历史数字用对应 commit 的代码复现，**当前主口径：单模型 V4、多模型 V3（HN drift，未重跑）、MCP v3**。
 
 | Artifact | 实验 | 产生 commit | 复现 |
 |---|---|---|---|
@@ -210,13 +225,14 @@ artifact：[`benchmarks/toolguard/live_demo_multimodel_v3.json`](benchmarks/tool
 | `live_demo.json` | live v1：6 API / 27 短任务 / 两条件 | `b0564ae` | `python scripts/run_live_demo.py` |
 | `live_demo_hard.json` | 困难任务 V1：20 任务 / 单预算 | `02ac71a` | checkout `02ac71a` 后运行 V1 脚本 |
 | `live_demo_hard_v2.json` | 单模型预算扫描 V2：32 任务 / 3 档预算 / 重复 | `43c4e89` | checkout `43c4e89` 后运行 `run_live_demo_hard_v2.py` |
-| `live_demo_hard_v3.json` | 单模型预算扫描 V3：31 任务 / 漂移加固 GT（当前单模型主口径；本轮用 `--from-records` 重建，重算 failure_mode、修 reproduce 路径，**数字未变**） | `8c76d4c` 产物，本轮未重跑 | `--from-records` 重建；全新运行见快速开始 `--mode calibrate` + `--workers 2` |
+| `live_demo_hard_v3.json` | 单模型预算扫描 V3：31 任务 / 漂移加固 GT / **HN schema drift（契约修复能力演示，非当前主口径）**；本轮用 `--from-records` 重建，重算 failure_mode、修 reproduce 路径，**数字未变** | `8c76d4c` 产物，本轮未重跑 | `--hn-schema drifting` + `--from-records` 重建（见快速开始） |
+| `live_demo_hard_v4.json` | 单模型预算扫描 **V4（当前主口径）**：V3 31 任务池 + HN 契约修正（consistent schema）；310 格，clean+1 baseline 59/93 vs guard 93/93 | 本轮（重跑） | `--hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json --output benchmarks/toolguard/live_demo_hard_v4.json`（复用 V3 预算锚点） |
 | `mcp_demo.json` | MCP V1：单 server / 10 任务 | `b1d7609` | checkout `b1d7609` |
 | `mcp_demo_v2.json` | MCP V2：双 server / 崩溃重连 / catalog drift / 16 任务（历史协议） | `a1f8b23` | checkout `a1f8b23` |
 | `mcp_demo_v3.json` | MCP V3：baseline/guard **分开校准**、以 baseline fault-free 轮数做预算锚点 | 本轮（重跑） | `--mode calibrate`（两臂分开测）+ `--budget-anchor baseline --workers 2` |
 | `live_demo_multimodel.json` | 多模型 V2：3 模型 / 576 格（含直播 karma 任务） | `fb13a1f` | checkout `fb13a1f` |
 | `live_demo_multimodel_v3.json` | 多模型 V3：3 模型 / 558 格 / 漂移加固 GT（当前多模型主口径；本轮用 `--from-records` 重建，重算 failure_mode、补 `tasks_per_model`、修 reproduce 路径，**数字未变**） | `dcd5f20` 产物，本轮未重跑 | `--from-records` 重建；全新运行见 `--mode calibrate` + `--mode eval` |
-| `live_demo_hard_v3_hnconsistent.json` | HN schema drift **一致 schema 对照**：31 任务 / clean+1 / 3 repeats / 186 格（只改 `get_hn_item.story_id` 类型） | 本轮（重跑） | `--budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2` |
+| `live_demo_hard_v3_hnconsistent.json` | HN schema drift **归因对照**（促成 V4 修复）：31 任务 / clean+1 / 3 repeats / 186 格；baseline 51/93→61/93，HN 子集 2/12→12/12 | 本轮（重跑） | `--budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json` |
 
 一致性由 `python scripts/validate_toolguard_artifacts.py`（以及 `tests/test_toolguard/test_artifact_contracts.py`）检查：artifact 的 aggregate 中 **success/rate/Wilson/turns/tokens/tool_errors/p 等所有派生字段**都必须能从逐条 records 重算（`src/tool_evolution/toolguard/artifact_metrics.py`），`metrics.json` 的比率与 schema 漏斗由同一模块复算；必须有 limitations/reproduce、复现脚本必须存在、多模型 `tasks_per_model` 快照必须与每条记录的 `expected` 一致。篡改上述任一字段都会被 `tests/test_toolguard/test_artifact_tamper.py` 的负例抓住。V3 多模型 artifact 产生于关系验证器之前，用新验证器离线重判 **504 条比较类记录，success 变化 0**（`python scripts/rescore_toolguard_verifier.py`，只读、不改 artifact）。
 
@@ -242,10 +258,14 @@ python scripts/toolguard_cli.py repair \
 python scripts/run_live_demo.py
 python scripts/run_live_demo.py --max-turns 4 --p-timeout 0.35 --p-rate-limit 0.15
 
-# 单模型预算扫描（V3 任务池 31 任务 + 漂移加固 GT）：先校准无故障轮数，再跑 3 档预算 + 重复（约 30 分钟，2 worker）
-python scripts/run_live_demo_hard_v2.py --mode calibrate --calibration .scratch/toolguard/hard_calibration_v3.json
-python scripts/run_live_demo_hard_v2.py --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json \
-  --output benchmarks/toolguard/live_demo_hard_v3.json
+# 单模型预算扫描（V4 当前主口径：31 任务 + HN 契约修正；约 25 分钟，2 worker）
+# 预算锚点复用 V3 的 calibration（同一逐任务 fault-free 轮数，schema 是唯一变量）。
+# 若要做一次全新校准，也可先跑：python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4.json
+python scripts/run_live_demo_hard_v2.py --hn-schema consistent --workers 2 \
+  --calibration .scratch/toolguard/hard_calibration_v3.json \
+  --output benchmarks/toolguard/live_demo_hard_v4.json
+# V4 artifact 从 checkpoint 记录重建（免费、不调用 API）：重算 aggregate/failure_mode、修 reproduce 路径
+python scripts/run_live_demo_hard_v2.py --from-records --output benchmarks/toolguard/live_demo_hard_v4.json
 
 # MCP 集成：双 stdio server + server 崩溃重连 + catalog drift（需要真实进程管道，不能在工作区沙箱内运行）
 python scripts/run_mcp_demo_v2.py --mode calibrate
@@ -256,11 +276,14 @@ python scripts/run_mcp_demo_v2.py --budget-anchor baseline --workers 2 \
   --calibration .scratch/toolguard/mcp_calibration_v3.json \
   --output benchmarks/toolguard/mcp_demo_v3.json
 
-# HN schema drift 一致 schema 对照实验（2026-11-24 P1-1）：只把 get_hn_item.story_id 改成 integer
+# HN schema drift 归因对照（2026-11-24 P1-1，促成 V4 修复）：只把 get_hn_item.story_id 改成 integer
 python scripts/run_live_demo_hard_v2.py --budgets clean+1 --repeats clean+1:3 --hn-schema consistent \
   --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json \
   --output benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json
-# V3 artifact 从 checkpoint 记录重建（免费、不调用 API）：重算 aggregate/failure_mode、修 reproduce 路径
+# V3 HN-drift 能力演示 artifact 的复现/重建（历史，非主口径；用旧 calibration 与 drifting schema）
+python scripts/run_live_demo_hard_v2.py --hn-schema drifting --workers 2 \
+  --calibration .scratch/toolguard/hard_calibration_v3.json \
+  --output benchmarks/toolguard/live_demo_hard_v3.json
 python scripts/run_live_demo_hard_v2.py --from-records --output benchmarks/toolguard/live_demo_hard_v3.json
 
 # 多模型复制：需要 TOOLEVO_QWEN_API_KEY（qwen3.8-flash + qwen4-max）与 TOOLEVO_DEEPSEEK_API_KEY
@@ -279,7 +302,7 @@ python scripts/rescore_toolguard_verifier.py
 python -m pytest tests/test_toolguard -q -p no:cacheprovider
 ```
 
-> task-pool 版本：V1 20 任务、V2 32 任务、V3 31 任务（漂移加固）。历史 artifact 用对应 commit 的代码复现（见上表），**当前主口径：单模型 `live_demo_hard_v3.json`，多模型 `live_demo_multimodel_v3.json`，MCP `mcp_demo_v3.json`，HN 对照 `live_demo_hard_v3_hnconsistent.json`**。
+> task-pool 版本：V1 20 任务、V2 32 任务、V3/V4 31 任务（V4 = V3 + HN 契约修正）。历史 artifact 用对应 commit 的代码复现（见上表），**当前主口径：单模型 `live_demo_hard_v4.json`，多模型 `live_demo_multimodel_v3.json`（HN drift 未重跑），MCP `mcp_demo_v3.json`**；HN 归因对照为 `live_demo_hard_v3_hnconsistent.json`，V3 单模型保留为契约修复能力演示。
 > 多模型轴的 key 放在仓库根 `.env`（见 [.env.example](.env.example)），`.env` 已 gitignore，永不提交。
 
 artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.json)（含完整口径、分规则验证与局限）
@@ -294,15 +317,15 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - 数据解析把 **20 条**无法解析的 observation 按成功处理（0.07%），可能低估真实失败；30,120 是**记录调用/重试次数**，来自 7,636 条 trace（764 个唯一 query、2,303 个唯一 (query, tool)），不是 30,120 个独立任务；
 - live 单模型结果来自 `deepseek-v4-flash`；多模型轮覆盖 **qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max** 三个模型（cheap/strong 同属 Qwen 家族），是**复制**而非模型间假设检验；
 - 故障/崩溃/漂移都是**确定性注入**，不是生产观测；`clean+N` 预算锚定在“每任务一次无故障 calibration”，calibration 本身是点估计；
-- `clean+1` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 45–53%”；正确读法是**成功-预算曲线**：预算越低 baseline 越差、guard 恒定；预算充足时成功率持平、guard 成本更低；
-- 任务池随版本演进（V1 20 / V2 32 / V3 31 任务，且 V3 换了 ground truth）：**不同 artifact 的绝对数字不要横向逐位比较**；同一 artifact 内的 baseline-vs-guard 配对才是有效证据，跨版本请以 V3 主口径为准；
+- `clean+1` 是受控压力条件，不能解读为“真实生产故障率下 baseline 会失败 X%”；正确读法是**成功-预算曲线**：预算越低 baseline 越差、guard 恒定；预算充足时成功率持平、guard 成本更低；
+- 任务池随版本演进（V1 20 / V2 32 / V3/V4 31 任务，V3→V4 只改 HN schema）：**不同 artifact 的绝对数字不要横向逐位比较**；同一 artifact 内的 baseline-vs-guard 配对才是有效证据，跨版本请以 **V4 主口径**为准（V3 与 V4 的受控差异见第二轮）；
 - 直播可变 ground truth：V3 已把会漂移的 HN karma 换成不可变账号创建年份，并在每个模型块前重建 ground truth；但天气/FX 仍是当前值，跨模型块/跨 run 的瞬时偏差仍可能带来极小量假阴性；artifact 的 tasks 元数据如从 checkpoint 重建，数值可能与运行时刻略有差异（`--from-records` 现在会从记录的 `expected` 快照重建 `tasks_per_model`，不再丢快照）；
-- **验证器（P0-3）**：比较类任务已改为关系断言（winner 必须被断言、与数值排序一致，处理否定词/million 等单位/多候选；V1 的版本比较也改成真正的版本号比较）。用新验证器离线重判已提交 artifact 的 **504 条**比较类记录，success **0 变化**（397→397），说明已提交数据未被发现污染；但旧验证器无法排除反向答案，旧成功率只能视为上界。V1 两个 artifact 没有保存逐条 answer，无法离线重判；
-- **失败模式分类（P0 附带）**：旧 `classify_failure()` 会被 expected 里的 story_id/经纬度等 metadata 标量误触发，把“完全没回答”标成 `format_miss`。代码已修（只考虑答案字段）；两个 V3 artifact 已用 `--from-records` 从 checkpoint 重建并**重算了 failure_mode**（多模型 V3：format_miss 20→3、no_expected_value 2→19，其余标签不变），reproduce 输出路径同时修正；**未重跑 live**；
-- **HN schema drift 占比 + 一致 schema 对照实验（P1-1，已执行）**：旧 V3（HN schema 故意不一致）clean+1 baseline 51/93（54.8%），其中 HN 子集 2/12、非 HN 49/81；guard 93/93。新做的**一致 schema 对照**（把 `get_hn_item.story_id` 改成 integer，其余任务/seed/预算完全相同，186 格）baseline **61/93（65.6%）**：HN 子集 **12/12**、非 HN **49/81（与旧 run 逐格相同）**；guard 93/93。归因：HN 契约缺陷贡献 baseline-vs-guard 差距的 **10/42 = 23.8%**，其余 32 格来自真实的瞬态故障修复；非 HN 子集两次运行完全一致，说明对照干净。成本 $0.18、墙钟 658s。artifact：[`benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json`](benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json)；
+- **验证器（P0-3）**：比较类任务已改为关系断言（winner 必须被断言、与数值排序一致，处理否定词/million 等单位/多候选；V1 的版本比较也改成真正的版本号比较）。用新验证器离线重判已提交 artifact 的 **594 条**比较类记录（含 V4），success **0 变化**（477→477），说明已提交数据未被发现污染；但旧验证器无法排除反向答案，旧成功率只能视为上界。V1 两个 artifact 没有保存逐条 answer，无法离线重判；
+- **失败模式分类（P0 附带）**：旧 `classify_failure()` 会被 expected 里的 story_id/经纬度等 metadata 标量误触发，把“完全没回答”标成 `format_miss`。代码已修（只考虑答案字段）；V4 主口径在生成时即用修正后的分类器；两个 V3 artifact 已用 `--from-records` 从 checkpoint 重建并**重算了 failure_mode**（多模型 V3：format_miss 20→3、no_expected_value 2→19，其余标签不变），reproduce 输出路径同时修正；
+- **HN schema drift 已在单模型 V4 主口径修复（P1-1）**：V3 主口径故意注入的 `get_hn_item` schema/后端类型不一致，在 V4 中改为一致 integer schema；预算锚点复用 V3 calibration，因此 V3→V4 的受控差异 = HN 契约修复。结果：HN 子集 baseline clean+1 **2/12 → 12/12**，主口径 baseline **51/93 → 59/93**、差距 **42 → 34 格**（非 HN 独立复跑 ±2 格波动），34 格现在全部来自真实瞬态故障修复。V3 保留为“契约修复能力演示”（guard 用 backend error-hint coercion 达 HN 12/12）；归因对照 `live_demo_hard_v3_hnconsistent.json`（186 格，$0.18/658s）。**多模型仍是 drift 版本、未重跑**；
 - **MCP baseline 预算不对称（P1-2，已重跑修正）**：旧 V2 用 guard 校准 budget；新 `mcp_demo_v3.json` 两臂分别校准、预算锚定 baseline fault-free 轮数。结果：clean+1 baseline **13/32（40.6%）** vs guard **32/32（100%）**（p=3.81e-06）、clean+4 14/16 vs 16/16；baseline 在 fx 任务上获得更多预算（这是更公平而非更弱的对照），guard 优势仍为 +59.4pp。旧 V2 artifact 保留为历史；
 - qwen4-max 在本任务集上没有表现出比 DeepSeek-Flash 更强的 fault-free 能力（V3：29/31 vs 31/31），"贵模型=更可靠"不成立；
 - MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
 - MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
 - 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
-- 下一步（待执行）：① MCP baseline/guard 分开校准的新 artifact 结果已写入 `mcp_demo_v3.json`（见“产物与复现溯源”与局限）；② 继续修正 schema 索引保真度（日期参数类型、空参数列表）后再看离线覆盖是否还能提升；③ 用真实线上故障 trace 替代部分注入；④ 两个较强模型的紧预算 guard 已到 100%，需要更难的题/更紧的预算；⑤ 把 HN 一致 schema 对照实验扩展到多模型（本轮只做了单模型）。
+- 下一步（待执行）：① 把 HN 契约修正（V4）扩展到**多模型 V3**：按同一协议重跑 558 格 + 校准，约 **$2.1 / 1h**（本轮只做了单模型，已获批准范围未含此预算）；② 继续修正 schema 索引保真度（日期参数类型、空参数列表）后再看离线覆盖是否还能提升；③ 用真实线上故障 trace 替代部分注入；④ 两个较强模型的紧预算 guard 已到 100%，需要更难的题/更紧的预算。

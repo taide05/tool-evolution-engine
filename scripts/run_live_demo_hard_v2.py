@@ -290,7 +290,7 @@ def run_one(client: DeepSeekClient, item: dict, args: argparse.Namespace) -> dic
     task = item["task"]
     for attempt in range(2):
         try:
-            backend = LiveHardBackend(hn_schema_consistent=args.hn_schema == "consistent")
+            backend = LiveHardBackend(hn_schema=args.hn_schema)
             faulty = FaultyBackend(
                 backend,
                 seed=args.seed + item["repeat"] * 101,
@@ -346,7 +346,7 @@ def run_calibration(client: DeepSeekClient, tasks: list[dict], args: argparse.Na
     calibration: dict[str, dict] = {}
     print("\n=== calibration: fault-free turn requirement ===")
     for task in tasks:
-        backend = LiveHardBackend(hn_schema_consistent=args.hn_schema == "consistent")
+        backend = LiveHardBackend(hn_schema=args.hn_schema)
         run = run_task(client, backend, task["question"], None, max_turns=args.clean_max_turns)
         success = bool(task["verifier"](run.answer, task["expected"]))
         calibration[task["id"]] = {"turns": run.turns, "success": success, "exhausted": run.exhausted}
@@ -409,11 +409,12 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
         return 2
     wall_seconds = round(time.perf_counter() - started, 1)
 
-    hn_schema = "consistent" if args.hn_schema == "consistent" else "drifting"
+    hn_schema = args.hn_schema
     summary = build_artifact_summary(
         records=records, tasks=tasks, skipped=skipped, conditions=conditions,
         repeats=repeats, calibration=calibration, wall_seconds=wall_seconds,
         hn_schema=hn_schema,
+        calibration_source=str(calibration_path) if calibration_path.exists() else None,
         fault={"attempts_to_fail": args.attempts_to_fail, "p_timeout": args.p_timeout,
                "p_rate_limit": args.p_rate_limit, "p_server_error": args.p_server_error,
                "seed": args.seed, "workers": args.workers},
@@ -435,6 +436,7 @@ def build_artifact_summary(
     calibration: dict[str, dict],
     wall_seconds: float | None,
     hn_schema: str,
+    calibration_source: str | None,
     fault: dict,
     rebuilt_from_records: bool,
 ) -> dict:
@@ -448,49 +450,74 @@ def build_artifact_summary(
     limitations = list(V2_LIMITATIONS)
     if hn_schema == "consistent":
         limitations.append(
-            "HN consistent-schema control run: the get_hn_item schema is fixed to integer for "
-            "both arms; this run exists only to measure the schema-drift contribution and is "
-            "not an independent task-pool version.")
+            "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item "
+            "schema declares story_id as integer, matching the backend and the real Hacker News "
+            "API, so the synthetic contract mismatch is no longer injected into this run. The "
+            "drifting variant is kept only as the targeted contract-repair demonstration "
+            "(live_demo_hard_v3.json) with its attribution control "
+            "(live_demo_hard_v3_hnconsistent.json).")
+    else:
+        limitations.append(
+            "Targeted contract-repair demo run: the agent-visible get_hn_item schema declares "
+            "story_id as string while the backend requires an integer (synthetic drift, kept "
+            "only for capability demonstration; it is not the main protocol after the "
+            "2026-11-25 review decision).")
     if rebuilt_from_records:
         limitations.append(
             "This artifact was rebuilt from the committed checkpoint records by "
             "`--from-records` (no new model calls); failure-mode labels were recomputed from "
             "answer+expected with the fixed metadata-aware classifier, and the reproduce "
-            "commands point at the V3 output path (2026-11-24 review P2-1/P2-7).")
+            "commands point at the current V4 output path (2026-11-24 review P2-1/P2-7).")
+    if calibration_source and "hard_calibration_v3" in calibration_source:
+        limitations.append(
+            "Budget calibration was reused from the V3 drift run "
+            f"({calibration_source}) so that the HN schema is the only manipulated variable "
+            "between the V3 and V4 artifacts: every task keeps the exact same fault-free turn "
+            "requirement (and therefore the same clean+N budget) in both runs.")
     reproduce = [
-        "python scripts/run_live_demo_hard_v2.py --mode calibrate",
-        "python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v3.json",
-        "python scripts/run_live_demo_hard_v2.py --from-records --output benchmarks/toolguard/live_demo_hard_v3.json"
+        ("python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent "
+         "--calibration .scratch/toolguard/hard_calibration_v4.json"
+         if calibration_source and "hard_calibration_v3" not in calibration_source else ""),
+        "python scripts/run_live_demo_hard_v2.py --hn-schema "
+        f"{hn_schema} --workers 2 --calibration "
+        f"{calibration_source or '.scratch/toolguard/hard_calibration_v4.json'} "
+        "--output benchmarks/toolguard/live_demo_hard_v4.json",
+        "python scripts/run_live_demo_hard_v2.py --from-records "
+        "--output benchmarks/toolguard/live_demo_hard_v4.json"
         if rebuilt_from_records else
         ("python scripts/run_live_demo_hard_v2.py --budgets clean+1 --repeats clean+1:3 "
-         "--hn-schema consistent --workers 2 "
+         "--hn-schema drifting --workers 2 "
          "--calibration .scratch/toolguard/hard_calibration_v3.json "
-         "--output benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json"
-         if hn_schema == "consistent" else
-         "python scripts/run_live_demo_hard_v2.py --budgets clean+1 --repeats clean+1:3 "
-         "--workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json "
-         "--output .scratch/toolguard/live_demo_hard_v3_clean1_only.json"),
+         "--output benchmarks/toolguard/live_demo_hard_v3.json"
+         if hn_schema == "drifting" else ""),
         "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
     ]
+    reproduce = [entry for entry in reproduce if entry]
     return {
         "artifact_version": 2,
-        "experiment": ("ToolGuard_hard_multistep_live_ab_v3_task_pool_hn_schema_consistent"
+        "experiment": ("ToolGuard_hard_multistep_live_ab_v4_task_pool_hn_consistent"
                        if hn_schema == "consistent"
-                       else "ToolGuard_hard_multistep_live_ab_v3_task_pool"),
+                       else "ToolGuard_hard_multistep_live_ab_v3_task_pool_hn_drift_demo"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
         "protocol": {
-            "task_pool": "V3 drift-hardened 31-task pool: HN account-creation year instead of live "
-                         "karma; ground truth built from the same live APIs before the eval",
+            "task_pool": ("V4: the V3 drift-hardened 31-task pool with the HN contract fixed "
+                          "(schema matches backend, 2026-11-25 review decision); ground truth "
+                          "built from the same live APIs before the eval"
+                          if hn_schema == "consistent" else
+                          "V3 drift-hardened 31-task pool (targeted HN contract-drift demo); "
+                          "ground truth built from the same live APIs before the eval"),
             "hn_schema": hn_schema,
-            "hn_schema_note": ("consistent-control run: the agent-visible get_hn_item schema "
-                               "declares story_id as integer (matching the backend) instead of the "
-                               "deliberately mismatched released schema (string); everything else "
-                               "is identical to the main V3 run, so the difference isolates the "
-                               "schema-drift contribution"
+            "hn_schema_note": ("consistent contract (main protocol): get_hn_item.story_id is an "
+                               "integer in the agent-visible schema, matching the backend and the "
+                               "real HN API; the synthetic drift is not injected here. The "
+                               "drift-based repair capability is demonstrated separately in "
+                               "live_demo_hard_v3.json and its attribution control "
+                               "live_demo_hard_v3_hnconsistent.json"
                                if hn_schema == "consistent" else
-                               "released schema as-is: get_hn_item declares story_id as string "
-                               "while the backend requires an integer (intentional contract bug)"),
+                               "targeted demo only: get_hn_item declares story_id as string while "
+                               "the backend requires an integer (synthetic contract bug kept to "
+                               "demonstrate error-hint coercion repair)"),
             "rebuilt_from_records": rebuilt_from_records,
             "arms": list(ARMS),
             "budget_conditions": {
@@ -505,6 +532,7 @@ def build_artifact_summary(
             "calibration": {
                 "description": "one fault-free run per task measured the turn requirement that anchors "
                                "the budget sweep",
+                "source": calibration_source or "embedded",
                 "tasks": {task["id"]: calibration.get(task["id"], {"turns": task["min_turns"]})
                           for task in tasks},
             },
@@ -520,8 +548,7 @@ def build_artifact_summary(
             },
             "tool_surface": {
                 "tools": [tool["function"]["name"]
-                          for tool in LiveHardBackend(
-                              hn_schema_consistent=hn_schema == "consistent").schemas()],
+                          for tool in LiveHardBackend(hn_schema=hn_schema).schemas()],
                 "apis": ["api.worldbank.org", "geocoding-api.open-meteo.com", "api.open-meteo.com",
                          "pypi.org", "hacker-news.firebaseio.com", "open.er-api.com"],
             },
@@ -572,7 +599,9 @@ def run_from_records(args: argparse.Namespace) -> int:
     summary = build_artifact_summary(
         records=records, tasks=tasks, skipped=checkpoint.get("skipped") or [],
         conditions=conditions, repeats=repeats, calibration=calibration,
-        wall_seconds=protocol.get("wall_seconds"), hn_schema="drifting",
+        wall_seconds=protocol.get("wall_seconds"),
+        hn_schema=protocol.get("hn_schema") or "drifting",
+        calibration_source=(protocol.get("calibration") or {}).get("source"),
         fault={"attempts_to_fail": fault_injection.get("attempts_to_fail"),
                "p_timeout": fault_injection.get("p_timeout"),
                "p_rate_limit": fault_injection.get("p_rate_limit"),
@@ -602,10 +631,11 @@ def main() -> int:
     parser.add_argument("--p-server-error", type=float, default=0.08)
     parser.add_argument("--attempts-to-fail", type=int, default=2)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--hn-schema", choices=("drifting", "consistent"), default="drifting",
-                        help="drifting: released get_hn_item schema (story_id string, backend "
-                             "requires integer); consistent: schema fixed to integer for both arms "
-                             "(HN schema-drift control experiment)")
+    parser.add_argument("--hn-schema", choices=("drifting", "consistent"), default="consistent",
+                        help="consistent (default, main protocol after the 2026-11-25 review "
+                             "decision): get_hn_item.story_id integer in the agent-visible schema, "
+                             "matching the backend; drifting: intentionally mismatched released "
+                             "schema (string) kept only for the targeted contract-repair demo")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--from-records", action="store_true",
                         help="rebuild the artifact at --output from its checkpoint records (no "

@@ -41,9 +41,12 @@ from tool_evolution.toolguard.artifact_metrics import (  # noqa: E402
 )
 
 RECORD_BASED = (
+    "live_demo_hard_v4.json",
     "live_demo_hard_v3.json",
+    "live_demo_hard_v3_hnconsistent.json",
     "live_demo_hard_v2.json",
     "live_demo_hard.json",
+    "mcp_demo_v3.json",
     "mcp_demo_v2.json",
     "live_demo_multimodel_v3.json",
     "live_demo_multimodel.json",
@@ -304,8 +307,8 @@ def collect(root: Path | None = None) -> dict:
     offline = _load("metrics.json", root)
     if offline:
         summary["offline"] = _offline(offline)
-    for name in ("live_demo_hard_v3.json", "live_demo_hard_v2.json",
-                 "live_demo_hard_v3_hnconsistent.json"):
+    for name in ("live_demo_hard_v4.json", "live_demo_hard_v3.json",
+                 "live_demo_hard_v3_hnconsistent.json", "live_demo_hard_v2.json"):
         data = _load(name, root)
         if data:
             summary[name.removesuffix(".json")] = _single_model(data)
