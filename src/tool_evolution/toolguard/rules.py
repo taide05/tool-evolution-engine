@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .records import FunctionSchema
+from .schema_check import validate_arguments
 
 ERROR_ORDER = (
     "no_such_function",
@@ -84,6 +85,18 @@ class RepairResult:
     arguments: dict[str, Any] | None = None
     schema_valid: bool = False
     reason: str = ""
+    # A *proposed* repair is any candidate the strategy ladder produced, whether or not it
+    # passed structural schema validation.  Counting only `repairable` hid the proposals
+    # that schema validation rejected (the old constructional 100%).
+    proposed: bool = False
+    schema_errors: list[str] = field(default_factory=list)
+    rejected_proposals: list[str] = field(default_factory=list)
+    # every candidate the ladder produced (accepted or not), with its arguments; used for
+    # the evidence report and by the evaluator's recorded-success verification tier
+    candidates: list[dict] = field(default_factory=list)
+    # accepted via an *exact recorded successful invocation* of the same task/function
+    # (empirical evidence, deliberately kept separate from schema validity)
+    value_verified: bool = False
 
     @property
     def changed_function(self) -> bool:
@@ -135,14 +148,17 @@ def _repair_function_name(tool_name: str, arguments: dict[str, Any],
         return RepairResult(kind="no_such_function", repairable=False,
                             reason=f"no close available function (best ratio {best_ratio:.2f})")
     schema = schemas.get(best_name)
-    valid = _validate(best_name, arguments, schema, available_tools)
+    errors = _validate(best_name, arguments, schema, available_tools)
+    valid = not errors
     return RepairResult(
         kind="no_such_function",
-        repairable=bool(schema),
+        repairable=valid,
+        proposed=True,
         rules=["function_name_resolution"],
         function_name=best_name,
         arguments=dict(arguments),
         schema_valid=valid,
+        schema_errors=errors,
         reason=f"resolved to available function (similarity {best_ratio:.2f})",
     )
 
@@ -169,10 +185,11 @@ def _repair_unexpected_kwarg(tool_name: str, arguments: dict[str, Any], error: s
             rules.append(f"arg_drop:{name}")
     if not rules:
         return RepairResult(kind="unexpected_kwarg", repairable=False, reason="no unexpected argument found")
-    valid = _validate(tool_name, repaired, schema, None)
-    return RepairResult(kind="unexpected_kwarg", repairable=True, rules=rules,
+    errors = _validate(tool_name, repaired, schema, None)
+    return RepairResult(kind="unexpected_kwarg", repairable=not errors, proposed=True, rules=rules,
                         function_name=tool_name, arguments=repaired,
-                        schema_valid=valid, reason="dropped/renamed arguments outside schema")
+                        schema_valid=not errors, schema_errors=errors,
+                        reason="dropped/renamed arguments outside schema")
 
 
 def _repair_missing_required(tool_name: str, arguments: dict[str, Any], error: str,
@@ -200,11 +217,12 @@ def _repair_missing_required(tool_name: str, arguments: dict[str, Any], error: s
         else:
             unfilled.append(name)
     if filled and not unfilled:
-        valid = _validate(tool_name, repaired, schema, None)
-        return RepairResult(kind="missing_required", repairable=valid,
+        errors = _validate(tool_name, repaired, schema, None)
+        return RepairResult(kind="missing_required", repairable=not errors, proposed=True,
                             rules=[f"fill_required_from_schema:{','.join(sorted(filled))}"],
                             function_name=tool_name, arguments=repaired,
-                            schema_valid=valid, reason="filled required params from schema defaults/examples")
+                            schema_valid=not errors, schema_errors=errors,
+                            reason="filled required params from schema defaults/examples")
     reason = f"filled={filled} unfilled={unfilled}" if (filled or unfilled) else "no recoverable parameter value"
     return RepairResult(kind="missing_required", repairable=False, reason=reason)
 
@@ -233,9 +251,10 @@ def _repair_value_coercion(tool_name: str, arguments: dict[str, Any],
             rules.append(f"coerce_bool:{name}")
     if not rules:
         return RepairResult(kind="invalid_value", repairable=False, reason="no type coercion opportunity")
-    return RepairResult(kind="invalid_value", repairable=True, rules=rules,
+    errors = _validate(tool_name, repaired, schema, None)
+    return RepairResult(kind="invalid_value", repairable=not errors, proposed=True, rules=rules,
                         function_name=tool_name, arguments=repaired,
-                        schema_valid=_validate(tool_name, repaired, schema, None),
+                        schema_valid=not errors, schema_errors=errors,
                         reason="coerced argument types to schema")
 
 
@@ -243,14 +262,13 @@ def _repair_value_coercion(tool_name: str, arguments: dict[str, Any],
 # helpers
 # ---------------------------------------------------------------------------
 def _validate(tool_name: str, arguments: dict[str, Any], schema: FunctionSchema | None,
-              available_tools: list[str] | None) -> bool:
+              available_tools: list[str] | None) -> list[str]:
+    """Return structural schema violations for a repaired call (empty list = valid)."""
     if available_tools is not None and available_tools and tool_name not in available_tools:
-        return False
+        return [f"function {tool_name!r} is not in the agent-visible tool list"]
     if schema is None:
-        return False
-    if any(name not in schema.properties for name in arguments):
-        return False
-    return all(name in arguments and arguments[name] not in ("", None) for name in schema.required)
+        return [f"no schema for function {tool_name!r}"]
+    return validate_arguments(arguments, schema)
 
 
 def _parse_missing_params(error: str) -> list[str]:

@@ -83,10 +83,22 @@ def test_unexpected_keyword_is_dropped_or_renamed():
 
 
 def test_function_name_resolution_picks_available_tool():
-    result = repair_call("search_for_wether", {}, "No such function name: search_for_wether",
-                         ["search_for_weather", "search_for_news"], SCHEMAS)
-    assert result.repairable
-    assert result.function_name == "search_for_weather"
+    # Name resolution alone is not enough: the resolved call must also pass the stricter
+    # structural schema check, so with no arguments it is *proposed* but rejected.
+    unresolved = repair_call("search_for_wether", {}, "No such function name: search_for_wether",
+                             ["search_for_weather", "search_for_news"], SCHEMAS)
+    assert unresolved.proposed
+    assert not unresolved.repairable
+    assert unresolved.function_name == "search_for_weather"
+    assert any("city" in error for error in unresolved.schema_errors)
+
+    # With the required argument present the same resolution is a valid repair.
+    resolved = repair_call("search_for_wether", {"city": "Paris"},
+                           "No such function name: search_for_wether",
+                           ["search_for_weather", "search_for_news"], SCHEMAS)
+    assert resolved.repairable
+    assert resolved.schema_valid
+    assert resolved.function_name == "search_for_weather"
 
 
 def test_memory_replay_uses_previous_success():

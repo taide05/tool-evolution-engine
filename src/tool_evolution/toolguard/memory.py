@@ -98,8 +98,11 @@ def _schema_score(arguments: dict[str, Any], schema: FunctionSchema | None) -> i
 
 
 def schema_valid(arguments: dict[str, Any], schema: FunctionSchema | None) -> bool:
-    if schema is None:
-        return False
-    if any(name not in schema.properties for name in arguments):
-        return False
-    return all(name in arguments and arguments[name] not in ("", None) for name in schema.required)
+    """True when the argument set is structurally valid against the schema.
+
+    Delegates to :mod:`tool_evolution.toolguard.schema_check`, which validates types,
+    enums, formats, bounds and required/extra parameters — not just parameter names.
+    """
+    from .schema_check import schema_valid as _schema_valid
+
+    return _schema_valid(arguments, schema)

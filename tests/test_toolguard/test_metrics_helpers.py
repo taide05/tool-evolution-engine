@@ -10,7 +10,10 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from run_live_demo_hard_v2 import parse_budgets, parse_repeats, resolve_budget  # noqa: E402
-from run_multimodel_live import estimate_cost  # noqa: E402
+from run_multimodel_live import (  # noqa: E402
+    _tasks_per_model_from_records,
+    estimate_cost,
+)
 from tool_evolution.toolguard.verify import (  # noqa: E402
     contains_number,
     contains_text,
@@ -18,6 +21,25 @@ from tool_evolution.toolguard.verify import (  # noqa: E402
     numbers,
     wilson_interval,
 )
+
+
+def test_from_records_rebuilds_per_model_expected_snapshots() -> None:
+    """P2-2: rebuilding from a checkpoint must keep each model's ground-truth snapshot."""
+    tasks = [
+        {"id": "t1", "question": "q1", "expected": {"v": 1}, "min_turns": 2},
+        {"id": "t2", "question": "q2", "expected": {"v": 2}, "min_turns": 3},
+    ]
+    records = [
+        {"model_key": "m1", "task": "t1", "expected": {"v": 10}, "category": "c"},
+        {"model_key": "m1", "task": "t2", "expected": {"v": 20}, "category": "c"},
+        {"model_key": "m2", "task": "t1", "expected": {"v": 11}, "category": "c"},
+        {"model_key": "m2", "task": "t2", "expected": {"v": 21}, "category": "c"},
+    ]
+    snapshot = _tasks_per_model_from_records(records, tasks)
+    assert [task["id"] for task in snapshot["m1"]] == ["t1", "t2"]
+    assert snapshot["m1"][0]["expected"] == {"v": 10}
+    assert snapshot["m2"][1]["expected"] == {"v": 21}
+    assert snapshot["m1"][0]["question"] == "q1"
 
 
 def test_wilson_interval_contains_point_estimate() -> None:

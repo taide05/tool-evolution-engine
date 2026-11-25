@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .live import sleep_s
+from .schema_check import validate_against_parameters
 
 # Transport-level failures are retryable: a broken MCP session/pipe is recovered by
 # reconnecting (MCPBridge) and retrying the call.  ``request_error`` is what the HTTP
@@ -31,6 +32,12 @@ class GuardEvent:
     repaired_function: str = ""
     repaired_arguments: dict[str, Any] = field(default_factory=dict)
     recovered: bool = False
+    # Structural schema validation of the *repaired* call before it is sent to the backend.
+    # A rejected repair is recorded here and never silently swallowed.
+    schema_validated: bool = False
+    schema_unavailable: bool = False
+    schema_errors: list[str] = field(default_factory=list)
+    schema_overrides: dict[str, str] = field(default_factory=dict)
 
 
 def live_error_kind(message: str | None) -> str:
@@ -96,7 +103,8 @@ class ToolGuard:
         self.events: list[GuardEvent] = []
         self._schemas = _schemas_by_name(backend)
         self.stats = {"calls": 0, "recovered": 0, "failed_after_repair": 0, "original_errors": 0,
-                      "retry_sleep_s": 0.0}
+                      "retry_sleep_s": 0.0, "schema_rejected": 0, "schema_validated": 0,
+                      "schema_unchecked": 0}
 
     def call(self, function_name: str, arguments: dict[str, Any]):
         self.stats["calls"] += 1
@@ -113,21 +121,26 @@ class ToolGuard:
             resolved = self._resolve_function_name(requested) if requested else None
             if resolved is not None:
                 result = self._attempt_repaired(resolved, arguments, event,
-                                                "function_name_resolution", repaired_function=resolved)
+                                                "function_name_resolution", original_result=result,
+                                                repaired_function=resolved)
                 if result.ok:
                     self.events.append(event)
                     return result
         elif kind == "invalid_argument":
-            hinted = self._coerce_from_error_hint(arguments, result.error or "")
-            if hinted is not None:
-                result = self._attempt_repaired(function_name, hinted, event, "error_hint_coercion")
+            hint = self._coerce_from_error_hint(arguments, result.error or "")
+            if hint is not None:
+                hinted, overrides = hint
+                result = self._attempt_repaired(function_name, hinted, event,
+                                                "error_hint_coercion", original_result=result,
+                                                type_overrides=overrides)
                 if result.ok:
                     self.events.append(event)
                     return result
             parameters = self._schemas.get(function_name) or {}
             coerced = coerce_arguments(function_name, arguments, parameters)
             if coerced != arguments:
-                result = self._attempt_repaired(function_name, coerced, event, "schema_coercion")
+                result = self._attempt_repaired(function_name, coerced, event,
+                                                "schema_coercion", original_result=result)
                 if result.ok:
                     self.events.append(event)
                     return result
@@ -140,14 +153,35 @@ class ToolGuard:
 
     # -- repair strategies --------------------------------------------------
     def _attempt_repaired(self, function_name: str, repaired_arguments: dict[str, Any],
-                          event: GuardEvent, rule: str, repaired_function: str = ""):
-        """Try a repaired call; transient faults on the *repaired* call are retried too.
+                          event: GuardEvent, rule: str, original_result,
+                          repaired_function: str = "",
+                          type_overrides: dict[str, str] | None = None):
+        """Validate a repaired call against the agent-visible schema, then send it.
 
-        Found from the live traces: a type repair (e.g. HN ``story_id`` string -> int)
-        used to surface a transient fault on the repaired call straight back to the agent,
-        which then spent extra turns retrying.  The repaired call now gets the same
-        in-middleware transient retry as an original call.
+        A repair that fails structural validation is *recorded* (``schema_errors``,
+        rule suffix ``:schema_rejected``, ``stats["schema_rejected"]``) and the original
+        error is returned to the agent instead of sending an invalid call.  If the target
+        function is not in the agent-visible tool list (e.g. a hidden real tool recovered
+        from catalog drift), there is no schema to validate against; that is recorded as
+        ``schema_unavailable`` instead of being silently treated as valid.  Transient faults
+        on the *repaired* call are still retried inside the middleware (see live traces).
         """
+        if function_name not in self._schemas:
+            event.schema_unavailable = True
+            self.stats["schema_unchecked"] += 1
+        else:
+            parameters = self._schemas.get(function_name) or {}
+            errors = validate_against_parameters(repaired_arguments, parameters,
+                                                 type_overrides=type_overrides)
+            event.schema_overrides = dict(type_overrides or {})
+            if errors:
+                event.rule = f"{rule}:schema_rejected"
+                event.schema_errors = errors
+                event.recovered = False
+                self.stats["schema_rejected"] += 1
+                return original_result
+            event.schema_validated = True
+            self.stats["schema_validated"] += 1
         event.rule = rule
         event.repaired_arguments = repaired_arguments
         if repaired_function:
@@ -194,8 +228,16 @@ class ToolGuard:
             return None
         return best_name
 
-    def _coerce_from_error_hint(self, arguments: dict[str, Any], error: str) -> dict[str, Any] | None:
-        """Use the tool's own error text, e.g. ``story_id must be an integer``."""
+    def _coerce_from_error_hint(self, arguments: dict[str, Any], error: str
+                                ) -> tuple[dict[str, Any], dict[str, str]] | None:
+        """Use the tool's own error text, e.g. ``story_id must be an integer``.
+
+        Returns the repaired arguments plus the type override the backend asserted.  The
+        advertised schema can itself be the drifting/buggy artefact (the HN ``story_id``
+        schema deliberately advertises ``string`` while the backend requires an int), so the
+        backend's own error is the authoritative type for that parameter; the override is
+        recorded on the guard event rather than silently widening the advertised schema.
+        """
         match = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s+must be (?:an?\s+)?(integer|number)", error.lower())
         if not match:
             return None
@@ -209,7 +251,7 @@ class ToolGuard:
                 return None
             repaired = dict(arguments)
             repaired[key] = int(number) if expected == "integer" and number.is_integer() else number
-            return repaired
+            return repaired, {key: expected}
         return None
 
     def _retry(self, function_name: str, arguments: dict[str, Any], result, event: GuardEvent,
@@ -237,8 +279,17 @@ class ToolGuard:
         if not search.ok or not isinstance(search.response, dict):
             return result
         titles = search.response.get("results") or []
+        parameters = self._schemas.get(function_name) or {}
         for title in titles[:2]:
-            candidate = self.backend.call(function_name, {"title": title})
+            candidate_arguments = {"title": title}
+            errors = validate_against_parameters(candidate_arguments, parameters)
+            if errors:
+                event.rule = "fallback_tool_chain:schema_rejected"
+                event.schema_errors = errors
+                self.stats["schema_rejected"] += 1
+                continue
+            event.schema_validated = True
+            candidate = self.backend.call(function_name, candidate_arguments)
             if candidate.ok:
                 event.rule = "fallback_tool_chain"
                 event.repaired_function = fallback_function

@@ -138,33 +138,60 @@ def _bridge_restarts(multi: MCPMultiBackend) -> int:
 
 
 def run_calibration(client: DeepSeekClient, tasks: list[dict], args: argparse.Namespace) -> int:
+    """Measure the fault-free turn requirement for **both** arms, separately.
+
+    The 2026-11-24 review (P1-2) found that the original calibration ran with the
+    middleware enabled, which anchors the baseline's budget on guard-calibrated turns.
+    This calibration records ``turns`` (guard, legacy key), ``guard_turns`` and
+    ``baseline_turns`` for every task, so the evaluator can anchor the budget on either
+    arm and the asymmetry is measurable.
+    """
     calibration: dict[str, dict] = {}
-    print("\n=== calibration: fault-free MCP turn requirement (middleware on) ===")
+    print("\n=== calibration: fault-free MCP turn requirement (baseline and guard) ===")
     multi = start_multi_backend(fault=None, crash_after=0)
     try:
-        guard = ToolGuard(multi, sleep_scale=0.05)
         for task in tasks:
-            run = run_task(client, multi, task["question"], guard, max_turns=args.clean_max_turns)
-            success = bool(task["verifier"](run.answer, task["expected"]))
-            calibration[task["id"]] = {"turns": run.turns, "success": success, "exhausted": run.exhausted}
-            print(f"  {task['id']:40s} success={success!s:5s} turns={run.turns} calls={run.tool_calls} "
-                  f"repairs={guard.stats['recovered']}")
+            baseline_run = run_task(client, multi, task["question"], None,
+                                    max_turns=args.clean_max_turns)
+            baseline_success = bool(task["verifier"](baseline_run.answer, task["expected"]))
+            guard = ToolGuard(multi, sleep_scale=0.05)
+            guard_run = run_task(client, multi, task["question"], guard,
+                                 max_turns=args.clean_max_turns)
+            guard_success = bool(task["verifier"](guard_run.answer, task["expected"]))
+            calibration[task["id"]] = {
+                "turns": guard_run.turns,  # legacy key = guard-calibrated turns
+                "guard_turns": guard_run.turns,
+                "baseline_turns": baseline_run.turns,
+                "success": guard_success,
+                "baseline_success": baseline_success,
+                "exhausted": guard_run.exhausted,
+                "baseline_exhausted": baseline_run.exhausted,
+            }
+            print(f"  {task['id']:40s} baseline success={baseline_success!s:5s} "
+                  f"turns={baseline_run.turns} | guard success={guard_success!s:5s} "
+                  f"turns={guard_run.turns} repairs={guard.stats['recovered']}")
     finally:
         multi.close()
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
-        "protocol": "fault-free MCP run per task with the middleware enabled (repairs are free), "
-                    "used as the turn-requirement anchor for the budget sweep",
+        "protocol": "fault-free MCP run per task, measured separately with the middleware "
+                    "disabled (baseline_turns) and enabled (guard_turns); the budget sweep can "
+                    "be anchored on either arm (--budget-anchor)",
         "tasks": calibration,
     }
     path = Path(args.calibration)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     failed = [task_id for task_id, row in calibration.items() if not row["success"]]
-    print(f"\ncalibration success {len(calibration) - len(failed)}/{len(calibration)}; wrote {path}")
+    baseline_failed = [task_id for task_id, row in calibration.items()
+                       if not row.get("baseline_success")]
+    print(f"\ncalibration success guard {len(calibration) - len(failed)}/{len(calibration)}, "
+          f"baseline {len(calibration) - len(baseline_failed)}/{len(calibration)}; wrote {path}")
     if failed:
-        print(f"WARNING: tasks not solvable in a fault-free run: {failed}")
+        print(f"WARNING: tasks not solvable with middleware in a fault-free run: {failed}")
+    if baseline_failed:
+        print(f"WARNING: tasks not solvable without middleware in a fault-free run: {baseline_failed}")
     return 0
 
 
@@ -232,9 +259,11 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
         print(f"WARNING: no calibration file at {calibration_path}; budgets fall back to min_turns")
 
     items: list[dict] = []
+    anchor_key = "baseline_turns" if getattr(args, "budget_anchor", "guard") == "baseline" else "turns"
     for condition in conditions:
         for task in tasks:
-            clean_turns = max(task["min_turns"], int(calibration.get(task["id"], {}).get("turns") or 0))
+            anchor_turns = int(calibration.get(task["id"], {}).get(anchor_key) or 0)
+            clean_turns = max(task["min_turns"], anchor_turns)
             budget = resolve_budget(condition, clean_turns)
             for repeat in range(repeats[condition]):
                 for arm in ARMS:
@@ -272,15 +301,93 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
         return 2
     wall_seconds = round(time.perf_counter() - started, 1)
 
+    summary = build_artifact_summary(
+        records=records, tasks=tasks, calibration=calibration, skipped=skipped,
+        conditions=conditions, repeats=repeats, advertised=advertised,
+        tool_names=tool_names, wall_seconds=wall_seconds,
+        fault={"rate": args.p_fault, "attempts_to_fail": args.attempts_to_fail,
+               "seed": args.seed, "crash_after": args.crash_after},
+        budget_anchor=getattr(args, "budget_anchor", "guard"),
+        rebuilt_from_records=False)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("\n=== budget curve ===")
+    print(json.dumps(summary["aggregate"]["budget_curve"], ensure_ascii=False, indent=2))
+    print("\n=== guard repairs by rule ===")
+    print(json.dumps(summary["guard_repairs_by_rule"], ensure_ascii=False))
+    print(f"\nwrote {output} (wall {wall_seconds}s)")
+    return 0
+
+
+def build_artifact_summary(
+    *,
+    records: list[dict],
+    tasks: list[dict],
+    calibration: dict,
+    skipped: list[str],
+    conditions: list[str],
+    repeats: dict[str, int],
+    advertised: list[str],
+    tool_names: list[str],
+    wall_seconds: float | None,
+    fault: dict,
+    budget_anchor: str,
+    rebuilt_from_records: bool,
+) -> dict:
+    """Build the MCP artifact payload from records (live runner and --from-records)."""
     aggregate_block = aggregate(records)
     repair_rules: dict[str, int] = {}
     for record in records:
         for event in record["guard_events"]:
             rule = event["rule"].split(":")[0]
             repair_rules[rule] = repair_rules.get(rule, 0) + 1
-    summary = {
+    repaired_run = budget_anchor == "baseline"
+    limitations = [
+        "The server crash and the catalog drift are deterministic injected scenarios (call "
+        f"#{fault.get('crash_after')} of the worldbank server; alias {DRIFT_ALIAS}), not observed "
+        "production incidents; everything else (stdio transport, process death, reconnects, "
+        "tool routing, HTTP, LLM) is real.",
+        "Single model (deepseek-v4-flash) and repeat seeds vary only the injected fault "
+        "surface, not model sampling.",
+        "A fresh pair of MCP server processes is started per cell, so cold HTTP caches make "
+        "runs slower and fault assignment depends on the calls the cell actually makes.",
+        "MCP stdio needs real pipe handles, so this runner needs full local access; the test "
+        "suite covers the same adapter logic with the SDK in-memory transport.",
+        "Free public APIs are not production grade and API drift can affect reruns.",
+        ("Measured in both arms: the budget sweep is anchored on the baseline "
+         "(middleware-disabled) fault-free turn requirement, so the baseline is not held to a "
+         "guard-calibrated budget (2026-11-24 review P1-2)."
+         if repaired_run else
+         "Historical protocol limitation: the budget sweep is anchored on the guard-calibrated "
+         "fault-free turn requirement, so the baseline gets a guard-calibrated budget "
+         "(2026-11-24 review P1-2). Use --budget-anchor baseline for the corrected run."),
+    ]
+    if rebuilt_from_records:
+        limitations.append(
+            "This artifact was rebuilt from the committed checkpoint records by `--from-records` "
+            "(no new model calls); the aggregate and guard repair counts were recomputed from the "
+            "records and the experiment id now names the corrected protocol.")
+    if repaired_run:
+        reproduce = [
+            "python scripts/run_mcp_demo_v2.py --mode calibrate "
+            "--calibration .scratch/toolguard/mcp_calibration_v3.json",
+            "python scripts/run_mcp_demo_v2.py --budget-anchor baseline --workers 2 "
+            "--calibration .scratch/toolguard/mcp_calibration_v3.json "
+            "--output benchmarks/toolguard/mcp_demo_v3.json",
+            "python scripts/run_mcp_demo_v2.py --from-records "
+            "--output benchmarks/toolguard/mcp_demo_v3.json",
+            "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
+        ]
+    else:
+        reproduce = [
+            "python scripts/run_mcp_demo_v2.py --mode calibrate",
+            "python scripts/run_mcp_demo_v2.py --workers 2 --output benchmarks/toolguard/mcp_demo_v2.json",
+            "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
+        ]
+    return {
         "artifact_version": 2,
-        "experiment": "ToolGuard_mcp_multiserver_live_ab_v2",
+        "experiment": ("ToolGuard_mcp_multiserver_live_ab_v3_baseline_anchor"
+                       if repaired_run else "ToolGuard_mcp_multiserver_live_ab_v2"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
         "protocol": {
@@ -299,17 +406,26 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
                 for condition in conditions
             },
             "repeats": repeats,
-            "workers": args.workers,
+            "workers": None,
             "wall_seconds": wall_seconds,
+            "rebuilt_from_records": rebuilt_from_records,
+            "budget_anchor": budget_anchor,
+            "budget_anchor_note": ("per-task turn budget anchored on the **baseline** "
+                                   "(middleware-disabled) fault-free turn requirement; the same "
+                                   "budget is then used for both arms"
+                                   if repaired_run else
+                                   "per-task turn budget anchored on the guard-calibrated "
+                                   "fault-free turn requirement (historical protocol; the "
+                                   "2026-11-24 review flagged this as asymmetric)"),
             "failure_modes_injected": {
                 "server_transient_fault_epoch": {
-                    "rate": args.p_fault,
-                    "attempts_to_fail": args.attempts_to_fail,
-                    "seed": args.seed,
+                    "rate": fault.get("rate"),
+                    "attempts_to_fail": fault.get("attempts_to_fail"),
+                    "seed": fault.get("seed"),
                     "note": "deterministic server-side isError epochs (timeout / 429 / 5xx)",
                 },
                 "server_process_crash": {
-                    "crash_after_call": args.crash_after,
+                    "crash_after_call": fault.get("crash_after"),
                     "note": "the worldbank server process exits abruptly during that call; the stdio "
                             "session really breaks, the adapter reconnects a fresh process, and the "
                             "middleware retries the call as a retryable request_error",
@@ -322,8 +438,9 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
                             "function-name similarity rule)",
                 },
             },
-            "calibration": "fault-free MCP run per task with middleware enabled; the turn count anchors "
-                           "the budget sweep",
+            "calibration": "fault-free MCP run per task measured separately with the middleware "
+                           "disabled (baseline_turns) and enabled (guard_turns); the budget sweep "
+                           "anchor is recorded in budget_anchor",
             "tool_surface": {
                 "advertised_tools": sorted(advertised),
                 "real_tools": sorted(tool_names),
@@ -338,32 +455,48 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
         "aggregate": aggregate_block,
         "guard_repairs_by_rule": repair_rules,
         "key_findings": key_findings(aggregate_block),
-        "limitations": [
-            "The server crash and the catalog drift are deterministic injected scenarios (call "
-            f"#{args.crash_after} of the worldbank server; alias {DRIFT_ALIAS}), not observed "
-            "production incidents; everything else (stdio transport, process death, reconnects, "
-            "tool routing, HTTP, LLM) is real.",
-            "Single model (deepseek-v4-flash) and repeat seeds vary only the injected fault "
-            "surface, not model sampling.",
-            "A fresh pair of MCP server processes is started per cell, so cold HTTP caches make "
-            "runs slower and fault assignment depends on the calls the cell actually makes.",
-            "MCP stdio needs real pipe handles, so this runner needs full local access; the test "
-            "suite covers the same adapter logic with the SDK in-memory transport.",
-            "Free public APIs are not production grade and API drift can affect reruns.",
-        ],
-        "reproduce": [
-            "python scripts/run_mcp_demo_v2.py --mode calibrate",
-            "python scripts/run_mcp_demo_v2.py --workers 2 --output benchmarks/toolguard/mcp_demo_v2.json",
-            "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
-        ],
+        "limitations": limitations,
+        "reproduce": reproduce,
     }
+
+
+def run_from_records(output: Path) -> int:
+    """Rebuild the MCP artifact from its committed checkpoint records (no live/MCP calls).
+
+    Used to regenerate generated metadata (experiment id / rebuilt flag) after a runner change
+    without spending API budget; aggregate and repair counts are recomputed from the records.
+    """
+    checkpoint = json.loads(output.read_text(encoding="utf-8"))
+    records = checkpoint.get("records") or []
+    tasks = checkpoint.get("tasks") or []
+    if not records or not tasks:
+        print(f"ERROR: checkpoint {output} has no records/tasks", file=sys.stderr)
+        return 2
+    protocol = checkpoint.get("protocol") or {}
+    conditions = list((protocol.get("budget_conditions") or {}).keys())
+    repeats = protocol.get("repeats") or {condition: 1 for condition in conditions}
+    tool_surface = protocol.get("tool_surface") or {}
+    fault_blocks = protocol.get("failure_modes_injected") or {}
+    fault = {
+        "rate": (fault_blocks.get("server_transient_fault_epoch") or {}).get("rate"),
+        "attempts_to_fail": (fault_blocks.get("server_transient_fault_epoch") or {}).get(
+            "attempts_to_fail"),
+        "seed": (fault_blocks.get("server_transient_fault_epoch") or {}).get("seed"),
+        "crash_after": (fault_blocks.get("server_process_crash") or {}).get("crash_after_call"),
+    }
+    summary = build_artifact_summary(
+        records=records, tasks=tasks, calibration=checkpoint.get("calibration") or {},
+        skipped=checkpoint.get("skipped") or [], conditions=conditions, repeats=repeats,
+        advertised=tool_surface.get("advertised_tools") or [],
+        tool_names=tool_surface.get("real_tools") or [],
+        wall_seconds=protocol.get("wall_seconds"),
+        fault=fault, budget_anchor=protocol.get("budget_anchor") or "guard",
+        rebuilt_from_records=True)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("\n=== budget curve ===")
-    print(json.dumps(aggregate_block["budget_curve"], ensure_ascii=False, indent=2))
-    print("\n=== guard repairs by rule ===")
-    print(json.dumps(repair_rules, ensure_ascii=False))
-    print(f"\nwrote {output} (wall {wall_seconds}s)")
+    print(f"rebuilt {output}: experiment={summary['experiment']}, "
+          f"budget_anchor={summary['protocol']['budget_anchor']}, "
+          f"records={len(summary['records'])}")
     return 0
 
 
@@ -381,10 +514,20 @@ def main() -> int:
     parser.add_argument("--attempts-to-fail", type=int, default=2)
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--calibration", default=DEFAULT_CALIBRATION)
+    parser.add_argument("--budget-anchor", choices=("guard", "baseline"), default="guard",
+                        help="arm whose fault-free turn requirement anchors the per-task budget; "
+                             "'baseline' is the corrected symmetric protocol (2026-11-24 P1-2)")
     parser.add_argument("--clean-max-turns", type=int, default=14)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--from-records", action="store_true",
+                        help="rebuild the artifact at --output from its checkpoint records (no live "
+                             "MCP/model calls): recompute aggregate, repair counts and generated "
+                             "metadata such as the experiment id")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     args = parser.parse_args()
+
+    if args.from_records:
+        return run_from_records(Path(args.output))
 
     conditions = parse_budgets(args.budgets)
     repeats = parse_repeats(args.repeats, conditions)

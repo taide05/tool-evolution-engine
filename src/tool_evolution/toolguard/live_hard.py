@@ -346,14 +346,34 @@ HARD_TOOLS: dict[str, ToolSpec] = {
 
 
 class LiveHardBackend:
-    """Calls real public APIs over the extended tool set."""
+    """Calls real public APIs over the extended tool set.
 
-    def __init__(self, tools: dict[str, ToolSpec] | None = None):
+    ``hn_schema_consistent=True`` advertises the *consistent* HN contract
+    (``story_id`` integer) instead of the deliberately mismatched released schema
+    (string).  This exists only to run the 2026-11-24 review's controlled experiment:
+    same tasks / same fault seeds, one arm where the contract bug is removed, so the
+    contribution of the HN schema drift to the baseline-vs-guard gap can be measured.
+    """
+
+    def __init__(self, tools: dict[str, ToolSpec] | None = None,
+                 hn_schema_consistent: bool = False):
         self.tools = tools or HARD_TOOLS
+        self.hn_schema_consistent = hn_schema_consistent
         self.stats = {"calls": 0, "ok": 0, "errors": 0}
 
     def schemas(self) -> list[dict[str, Any]]:
-        return [tool.openai_schema() for tool in self.tools.values()]
+        schemas = [tool.openai_schema() for tool in self.tools.values()]
+        if self.hn_schema_consistent:
+            for schema in schemas:
+                function = schema.get("function") or {}
+                if function.get("name") == "get_hn_item":
+                    properties = function.setdefault("parameters", {}).setdefault(
+                        "properties", {})
+                    properties["story_id"] = {
+                        "type": "integer",
+                        "description": "Numeric HN item id",
+                    }
+        return schemas
 
     def call(self, function_name: str, arguments: dict[str, Any]):
         from .backend import CallResult

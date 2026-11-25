@@ -1,10 +1,13 @@
 {
   "artifact_version": 2,
   "experiment": "ToolGuard_hard_multistep_live_ab_v3_task_pool",
-  "generated_at": "2026-11-24T04:23:51.837558+00:00",
+  "generated_at": "2026-11-25T03:26:25.274327+00:00",
   "model": "deepseek-v4-flash",
   "protocol": {
     "task_pool": "V3 drift-hardened 31-task pool: HN account-creation year instead of live karma; ground truth built from the same live APIs before the eval",
+    "hn_schema": "drifting",
+    "hn_schema_note": "released schema as-is: get_hn_item declares story_id as string while the backend requires an integer (intentional contract bug)",
+    "rebuilt_from_records": true,
     "arms": [
       "baseline",
       "guard"
@@ -12083,11 +12086,13 @@
     "Task-pool provenance: V1 artifact = 20 tasks (commit 02ac71a), V2 artifact = 32 tasks (commit 43c4e89), V3 artifact = 31 tasks with drift-hardened ground truth (HN karma replaced by immutable account-creation year, commit 8ad347e). This runner now produces the V3 task-pool artifact; older artifacts are reproduced from their commits.",
     "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has no live-mutable HN karma tasks.",
     "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
-    "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit."
+    "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
+    "This artifact was rebuilt from the committed checkpoint records by `--from-records` (no new model calls); failure-mode labels were recomputed from answer+expected with the fixed metadata-aware classifier, and the reproduce commands point at the V3 output path (2026-11-24 review P2-1/P2-7)."
   ],
   "reproduce": [
     "python scripts/run_live_demo_hard_v2.py --mode calibrate",
-    "python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v2.json",
+    "python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v3.json",
+    "python scripts/run_live_demo_hard_v2.py --from-records --output benchmarks/toolguard/live_demo_hard_v3.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]
 }

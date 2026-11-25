@@ -432,6 +432,13 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
             "workers": args.workers,
             "wall_seconds": wall_seconds,
             "finalised_from_checkpoint": bool(getattr(args, "from_records", False)),
+            "failure_modes_recomputed": bool(getattr(args, "from_records", False)),
+            "failure_modes_note": (
+                "rebuilt from the checkpoint: failure-mode labels were recomputed from "
+                "answer+expected with the fixed metadata-aware classifier (2026-11-24 review), "
+                "and tasks_per_model was rebuilt from the per-record expected snapshots"
+                if getattr(args, "from_records", False) else
+                "failure modes classified at run time with the fixed metadata-aware classifier"),
             "fault_injection": {
                 "model": "deterministic transient fault epochs (first N attempts fail) per logical call",
                 "attempts_to_fail": args.attempts_to_fail,
@@ -482,7 +489,8 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
         ],
         "reproduce": [
             "python scripts/run_multimodel_live.py --mode calibrate",
-            "python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel.json",
+            "python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel_v3.json",
+            "python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json",
             "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
         ],
     }
@@ -492,6 +500,36 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
     print(f"\nestimated experiment cost: ${total_cost}")
     print(f"wrote {output} (wall {wall_seconds}s)")
     return 0
+
+
+def _tasks_per_model_from_records(records: list[dict], tasks: list[dict]) -> dict[str, list[dict]]:
+    """Reconstruct each model's ground-truth snapshot from the checkpoint records.
+
+    ``--from-records`` rebuilds the artifact from the checkpoint, so the per-model `expected`
+    snapshots must come from the records themselves (each record stores the snapshot it was
+    verified against) instead of being silently dropped to ``{}`` (2026-11-24 review P2-2).
+    """
+    by_id = {task["id"]: task for task in tasks}
+    order = {task["id"]: index for index, task in enumerate(tasks)}
+    per_model: dict[str, dict[str, dict]] = {}
+    for row in records:
+        key = row.get("model_key")
+        if not key:
+            continue
+        bucket = per_model.setdefault(key, {})
+        if row["task"] in bucket:
+            continue
+        base = by_id.get(row["task"]) or {"id": row["task"]}
+        snapshot = {field: value for field, value in base.items() if field != "verifier"}
+        if "expected" in row:
+            snapshot["expected"] = row["expected"]
+        if "category" in row:
+            snapshot["category"] = row["category"]
+        bucket[row["task"]] = snapshot
+    return {
+        key: sorted(bucket.values(), key=lambda task: order.get(task["id"], 10 ** 9))
+        for key, bucket in per_model.items()
+    }
 
 
 def run_from_records(tasks: list[dict], skipped: list[str], specs: list[dict],
@@ -506,10 +544,33 @@ def run_from_records(tasks: list[dict], skipped: list[str], specs: list[dict],
     if missing_models:
         print(f"ERROR: checkpoint is missing records for models: {missing_models}", file=sys.stderr)
         return 2
+    tasks_per_model = _tasks_per_model_from_records(records, tasks)
+    # Recompute failure-mode labels from answer + expected with the fixed metadata-aware
+    # classifier: the committed artifact's labels were produced by the old classifier, which
+    # let expected-dict metadata (`story_id`, lat/lon, ...) masquerade as format misses.
+    reclassified = 0
+    for row in records:
+        if row.get("success"):
+            continue
+        expected = row.get("expected")
+        if expected is None:
+            continue
+        old = row.get("failure_mode")
+        new = classify_failure(row.get("answer") or "", expected)
+        if new != old:
+            reclassified += 1
+        row["failure_mode"] = new
+    print(f"failure-mode labels recomputed from answer+expected; changed: {reclassified}")
+    missing_snapshots = [key for key in tasks_per_model
+                         if any("expected" not in task for task in tasks_per_model[key])]
+    if missing_snapshots:
+        print(f"WARNING: checkpoint records for {missing_snapshots} carry no per-record "
+              "`expected` snapshot (older artifact); tasks_per_model will fall back to the "
+              "current task metadata for those models.", file=sys.stderr)
     calibration_payload = json.loads(Path(args.calibration).read_text(encoding="utf-8"))
     calibrations = calibration_payload.get("models", {})
     return finalize(records, specs, calibrations, calibration_payload, tasks, skipped,
-                    args, conditions, repeats, None, output)
+                    args, conditions, repeats, None, output, tasks_per_model)
 
 
 def main() -> int:

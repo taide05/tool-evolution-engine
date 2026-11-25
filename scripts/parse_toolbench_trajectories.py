@@ -54,13 +54,14 @@ def split_model(method: str) -> tuple[str, str]:
     return method, "unknown"
 
 
-def parse_observation(content: str) -> tuple[str | None, Any]:
-    """Return (error_message, response) from a tool observation payload.
+def parse_observation(content: str) -> tuple[str | None, Any, bool]:
+    """Return (error_message, response, parsed_ok) from a tool observation payload.
 
     Some released observations contain raw control characters, so fall back to
     non-strict JSON and finally to a regex extraction of the ``error`` field.
     Unparseable payloads are treated as successful responses (real errors are
-    always carried in the ``error`` field of the virtual API server).
+    always carried in the ``error`` field of the virtual API server) and are
+    counted as unparseable so the artifact can report how many calls that affects.
     """
     text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
     payload: Any = None
@@ -72,14 +73,14 @@ def parse_observation(content: str) -> tuple[str | None, Any]:
             continue
     if isinstance(payload, dict):
         error = payload.get("error")
-        return (str(error) if error else None), payload.get("response")
+        return (str(error) if error else None), payload.get("response"), True
     if payload is not None:
-        return None, payload
+        return None, payload, True
     match = re.search(r'"error"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
     if match:
         error = match.group(1).replace('\\"', '"').replace("\\n", " ").strip()
-        return (error or None), text[:500]
-    return None, text[:500]
+        return (error or None), text[:500], True
+    return None, text[:500], False
 
 
 def iter_answer_files(input_dir: Path, limit_files: int | None = None) -> Iterable[tuple[str, str, Path]]:
@@ -103,7 +104,9 @@ def load_json_loose(path: Path) -> dict:
         return json.loads(text, strict=False)
 
 
-def parse_file(method: str, group: str, path: Path, schemas: dict[str, list[dict]]) -> tuple[list[dict], list[dict], dict]:
+def parse_file(method: str, group: str, path: Path,
+               schemas: dict[str, list[dict]]) -> tuple[list[dict], list[dict], int]:
+    """Return (rows, trace_meta, unparseable_observation_count) for one answer file."""
     data = load_json_loose(path)
     ag = data.get("answer_generation") or {}
     query_id = str(ag.get("query_id") or path.stem.split("_")[0])
@@ -115,6 +118,7 @@ def parse_file(method: str, group: str, path: Path, schemas: dict[str, list[dict
     func_names = [f.get("name") for f in functions if isinstance(f, dict)]
 
     rows: list[dict] = []
+    unparseable = 0
     attempts = ag.get("train_messages") or []
     for try_index, messages in enumerate(attempts):
         if not isinstance(messages, list):
@@ -143,7 +147,9 @@ def parse_file(method: str, group: str, path: Path, schemas: dict[str, list[dict
             if name == "Finish" or observation is None:
                 continue
             step += 1
-            error, response = parse_observation(observation.get("content", ""))
+            error, response, parsed_ok = parse_observation(observation.get("content", ""))
+            if not parsed_ok:
+                unparseable += 1
             rows.append(
                 {
                     "trace_id": f"{method}/{group}/{query_id}/try{try_index}",
@@ -176,7 +182,7 @@ def parse_file(method: str, group: str, path: Path, schemas: dict[str, list[dict
         "valid_data": bool(ag.get("valid_data")),
         "final_answer": str(ag.get("final_answer") or "")[:1000],
     }
-    return rows, [meta], schemas
+    return rows, [meta], unparseable
 
 
 def main() -> int:
@@ -207,11 +213,12 @@ def main() -> int:
     with calls_path.open("w", encoding="utf-8") as calls_fh, traces_path.open("w", encoding="utf-8") as traces_fh:
         for method, group, path in iter_answer_files(input_dir, args.limit_files):
             try:
-                rows, metas, _ = parse_file(method, group, path, schemas)
+                rows, metas, unparseable = parse_file(method, group, path, schemas)
             except Exception as exc:  # noqa: BLE001 - one corrupt release file must not abort the batch
                 stats["skipped_files"] += 1
                 print(f"skip {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
                 continue
+            stats["unparseable_observations"] += unparseable
             for meta in metas:
                 stats["traces"] += 1
                 stats["valid_traces"] += int(meta["valid_data"])
@@ -243,6 +250,8 @@ def main() -> int:
         "ok_calls": stats["ok_calls"],
         "error_calls": stats["error_calls"],
         "error_rate": round(stats["error_calls"] / max(stats["calls"], 1), 4),
+        "unparseable_observations": stats["unparseable_observations"],
+        "unparseable_share": round(stats["unparseable_observations"] / max(stats["calls"], 1), 4),
         "error_kinds": dict(errors_by_kind.most_common()),
         "error_examples": error_examples,
         "top_tools": dict(tool_counts.most_common(20)),

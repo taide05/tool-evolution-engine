@@ -29,11 +29,13 @@ from tool_evolution.toolguard.agent import DeepSeekClient, LLMConfig, run_task  
 from tool_evolution.toolguard.guard import ToolGuard  # noqa: E402
 from tool_evolution.toolguard.live import FaultyBackend, LiveBackend, ToolError  # noqa: E402
 from tool_evolution.toolguard.verify import (  # noqa: E402
+    compare_versions,
     contains_digits,
     contains_number,
     contains_text,
     mcnemar_exact,
     norm_text,
+    verify_higher_version,
 )
 from tool_evolution.utils.config import settings  # noqa: E402
 
@@ -83,10 +85,12 @@ def build_tasks(backend: LiveBackend, max_tasks: int | None) -> tuple[list[dict]
             {"version": numpy["version"]}, lambda a, e: contains_text(a, e["version"]))
         add("pypi_requests_version", "What is the latest released version of the Python package requests?",
             {"version": requests["version"]}, lambda a, e: contains_text(a, e["version"]))
+        packages = {"numpy": numpy["version"], "requests": requests["version"]}
+        higher = "numpy" if compare_versions(packages["numpy"], packages["requests"]) > 0 else "requests"
         add("pypi_newer_package",
             "Compare the latest versions of numpy and requests on PyPI. Which package has the higher version number?",
-            {"numpy": numpy["version"], "requests": requests["version"]},
-            lambda a, e: contains_text(a, e["numpy"]) and contains_text(a, e["requests"]))
+            {"packages": packages, "higher_version": higher},
+            verify_higher_version)
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"pypi tasks: {exc}")
 

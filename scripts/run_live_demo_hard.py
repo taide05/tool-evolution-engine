@@ -44,6 +44,13 @@ from tool_evolution.toolguard.verify import (  # noqa: E402
     contains_number,
     contains_text,
     mcnemar_exact,
+    verify_earliest_of_three,
+    verify_population_compare_list,
+    verify_population_compare_map,
+    verify_pypi_newer_pair,
+    verify_release_vs_hn,
+    verify_weather_compare_pair,
+    verify_weather_compare_scalar,
 )
 from tool_evolution.utils.config import settings  # noqa: E402
 
@@ -135,11 +142,7 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
                 f"{country_b}? For each country use get_country_info for the capital, geocode_city for its "
                 f"coordinates, and get_weather for the temperature. Give both temperatures in degrees Celsius.",
                 expected,
-                lambda answer, expected: (
-                    contains_number(answer, expected["a"]["temperature_c"], 3.0)
-                    and contains_number(answer, expected["b"]["temperature_c"], 3.0)
-                    and (not expected["require_warmer"] or contains_text(answer, expected["warmer_capital"]))
-                ),
+                verify_weather_compare_pair,
                 5)
         except Exception as exc:  # noqa: BLE001
             skipped.append(f"{task_id}: {exc}")
@@ -206,10 +209,7 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
             "country whose capital city is Wellington? Give both populations.",
             {"countries": [country_oslo, country_wellington],
              "populations": [population_oslo, population_wellington], "larger_country": larger},
-            lambda answer, expected: (
-                all(contains_digits(answer, value) for value in expected["populations"])
-                and contains_text(answer, expected["larger_country"])
-            ),
+            verify_population_compare_list,
             4)
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"population_compare_oslo_wellington: {exc}")
@@ -253,11 +253,7 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
                 {"a": {"package": package_a, "version": version_a, "release_date": date_a},
                  "b": {"package": package_b, "version": version_b, "release_date": date_b},
                  "newer": newer},
-                lambda answer, expected: (
-                    contains_text(answer, expected["a"]["release_date"])
-                    and contains_text(answer, expected["b"]["release_date"])
-                    and contains_text(answer, expected["newer"])
-                ),
+                verify_pypi_newer_pair,
                 4)
         except Exception as exc:  # noqa: BLE001
             skipped.append(f"{task_id}: {exc}")
@@ -398,14 +394,7 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
             "World Bank region both countries belong to.",
             {"france": pop_france, "germany": pop_germany, "larger": larger,
              "region_france": france["region"], "region_germany": germany["region"]},
-            lambda answer, expected: (
-                (contains_digits(answer, expected["france"])
-                 or contains_number(answer, expected["france"] / 1e6, 0.05))
-                and (contains_digits(answer, expected["germany"])
-                     or contains_number(answer, expected["germany"] / 1e6, 0.05))
-                and contains_text(answer, expected["larger"])
-                and contains_text(answer, expected["region_germany"])
-            ),
+            verify_population_compare_map,
             4)
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"population_compare_france_germany_region: {exc}")
@@ -418,11 +407,7 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
             "Which happened more recently: the release of the latest version of httpx on PyPI, or the "
             "posting of Hacker News item 1? Give both dates as YYYY-MM-DD.",
             {"httpx_release": httpx_date, "hn_item": hn_date, "newer": newer},
-            lambda answer, expected: (
-                contains_text(answer, expected["httpx_release"])
-                and contains_text(answer, expected["hn_item"])
-                and contains_text(answer, expected["newer"])
-            ),
+            verify_release_vs_hn,
             4)
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"release_vs_hn_item_date: {exc}")
@@ -456,10 +441,7 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
             "Of the latest versions of requests, flask and httpx on PyPI, which one was released earliest? "
             "Give all three release dates as YYYY-MM-DD.",
             {"dates": dates, "earliest": earliest},
-            lambda answer, expected: (
-                all(contains_text(answer, date) for date in expected["dates"].values())
-                and contains_text(answer, expected["earliest"])
-            ),
+            verify_earliest_of_three,
             5)
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"package_earliest_of_three: {exc}")
@@ -511,17 +493,17 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
         canada = weather_chain("Canada")
         gap = abs(australia["temperature_c"] - canada["temperature_c"])
         warmer = australia["capital"] if australia["temperature_c"] >= canada["temperature_c"] else canada["capital"]
+        colder = canada["capital"] if warmer == australia["capital"] else australia["capital"]
+        warmer_temp = australia["temperature_c"] if warmer == australia["capital"] else canada["temperature_c"]
+        colder_temp = canada["temperature_c"] if warmer == australia["capital"] else australia["temperature_c"]
         add("weather_compare_australia_canada",
             "Which capital city is warmer right now: the capital of Australia or the capital of Canada? "
             "Give both temperatures in degrees Celsius and the difference.",
             {"australia": australia["temperature_c"], "canada": canada["temperature_c"],
-             "gap": gap, "warmer": warmer, "require_warmer": gap > 2.0},
-            lambda answer, expected: (
-                contains_number(answer, expected["australia"], 3.0)
-                and contains_number(answer, expected["canada"], 3.0)
-                and contains_number(answer, expected["gap"], 3.5)
-                and (not expected["require_warmer"] or contains_text(answer, expected["warmer"]))
-            ),
+             "gap": gap, "warmer": warmer, "colder": colder,
+             "warmer_temp": warmer_temp, "colder_temp": colder_temp, "require_warmer": gap > 2.0},
+            lambda answer, expected: verify_weather_compare_scalar(
+                answer, expected, loser_names=[expected["colder"]]),
             6)
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"weather_compare_australia_canada: {exc}")

@@ -1,14 +1,26 @@
 """Evaluate ToolGuard repairs on real recorded tool-call failures.
 
 Held-out protocols:
-* ``cross_model`` -- rules/memory/extractors built from chatgpt/toolllama/gpt-3.5
-  traces, evaluated on gpt-4 families.
-* ``cross_group`` -- built from G1/G2 queries, evaluated on the independently
-  worded G3 instruction set (the hard cross-task case).
-* ``lomo``       -- leave-one-model-out over the five model families.
+* ``cross_model`` -- rules/memory/extractors built from the fixed three-model training set
+  (chatgpt/toolllama/gpt-3.5), evaluated on the two gpt-4 families.
+* ``cross_group`` -- built from G1/G2 queries of the fixed three-model training set,
+  evaluated on the independently worded G3 instruction set (the hard cross-task case).
+* ``lomo``       -- **fixed three-model training set, evaluated one model family at a time**
+  (the historical "leave-one-model-out" label; with the default ``fixed-three`` policy the
+  training set is the same for every fold, so it is not a true leave-one-model-out).
+  ``--lomo-train-policy exclude-fold`` runs the true leave-one-model-out sensitivity
+  version, which trains on the remaining four families for each fold.
 
-Evidence beyond "we proposed a repair":
-* schema validity of every repaired call (must be 100%);
+Evidence beyond "we proposed a repair" (two honest evidence tiers):
+* **schema-valid**: the repaired call passes full structural schema validation (types,
+  enums, formats, ranges, required/extra parameters).  ``schema_valid_rate`` is
+  schema-passed / proposed (never passed / kept).  Deterministic type coercion of proposed
+  values to the declared scalar types is attempted first and reported separately
+  (``coerced_repairs``);
+* **value-verified**: a proposal that fails the declared schema is still admitted when it is
+  an *exact* recorded successful invocation of the same task/function (empirical evidence,
+  not schema validity; reported separately as ``value_verified_repairs``).  Accepted repair
+  coverage = schema-passed + value-verified; the two are never mixed in one rate;
 * cache verification against the released real-response cache (subset only);
 * value agreement with a recorded successful call of the same task/function,
   which validates that extracted parameter values are the ones that actually
@@ -48,8 +60,16 @@ def evaluate(
     test_calls: list[ToolCall],
     schemas,
     backend: RecordedBackend | None,
+    train_models: set[str] | None = TRAIN_MODELS,
 ) -> dict:
-    valid_train = [c for c in train_calls if c.model in TRAIN_MODELS]
+    """Evaluate the repair ladder on held-out calls.
+
+    ``train_models`` is the training-set policy: ``TRAIN_MODELS`` means "train only on the
+    fixed three-model training set" (the historical protocol), ``None`` means "use every
+    training call" (true leave-one-model-out when the caller already excluded the fold).
+    The policy is written into the result so the artifact can state it honestly.
+    """
+    valid_train = [c for c in train_calls if train_models is None or c.model in train_models]
     memory = SuccessMemory.build(valid_train, schemas)
     extractor_map = ExtractorMap.learn(valid_train, schemas)
 
@@ -74,32 +94,59 @@ def evaluate(
         kind = classify_error(call.error)
         stats["failures"] += 1
         per_kind[kind]["failures"] += 1
-        result = repair_failure(call, schemas, memory, extractor_map)
+        reference = successes.get((call.group, call.query_id, call.tool_name)) or []
+        result = repair_failure(call, schemas, memory, extractor_map,
+                                successful_arguments=reference)
+        if result.proposed:
+            stats["proposed_repairs"] += 1
+            per_kind[kind]["proposed"] += 1
+            rejected = len(result.rejected_proposals)
+            stats["schema_rejected_proposals"] += rejected
+            per_kind[kind]["schema_rejected_proposals"] += rejected
+
         if not result.repairable:
             per_kind[kind]["unrepairable"] += 1
+            if result.proposed:
+                per_kind[kind]["rejected_failures"] += 1
             continue
-        stats["repairable"] += 1
-        per_kind[kind]["repairable"] += 1
+
+        # two evidence tiers, never mixed into one rate:
+        #   tier 1 = declared-schema-valid (coercion is reported separately)
+        #   tier 2 = exact recorded successful invocation of the same task/function
         if result.schema_valid:
-            stats["schema_valid"] += 1
-            per_kind[kind]["schema_valid"] += 1
-        category = result.rules[0].split(":")[0] if result.rules else "unknown"
+            tier = "schema_valid"
+            stats["schema_passed"] += 1
+            per_kind[kind]["schema_passed"] += 1
+        else:
+            tier = "value_verified"
+            stats["value_verified_repairs"] += 1
+            per_kind[kind]["value_verified"] += 1
+        accepted_rules = list(result.rules)
+        if "schema_type_coercion" in accepted_rules:
+            stats["coerced_repairs"] += 1
+        repaired_function = result.function_name or call.tool_name
+        repaired_arguments = result.arguments
+
+        category = accepted_rules[0].split(":")[0] if accepted_rules else "unknown"
+        stats["accepted_repairs"] += 1
         stats["rule_" + category] += 1
         per_category[category]["repairs"] += 1
-        for rule in result.rules:
+        per_category[category][tier] += 1
+        for rule in accepted_rules:
             rule_hits[rule.split(":")[0]] += 1
         examples.setdefault(kind, {
             "error": (call.error or "")[:160],
             "tool": call.tool_name,
-            "rules": result.rules,
-            "repaired_args": result.arguments,
+            "tier": tier,
+            "rules": accepted_rules,
+            "repaired_args": repaired_arguments,
             "query_head": call.query[:120],
         })
 
         # verification 1: recorded successful invocation of the same task/function
         reference = successes.get((call.group, call.query_id, call.tool_name)) or []
-        if reference and result.arguments is not None:
-            changed = {name: value for name, value in result.arguments.items()
+        if reference and repaired_arguments is not None:
+            changed = {name: value for name, value in repaired_arguments.items()
                        if call.arguments.get(name) != value}
             if changed:
                 stats["value_verifiable"] += 1
@@ -110,8 +157,8 @@ def evaluate(
 
         # verification 2: released real-response cache
         if backend is not None:
-            payload = backend.call(result.function_name or call.tool_name,
-                                   result.arguments if result.arguments is not None else call.arguments)
+            payload = backend.call(repaired_function, repaired_arguments
+                                   if repaired_arguments is not None else call.arguments)
             if payload.status == "miss":
                 verified["cache_miss"] += 1
                 per_category[category]["cache_miss"] += 1
@@ -122,8 +169,11 @@ def evaluate(
                 verified["verified_still_error"] += 1
                 per_category[category]["cache_verified_still_error"] += 1
 
+    accepted = stats["accepted_repairs"]
     return {
         "label": label,
+        "train_models_used": sorted({c.model for c in valid_train}),
+        "train_calls_used": len(valid_train),
         "train_calls": len(train_calls),
         "train_successes": memory.size(),
         "extractor_map": extractor_map.size(),
@@ -132,11 +182,24 @@ def evaluate(
         "test_failure_rate": round(stats["failures"] / max(len(test_calls), 1), 4),
         "skipped_no_schema": stats["skipped_no_schema"],
         "transient_retryable": per_kind.get("server_error", {}).get("failures", 0),
-        "repairable": stats["repairable"],
-        "repair_coverage_of_failures": round(stats["repairable"] / max(stats["failures"], 1), 4),
-        "repair_coverage_of_calls": round(stats["repairable"] / max(len(test_calls), 1), 4),
-        "schema_valid": stats["schema_valid"],
-        "schema_valid_rate": round(stats["schema_valid"] / max(stats["repairable"], 1), 4),
+        # honest two-tier evidence funnel:
+        #   proposed = schema_passed + schema_rejected_failures
+        #   accepted = schema_passed + value_verified_repairs (empirically verified tier)
+        #   schema_valid_rate stays < 1; it is NOT passed/kept.
+        "proposed_repairs": stats["proposed_repairs"],
+        "schema_passed": stats["schema_passed"],
+        "schema_rejected_proposals": stats["schema_rejected_proposals"],
+        "schema_rejected_failures": stats["proposed_repairs"] - stats["schema_passed"],
+        "value_verified_repairs": stats["value_verified_repairs"],
+        "coerced_repairs": stats["coerced_repairs"],
+        "accepted_repairs": accepted,
+        "repairable": accepted,  # legacy alias for the accepted count
+        "schema_valid_rate": round(stats["schema_passed"] / max(stats["proposed_repairs"], 1), 4),
+        "value_verified_rate": round(stats["value_verified_repairs"]
+                                     / max(stats["proposed_repairs"], 1), 4),
+        "accepted_rate": round(accepted / max(stats["proposed_repairs"], 1), 4),
+        "repair_coverage_of_failures": round(accepted / max(stats["failures"], 1), 4),
+        "repair_coverage_of_calls": round(accepted / max(len(test_calls), 1), 4),
         "rule_categories": {key: value for key, value in stats.items() if key.startswith("rule_")},
         "rule_hits": dict(rule_hits),
         "value_verifiable": stats["value_verifiable"],
@@ -157,6 +220,11 @@ def main() -> int:
     parser.add_argument("--cache", default=".scratch/stb/cache/tool_response_cache")
     parser.add_argument("--output", default=".scratch/toolguard/rules_eval.json")
     parser.add_argument("--no-cache", action="store_true")
+    parser.add_argument("--lomo-train-policy", choices=("fixed-three", "exclude-fold"),
+                        default="fixed-three",
+                        help="fixed-three: train only on TRAIN_MODELS (historical protocol); "
+                             "exclude-fold: train on every call outside the held-out fold "
+                             "(true leave-one-model-out)")
     args = parser.parse_args()
 
     calls = [c for c in load_calls(Path(args.calls)) if c.tool_name not in _SENTINEL_CALLS]
@@ -178,32 +246,52 @@ def main() -> int:
     }
 
     families = sorted({c.model for c in calls})
+    lomo_train_models = TRAIN_MODELS if args.lomo_train_policy == "fixed-three" else None
     lomo_folds = {}
     agg = Counter()
     for family in families:
         fold = evaluate(f"lomo:{family}",
                         [c for c in calls if c.model != family],
-                        [c for c in calls if c.model == family], schemas, backend)
+                        [c for c in calls if c.model == family], schemas, backend,
+                        train_models=lomo_train_models)
         lomo_folds[family] = {k: fold[k] for k in (
-            "test_calls", "test_failures", "repairable", "repair_coverage_of_failures",
-            "schema_valid_rate", "value_agreement_rate", "cache_verification", "failures_by_kind")}
+            "test_calls", "test_failures", "proposed_repairs", "schema_rejected_proposals",
+            "schema_passed", "value_verified_repairs", "coerced_repairs", "accepted_repairs",
+            "repair_coverage_of_failures", "schema_valid_rate", "value_verified_rate",
+            "accepted_rate", "value_agreement_rate", "cache_verification",
+            "failures_by_kind", "train_models_used", "train_calls_used")}
         agg["test_calls"] += fold["test_calls"]
         agg["failures"] += fold["test_failures"]
-        agg["repairable"] += fold["repairable"]
-        agg["schema_valid"] += fold["schema_valid"]
+        agg["proposed_repairs"] += fold["proposed_repairs"]
+        agg["schema_rejected_proposals"] += fold["schema_rejected_proposals"]
+        agg["schema_passed"] += fold["schema_passed"]
+        agg["value_verified_repairs"] += fold["value_verified_repairs"]
+        agg["coerced_repairs"] += fold["coerced_repairs"]
+        agg["accepted_repairs"] += fold["accepted_repairs"]
         agg["value_verifiable"] += fold["value_verifiable"]
         agg["value_agreement"] += fold["value_agreement"]
         for key, value in fold["cache_verification"].items():
             agg["cache_verified_" + key] += value
     results["lomo"] = {
+        "train_policy": args.lomo_train_policy,
         "folds": lomo_folds,
         "aggregate": {
             "test_calls": agg["test_calls"],
             "failures": agg["failures"],
-            "repairable": agg["repairable"],
-            "repair_coverage_of_failures": round(agg["repairable"] / max(agg["failures"], 1), 4),
-            "schema_valid": agg["schema_valid"],
-            "schema_valid_rate": round(agg["schema_valid"] / max(agg["repairable"], 1), 4),
+            "proposed_repairs": agg["proposed_repairs"],
+            "schema_passed": agg["schema_passed"],
+            "schema_rejected_proposals": agg["schema_rejected_proposals"],
+            "schema_rejected_failures": agg["proposed_repairs"] - agg["schema_passed"],
+            "value_verified_repairs": agg["value_verified_repairs"],
+            "coerced_repairs": agg["coerced_repairs"],
+            "accepted_repairs": agg["accepted_repairs"],
+            "repairable": agg["accepted_repairs"],
+            "schema_valid": agg["schema_passed"],
+            "repair_coverage_of_failures": round(agg["accepted_repairs"] / max(agg["failures"], 1), 4),
+            "schema_valid_rate": round(agg["schema_passed"] / max(agg["proposed_repairs"], 1), 4),
+            "value_verified_rate": round(agg["value_verified_repairs"]
+                                         / max(agg["proposed_repairs"], 1), 4),
+            "accepted_rate": round(agg["accepted_repairs"] / max(agg["proposed_repairs"], 1), 4),
             "value_verifiable": agg["value_verifiable"],
             "value_agreement": agg["value_agreement"],
             "value_agreement_rate": round(agg["value_agreement"] / max(agg["value_verifiable"], 1), 4),
@@ -218,18 +306,26 @@ def main() -> int:
     print(json.dumps(compact, ensure_ascii=False, indent=2))
     print("\n[lomo aggregate]", json.dumps(results["lomo"]["aggregate"], ensure_ascii=False))
     for family, fold in lomo_folds.items():
-        print(f"  {family:26s} failures={fold['test_failures']:4d} repairable={fold['repairable']:4d} "
+        print(f"  {family:26s} failures={fold['test_failures']:4d} "
+              f"schema_passed={fold['schema_passed']:4d} "
+              f"value_verified={fold['value_verified_repairs']:4d} "
+              f"accepted={fold['accepted_repairs']:4d} "
               f"coverage={100 * fold['repair_coverage_of_failures']:5.1f}% "
               f"value_agree={100 * fold.get('value_agreement_rate', 0):5.1f}%")
     for label in ("cross_model", "cross_group"):
         result = results[label]
         print(f"\n[{label}] per-kind:")
         for kind, counts in result["per_kind"].items():
-            print(f"  {kind:18s} failures={counts.get('failures', 0):4d} repairable={counts.get('repairable', 0):4d}")
+            print(f"  {kind:18s} failures={counts.get('failures', 0):4d} "
+                  f"schema_passed={counts.get('schema_passed', 0):4d} "
+                  f"value_verified={counts.get('value_verified', 0):4d} "
+                  f"unrepairable={counts.get('unrepairable', 0):4d}")
         print(f"[{label}] per-rule-category:")
         for category, counts in result["per_category"].items():
             verifiable = counts.get("value_verifiable", 0)
             print(f"  {category:32s} repairs={counts.get('repairs', 0):4d} "
+                  f"schema_valid={counts.get('schema_valid', 0):4d} "
+                  f"value_verified={counts.get('value_verified', 0):4d} "
                   f"value_verifiable={verifiable:4d} agreement={counts.get('value_agreement', 0):4d} "
                   f"cache_verified={counts.get('cache_verified_recovered', 0):3d}")
 

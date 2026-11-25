@@ -1,7 +1,7 @@
 {
   "artifact_version": 1,
   "experiment": "ToolGuard_multimodel_live_ab",
-  "generated_at": "2026-11-23T16:57:51.511062+00:00",
+  "generated_at": "2026-11-25T03:31:15.415272+00:00",
   "protocol": {
     "models": [
       {
@@ -45,8 +45,10 @@
       "clean+4": 1
     },
     "workers": 2,
-    "wall_seconds": 4403.0,
-    "finalised_from_checkpoint": false,
+    "wall_seconds": null,
+    "finalised_from_checkpoint": true,
+    "failure_modes_recomputed": true,
+    "failure_modes_note": "rebuilt from the checkpoint: failure-mode labels were recomputed from answer+expected with the fixed metadata-aware classifier (2026-11-24 review), and tasks_per_model was rebuilt from the per-record expected snapshots",
     "fault_injection": {
       "model": "deterministic transient fault epochs (first N attempts fail) per logical call",
       "attempts_to_fail": 2,
@@ -1249,7 +1251,7 @@
         "capital": "Tokyo",
         "latitude": 35.6895,
         "longitude": 139.69171,
-        "temperature_c": 7.0
+        "temperature_c": 12.0
       },
       "min_turns": 4,
       "category": "weather"
@@ -1262,7 +1264,7 @@
         "capital": "Oslo",
         "latitude": 59.91273,
         "longitude": 10.74609,
-        "temperature_c": -0.5
+        "temperature_c": -2.5
       },
       "min_turns": 4,
       "category": "weather"
@@ -1275,7 +1277,7 @@
         "capital": "Lisbon",
         "latitude": 38.72509,
         "longitude": -9.1498,
-        "temperature_c": 15.8
+        "temperature_c": 13.5
       },
       "min_turns": 4,
       "category": "weather"
@@ -1287,12 +1289,12 @@
         "a": {
           "country": "France",
           "capital": "Paris",
-          "temperature_c": 7.1
+          "temperature_c": 4.5
         },
         "b": {
           "country": "Germany",
           "capital": "Berlin",
-          "temperature_c": 2.4
+          "temperature_c": 1.0
         },
         "warmer_capital": "Paris",
         "require_warmer": true
@@ -1307,12 +1309,12 @@
         "a": {
           "country": "Norway",
           "capital": "Oslo",
-          "temperature_c": -0.5
+          "temperature_c": -2.5
         },
         "b": {
           "country": "Portugal",
           "capital": "Lisbon",
-          "temperature_c": 15.8
+          "temperature_c": 13.5
         },
         "warmer_capital": "Lisbon",
         "require_warmer": true
@@ -1478,13 +1480,13 @@
     },
     {
       "id": "hn_recent_item_author_account_year",
-      "question": "In which year was the Hacker News account of the user who posted Hacker News item 50609685 created?",
+      "question": "In which year was the Hacker News account of the user who posted Hacker News item 50637220 created?",
       "expected": {
-        "story_id": 50609685,
-        "title": "GLM-5.4: Toward Generalized Coding with Our First Loop Transformer",
-        "username": "foohis",
-        "created": 1795040003,
-        "created_year": 2026
+        "story_id": 50637220,
+        "title": "Matrix Multiplication is Θ(n^2.25) [pdf]",
+        "username": "E-Reverance",
+        "created": 1605065845,
+        "created_year": 2020
       },
       "min_turns": 3,
       "category": "hn"
@@ -1493,9 +1495,9 @@
       "id": "fx_eur_jpy_cross",
       "question": "What is the implied EUR to JPY cross rate (how many Japanese yen is 1 euro worth) computed through the USD market? Use the EUR-to-USD and USD-to-JPY rates and give the result to two decimal places.",
       "expected": {
-        "eur_usd": 1.097535,
-        "usd_jpy": 158.701406,
-        "cross_rate": 174.18034763420997
+        "eur_usd": 1.095953,
+        "usd_jpy": 159.238818,
+        "cross_rate": 174.518260303554
       },
       "min_turns": 3,
       "category": "fx"
@@ -1504,8 +1506,8 @@
       "id": "fx_usd_cny_100",
       "question": "How many Chinese yuan are 100 US dollars worth at the current exchange rate?",
       "expected": {
-        "usd_cny": 6.681345,
-        "cny_value": 668.1345
+        "usd_cny": 6.678179,
+        "cny_value": 667.8179
       },
       "min_turns": 2,
       "category": "fx"
@@ -1546,9 +1548,9 @@
       "id": "temperature_gap_norway_portugal",
       "question": "How many degrees Celsius colder is the capital city of Norway than the capital city of Portugal right now? Give both temperatures and the gap.",
       "expected": {
-        "norway": 0.2,
-        "portugal": 15.8,
-        "gap": 15.600000000000001
+        "norway": -2.5,
+        "portugal": 13.5,
+        "gap": 16.0
       },
       "min_turns": 5,
       "category": "weather"
@@ -1581,9 +1583,9 @@
       "id": "fx_triangular_check",
       "question": "Compare the direct EUR to JPY exchange rate with the rate implied by EUR to USD then USD to JPY. Give both rates to two decimal places and their absolute difference.",
       "expected": {
-        "direct": 174.175459,
-        "implied": 174.18034763420997,
-        "difference": 0.004888634209976317
+        "direct": 174.489093,
+        "implied": 174.518260303554,
+        "difference": 0.02916730355400432
       },
       "min_turns": 4,
       "category": "fx"
@@ -1606,9 +1608,9 @@
       "id": "capital_weather_triple",
       "question": "What is the current temperature in degrees Celsius in the capital cities of Japan, Norway and Portugal? Give all three values.",
       "expected": {
-        "Japan": 7.0,
-        "Norway": 0.2,
-        "Portugal": 15.8
+        "Japan": 12.2,
+        "Norway": -2.5,
+        "Portugal": 13.5
       },
       "min_turns": 6,
       "category": "weather"
@@ -1641,10 +1643,13 @@
       "id": "weather_compare_australia_canada",
       "question": "Which capital city is warmer right now: the capital of Australia or the capital of Canada? Give both temperatures in degrees Celsius and the difference.",
       "expected": {
-        "australia": 13.3,
-        "canada": 7.8,
-        "gap": 5.500000000000001,
+        "australia": 20.9,
+        "canada": -4.4,
+        "gap": 25.299999999999997,
         "warmer": "Canberra",
+        "colder": "Ottawa",
+        "warmer_temp": 20.9,
+        "colder_temp": -4.4,
         "require_warmer": true
       },
       "min_turns": 6,
@@ -1890,7 +1895,7 @@
       },
       {
         "id": "hn_recent_item_author_account_year",
-        "question": "In which year was the Hacker News account of the user who posted Hacker News item 50609685 created?",
+        "question": "In which year was the Hacker News account of the user who posted Hacker News item 50637220 created?",
         "expected": {
           "story_id": 50609685,
           "title": "GLM-5.4: Toward Generalized Coding with Our First Loop Transformer",
@@ -2301,7 +2306,7 @@
       },
       {
         "id": "hn_recent_item_author_account_year",
-        "question": "In which year was the Hacker News account of the user who posted Hacker News item 50611588 created?",
+        "question": "In which year was the Hacker News account of the user who posted Hacker News item 50637220 created?",
         "expected": {
           "story_id": 50611588,
           "title": "Jensen Huang Reinstated as Nvidia CEO",
@@ -2712,7 +2717,7 @@
       },
       {
         "id": "hn_recent_item_author_account_year",
-        "question": "In which year was the Hacker News account of the user who posted Hacker News item 50611576 created?",
+        "question": "In which year was the Hacker News account of the user who posted Hacker News item 50637220 created?",
         "expected": {
           "story_id": 50611576,
           "title": "Nvidia Reinstates Jensen Huang as CEO",
@@ -3005,7 +3010,7 @@
         "longitude": 139.69171,
         "temperature_c": 7.0
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I found the capital (Tokyo) and its coordinates (35.6895, 139.69171), but the get_weather tool isn't available to me, so I can't retrieve the current temperature.",
       "turns": 3,
       "tool_calls": 2,
@@ -4203,7 +4208,7 @@
         "country": "Switzerland",
         "gdp_per_capita_usd": 114769.01
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "The GDP per capita (current US$) of Switzerland, whose capital is Bern, is [value].",
       "turns": 2,
       "tool_calls": 1,
@@ -4239,7 +4244,7 @@
         "country": "Switzerland",
         "gdp_per_capita_usd": 114769.01
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "Switzerland's GDP per capita is $106,588",
       "turns": 2,
       "tool_calls": 1,
@@ -5709,7 +5714,7 @@
         "username": "pg",
         "created_year": 2006
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I couldn't retrieve this: the `get_hn_item` call for item 1 repeatedly returned \"story_id must be an integer,\" and no available tool reports an HN account's creation year, so the requested year can't be determined.",
       "turns": 8,
       "tool_calls": 7,
@@ -5745,7 +5750,7 @@
         "username": "pg",
         "created_year": 2006
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I'm unable to answer — the tool returned rate-limit and invalid-argument errors and never provided the author or account details for Hacker News item 1.",
       "turns": 5,
       "tool_calls": 4,
@@ -5840,7 +5845,7 @@
         "username": "dhouston",
         "created_year": 2007
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I couldn't retrieve the answer — the Hacker News item lookup for id 8863 repeatedly failed with an \"invalid_argument: story_id must be an integer\" error, so the poster's account creation year could not be determined.",
       "turns": 5,
       "tool_calls": 4,
@@ -6052,7 +6057,7 @@
         "created": 1795040003,
         "created_year": 2026
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I wasn't able to retrieve Hacker News item 50609685 — the lookups timed out and then returned an \"story_id must be an integer\" error — so I can't determine the account's creation year from the available data.",
       "turns": 5,
       "tool_calls": 4,
@@ -8749,7 +8754,7 @@
         "longitude": -9.1498,
         "temperature_c": 15.7
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "Lisbon's coordinates are 38.72509 latitude, -9.1498 longitude.",
       "turns": 3,
       "tool_calls": 2,
@@ -9949,7 +9954,7 @@
         "username": "pg",
         "created_year": 2006
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I couldn't retrieve the answer: the HN item lookup for id 1 repeatedly returned an error (\"story_id must be an integer\"), and the available HN tools only expose a user's karma — not account creation dates — so the year the poster's account was created cannot be determined with the tools I have.",
       "turns": 7,
       "tool_calls": 6,
@@ -9985,7 +9990,7 @@
         "username": "dhouston",
         "created_year": 2007
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I couldn't retrieve the answer: the `get_hn_item` call for item 8863 repeatedly returned \"story_id must be an integer,\" and the available HN tools (item lookup and user karma) don't expose account creation dates, so I can't determine the posting user's signup year without guessing.",
       "turns": 5,
       "tool_calls": 4,
@@ -10121,7 +10126,7 @@
         "created": 1795040003,
         "created_year": 2026
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I couldn't retrieve the answer: the `get_hn_item` call for item 50609685 repeatedly returned \"story_id must be an integer,\" so the story's author (and thus their account creation year, which the available HN tools don't expose anyway — `get_hn_user` returns only karma) could not be determined.",
       "turns": 7,
       "tool_calls": 6,
@@ -22549,7 +22554,7 @@
         "username": "pg",
         "created_year": 2006
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I was unable to retrieve the answer: the Hacker News item lookup repeatedly failed with an error, and the available user tool only returns karma (not account creation date), so I cannot verify the creation year of the account that posted item 1.",
       "turns": 5,
       "tool_calls": 4,
@@ -22729,7 +22734,7 @@
         "username": "dhouston",
         "created_year": 2007
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I'm unable to determine the account creation year because the Hacker News item lookup tool repeatedly rejected the request for item 8863 with an error, so I could not retrieve the poster's username or account details.",
       "turns": 5,
       "tool_calls": 4,
@@ -22863,7 +22868,7 @@
         "username": "dhouston",
         "created_year": 2007
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I'm unable to answer: the tool for retrieving Hacker News item 8863 repeatedly rejected the request with an error, so I could not identify the posting user or their account creation year.",
       "turns": 6,
       "tool_calls": 5,
@@ -22961,7 +22966,7 @@
         "created": 1274280176,
         "created_year": 2010
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I'm unable to determine the year: the Hacker News item lookup tool repeatedly rejected the ID 50611576 with an error (\"story_id must be an integer\"), so I could not retrieve the item's author or their account creation date.",
       "turns": 5,
       "tool_calls": 4,
@@ -22999,7 +23004,7 @@
         "created": 1274280176,
         "created_year": 2010
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I couldn't determine the year because the tool repeatedly failed to retrieve Hacker News item 50611576, so the posting user's account creation date is unavailable.",
       "turns": 5,
       "tool_calls": 4,
@@ -26896,7 +26901,7 @@
         "username": "dhouston",
         "created_year": 2007
       },
-      "failure_mode": "format_miss",
+      "failure_mode": "no_expected_value",
       "answer": "I was unable to retrieve HN item 8863 because the tool repeatedly rejected the request, so I cannot verify the account creation year.",
       "turns": 5,
       "tool_calls": 4,
@@ -28364,12 +28369,12 @@
             "failure_modes": {
               "baseline": {
                 "no_answer": 27,
-                "format_miss": 7
+                "no_expected_value": 5,
+                "format_miss": 2
               },
               "guard": {
-                "format_miss": 2,
-                "no_answer": 1,
-                "no_expected_value": 2
+                "no_expected_value": 4,
+                "no_answer": 1
               }
             }
           },
@@ -28500,8 +28505,9 @@
             },
             "failure_modes": {
               "baseline": {
-                "format_miss": 5,
-                "no_answer": 1
+                "no_expected_value": 4,
+                "no_answer": 1,
+                "format_miss": 1
               }
             }
           }
@@ -28939,7 +28945,7 @@
             "failure_modes": {
               "baseline": {
                 "no_answer": 23,
-                "format_miss": 5
+                "no_expected_value": 5
               }
             }
           },
@@ -29070,7 +29076,7 @@
             },
             "failure_modes": {
               "baseline": {
-                "format_miss": 1,
+                "no_expected_value": 1,
                 "no_answer": 2
               }
             }
@@ -29306,7 +29312,8 @@
   ],
   "reproduce": [
     "python scripts/run_multimodel_live.py --mode calibrate",
-    "python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel.json",
+    "python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel_v3.json",
+    "python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]
 }

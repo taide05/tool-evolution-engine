@@ -50,7 +50,7 @@ from tool_evolution.toolguard.live import FaultyBackend  # noqa: E402
 from tool_evolution.toolguard.live_hard import LiveHardBackend  # noqa: E402
 from tool_evolution.toolguard.verify import (  # noqa: E402
     contains_number,
-    contains_text,
+    contains_text_asserted,
     mcnemar_exact,
     wilson_interval,
 )
@@ -99,14 +99,25 @@ def resolve_budget(condition: str, clean_turns: int) -> int:
 # ---------------------------------------------------------------------------
 # metrics helpers
 # ---------------------------------------------------------------------------
-def _expected_scalars(expected) -> list:
+# Expected-dict keys that are task metadata, not the answer the verifier requires.  The
+# failure-mode classifier must not label "the agent never answered" as "format_miss" just
+# because the answer echoes the HN story id or the weather coordinates (2026-11-24 review:
+# 17 such mislabels in the multi-model V3 artifact).
+_NON_ANSWER_KEYS = {"story_id", "latitude", "longitude", "username", "created", "countries",
+                    "capital", "country", "version", "package", "title", "clean_turns",
+                    "min_turns"}
+
+
+def _expected_scalars(expected, answer_only: bool = True) -> list:
     scalars: list = []
     if isinstance(expected, dict):
-        for value in expected.values():
-            scalars.extend(_expected_scalars(value))
+        for key, value in expected.items():
+            if answer_only and key in _NON_ANSWER_KEYS:
+                continue
+            scalars.extend(_expected_scalars(value, answer_only=answer_only))
     elif isinstance(expected, (list, tuple)):
         for value in expected:
-            scalars.extend(_expected_scalars(value))
+            scalars.extend(_expected_scalars(value, answer_only=answer_only))
     elif isinstance(expected, (int, float, str)):
         scalars.append(expected)
     return scalars
@@ -123,7 +134,7 @@ def classify_failure(answer: str, expected) -> str:
             tolerance = max(0.01, abs(float(scalar)) * 0.01)
             if contains_number(answer, float(scalar), tolerance):
                 return "format_miss"
-        elif isinstance(scalar, str) and contains_text(answer, scalar):
+        elif isinstance(scalar, str) and contains_text_asserted(answer, scalar):
             return "format_miss"
     return "no_expected_value"
 
@@ -279,7 +290,7 @@ def run_one(client: DeepSeekClient, item: dict, args: argparse.Namespace) -> dic
     task = item["task"]
     for attempt in range(2):
         try:
-            backend = LiveHardBackend()
+            backend = LiveHardBackend(hn_schema_consistent=args.hn_schema == "consistent")
             faulty = FaultyBackend(
                 backend,
                 seed=args.seed + item["repeat"] * 101,
@@ -317,10 +328,11 @@ def run_one(client: DeepSeekClient, item: dict, args: argparse.Namespace) -> dic
                 "guard_events": run.guard_events,
             }
             return record
-        except RuntimeError as exc:  # transient upstream API failure: retry the cell once
+        except Exception as exc:  # noqa: BLE001 - transient upstream/API failure: retry once
             if attempt == 1:
                 raise
-            print(f"  retrying cell after upstream error: {exc}", file=sys.stderr)
+            print(f"  retrying cell after upstream error: {type(exc).__name__}: {exc}",
+                  file=sys.stderr)
             time.sleep(5.0)
     raise RuntimeError("unreachable")
 
@@ -334,7 +346,7 @@ def run_calibration(client: DeepSeekClient, tasks: list[dict], args: argparse.Na
     calibration: dict[str, dict] = {}
     print("\n=== calibration: fault-free turn requirement ===")
     for task in tasks:
-        backend = LiveHardBackend()
+        backend = LiveHardBackend(hn_schema_consistent=args.hn_schema == "consistent")
         run = run_task(client, backend, task["question"], None, max_turns=args.clean_max_turns)
         success = bool(task["verifier"](run.answer, task["expected"]))
         calibration[task["id"]] = {"turns": run.turns, "success": success, "exhausted": run.exhausted}
@@ -388,23 +400,98 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
                       f"r{record['repeat']} {record['arm']:8s} success={record['success']!s:5s} "
                       f"turns={record['turns']}/{record['budget']} errors={record['tool_errors']} "
                       f"recoveries={record['guard_recoveries']}")
-    except RuntimeError as exc:
-        print(f"\nERROR: DeepSeek/live API failure: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - record partial results, never fall back offline
+        print(f"\nERROR: DeepSeek/live API failure: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
         write_json(output, {"status": "partial_api_error", "records": records,
                             "error": str(exc), "generated_at": datetime.now(timezone.utc).isoformat()})
         print(f"wrote partial results to {output} (no offline fallback)", file=sys.stderr)
         return 2
     wall_seconds = round(time.perf_counter() - started, 1)
 
+    hn_schema = "consistent" if args.hn_schema == "consistent" else "drifting"
+    summary = build_artifact_summary(
+        records=records, tasks=tasks, skipped=skipped, conditions=conditions,
+        repeats=repeats, calibration=calibration, wall_seconds=wall_seconds,
+        hn_schema=hn_schema,
+        fault={"attempts_to_fail": args.attempts_to_fail, "p_timeout": args.p_timeout,
+               "p_rate_limit": args.p_rate_limit, "p_server_error": args.p_server_error,
+               "seed": args.seed, "workers": args.workers},
+        rebuilt_from_records=False)
+    write_json(output, summary)
+    print("\n=== budget curve ===")
+    print(json.dumps(summary["aggregate"]["budget_curve"], ensure_ascii=False, indent=2))
+    print(f"\nwrote {output} (wall {wall_seconds}s)")
+    return 0
+
+
+def build_artifact_summary(
+    *,
+    records: list[dict],
+    tasks: list[dict],
+    skipped: list[str],
+    conditions: list[str],
+    repeats: dict[str, int],
+    calibration: dict[str, dict],
+    wall_seconds: float | None,
+    hn_schema: str,
+    fault: dict,
+    rebuilt_from_records: bool,
+) -> dict:
+    """Build the artifact payload from records (used by the live runner and --from-records).
+
+    ``rebuilt_from_records`` additionally records that the failure-mode labels were
+    recomputed from ``answer`` + ``expected`` with the fixed classifier (2026-11-24 review),
+    instead of being carried over from a previous run.
+    """
     aggregate_block = aggregate(records)
-    summary = {
+    limitations = list(V2_LIMITATIONS)
+    if hn_schema == "consistent":
+        limitations.append(
+            "HN consistent-schema control run: the get_hn_item schema is fixed to integer for "
+            "both arms; this run exists only to measure the schema-drift contribution and is "
+            "not an independent task-pool version.")
+    if rebuilt_from_records:
+        limitations.append(
+            "This artifact was rebuilt from the committed checkpoint records by "
+            "`--from-records` (no new model calls); failure-mode labels were recomputed from "
+            "answer+expected with the fixed metadata-aware classifier, and the reproduce "
+            "commands point at the V3 output path (2026-11-24 review P2-1/P2-7).")
+    reproduce = [
+        "python scripts/run_live_demo_hard_v2.py --mode calibrate",
+        "python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v3.json",
+        "python scripts/run_live_demo_hard_v2.py --from-records --output benchmarks/toolguard/live_demo_hard_v3.json"
+        if rebuilt_from_records else
+        ("python scripts/run_live_demo_hard_v2.py --budgets clean+1 --repeats clean+1:3 "
+         "--hn-schema consistent --workers 2 "
+         "--calibration .scratch/toolguard/hard_calibration_v3.json "
+         "--output benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json"
+         if hn_schema == "consistent" else
+         "python scripts/run_live_demo_hard_v2.py --budgets clean+1 --repeats clean+1:3 "
+         "--workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json "
+         "--output .scratch/toolguard/live_demo_hard_v3_clean1_only.json"),
+        "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
+    ]
+    return {
         "artifact_version": 2,
-        "experiment": "ToolGuard_hard_multistep_live_ab_v3_task_pool",
+        "experiment": ("ToolGuard_hard_multistep_live_ab_v3_task_pool_hn_schema_consistent"
+                       if hn_schema == "consistent"
+                       else "ToolGuard_hard_multistep_live_ab_v3_task_pool"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
         "protocol": {
             "task_pool": "V3 drift-hardened 31-task pool: HN account-creation year instead of live "
                          "karma; ground truth built from the same live APIs before the eval",
+            "hn_schema": hn_schema,
+            "hn_schema_note": ("consistent-control run: the agent-visible get_hn_item schema "
+                               "declares story_id as integer (matching the backend) instead of the "
+                               "deliberately mismatched released schema (string); everything else "
+                               "is identical to the main V3 run, so the difference isolates the "
+                               "schema-drift contribution"
+                               if hn_schema == "consistent" else
+                               "released schema as-is: get_hn_item declares story_id as string "
+                               "while the backend requires an integer (intentional contract bug)"),
+            "rebuilt_from_records": rebuilt_from_records,
             "arms": list(ARMS),
             "budget_conditions": {
                 condition: ("per-task turn budget = fault-free calibration turns + "
@@ -413,7 +500,7 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
                 for condition in conditions
             },
             "repeats": repeats,
-            "workers": args.workers,
+            "workers": fault.get("workers"),
             "wall_seconds": wall_seconds,
             "calibration": {
                 "description": "one fault-free run per task measured the turn requirement that anchors "
@@ -424,15 +511,17 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
             "fault_injection": {
                 "model": "deterministic transient fault epochs: the first N attempts of a faulted "
                          "logical call fail (timeout / HTTP 429 / HTTP 5xx), then the real call runs",
-                "attempts_to_fail": args.attempts_to_fail,
-                "p_timeout": args.p_timeout,
-                "p_rate_limit": args.p_rate_limit,
-                "p_server_error": args.p_server_error,
-                "seed": args.seed,
+                "attempts_to_fail": fault.get("attempts_to_fail"),
+                "p_timeout": fault.get("p_timeout"),
+                "p_rate_limit": fault.get("p_rate_limit"),
+                "p_server_error": fault.get("p_server_error"),
+                "seed": fault.get("seed"),
                 "repeat_seed_rule": "fault seed = seed + repeat * 101",
             },
             "tool_surface": {
-                "tools": [tool["function"]["name"] for tool in LiveHardBackend().schemas()],
+                "tools": [tool["function"]["name"]
+                          for tool in LiveHardBackend(
+                              hn_schema_consistent=hn_schema == "consistent").schemas()],
                 "apis": ["api.worldbank.org", "geocoding-api.open-meteo.com", "api.open-meteo.com",
                          "pypi.org", "hacker-news.firebaseio.com", "open.er-api.com"],
             },
@@ -443,17 +532,57 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
         "records": records,
         "aggregate": aggregate_block,
         "key_findings": key_findings(aggregate_block),
-        "limitations": V2_LIMITATIONS,
-        "reproduce": [
-            "python scripts/run_live_demo_hard_v2.py --mode calibrate",
-            "python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v2.json",
-            "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
-        ],
+        "limitations": limitations,
+        "reproduce": reproduce,
     }
+
+
+def run_from_records(args: argparse.Namespace) -> int:
+    """Rebuild the single-model V3 artifact from its committed checkpoint records.
+
+    No model/API calls: the aggregate is recomputed from the records, the failure-mode
+    labels are recomputed from `answer` + `expected` with the fixed classifier, and the
+    reproduce block is rewritten for the V3 output path (2026-11-24 review P2-1/P2-7).
+    """
+    output = Path(args.output)
+    checkpoint = json.loads(output.read_text(encoding="utf-8"))
+    records = checkpoint.get("records") or []
+    tasks = checkpoint.get("tasks") or []
+    if not records or not tasks:
+        print(f"ERROR: checkpoint {output} has no records/tasks", file=sys.stderr)
+        return 2
+    expected_by_task = {task["id"]: task.get("expected") for task in tasks}
+    reclassified = 0
+    for record in records:
+        if record.get("success"):
+            continue
+        expected = expected_by_task.get(record.get("task"))
+        if expected is None:
+            continue
+        old = record.get("failure_mode")
+        new = classify_failure(record.get("answer") or "", expected)
+        if new != old:
+            reclassified += 1
+        record["failure_mode"] = new
+    protocol = checkpoint.get("protocol") or {}
+    conditions = list((protocol.get("budget_conditions") or {}).keys())
+    repeats = protocol.get("repeats") or {condition: 1 for condition in conditions}
+    calibration = (protocol.get("calibration") or {}).get("tasks") or {}
+    fault_injection = protocol.get("fault_injection") or {}
+    summary = build_artifact_summary(
+        records=records, tasks=tasks, skipped=checkpoint.get("skipped") or [],
+        conditions=conditions, repeats=repeats, calibration=calibration,
+        wall_seconds=protocol.get("wall_seconds"), hn_schema="drifting",
+        fault={"attempts_to_fail": fault_injection.get("attempts_to_fail"),
+               "p_timeout": fault_injection.get("p_timeout"),
+               "p_rate_limit": fault_injection.get("p_rate_limit"),
+               "p_server_error": fault_injection.get("p_server_error"),
+               "seed": fault_injection.get("seed"),
+               "workers": protocol.get("workers")},
+        rebuilt_from_records=True)
     write_json(output, summary)
-    print("\n=== budget curve ===")
-    print(json.dumps(aggregate_block["budget_curve"], ensure_ascii=False, indent=2))
-    print(f"\nwrote {output} (wall {wall_seconds}s)")
+    print(f"rebuilt {output} from {len(records)} records; failure-mode labels changed: "
+          f"{reclassified}")
     return 0
 
 
@@ -461,6 +590,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("eval", "calibrate"), default="eval")
     parser.add_argument("--max-tasks", type=int, default=None)
+    parser.add_argument("--task-ids", default=None,
+                        help="comma separated task ids (debug/smoke subset)")
     parser.add_argument("--budgets", default=DEFAULT_BUDGETS)
     parser.add_argument("--repeats", default=DEFAULT_REPEATS)
     parser.add_argument("--workers", type=int, default=2)
@@ -471,14 +602,30 @@ def main() -> int:
     parser.add_argument("--p-server-error", type=float, default=0.08)
     parser.add_argument("--attempts-to-fail", type=int, default=2)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--hn-schema", choices=("drifting", "consistent"), default="drifting",
+                        help="drifting: released get_hn_item schema (story_id string, backend "
+                             "requires integer); consistent: schema fixed to integer for both arms "
+                             "(HN schema-drift control experiment)")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--from-records", action="store_true",
+                        help="rebuild the artifact at --output from its checkpoint records (no "
+                             "live calls): recompute aggregate, reclassify failure modes and "
+                             "rewrite the reproduce block for the V3 output path")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     args = parser.parse_args()
+
+    if args.from_records:
+        return run_from_records(args)
 
     conditions = parse_budgets(args.budgets)
     repeats = parse_repeats(args.repeats, conditions)
     clean = LiveHardBackend()
     tasks, skipped = build_tasks(clean)
+    if args.task_ids:
+        wanted = [value.strip() for value in args.task_ids.split(",") if value.strip()]
+        order = {task_id: index for index, task_id in enumerate(wanted)}
+        tasks = [task for task in tasks if task["id"] in order]
+        tasks.sort(key=lambda task: order[task["id"]])
     if args.max_tasks is not None:
         tasks = tasks[:args.max_tasks]
     categories = {}

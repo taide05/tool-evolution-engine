@@ -101,7 +101,7 @@ def main() -> int:
             extract_zip(dest, data / "cache")
 
     print("\nnext:")
-    print(f"  python scripts/parse_toolbench_trajectories.py --input {data / 'baselines'} --output-dir {data}")
+    print(f"  python scripts/parse_toolbench_trajectories.py --input {data / 'baselines' / 'data_baselines'} --output-dir {data}")
     print("  python scripts/eval_toolguard_rules.py   # requires solvable_queries/ in the StableToolBench checkout")
     return 0
 
