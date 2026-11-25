@@ -12,38 +12,43 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 ## 结果（离线确定性评测）
 
-> **2026-11-24 证据链修复轮（未重跑 live）**：修复提议现在按**两层证据**统计，`schema_valid_rate` 不再是构造性的 100%：
+> **2026-11-24 证据链修复轮 + 2026-11-25 schema 索引保真度修复**：修复提议按**两层证据**统计：
 > **第一层（schema-valid）**：通过完整结构校验（类型、必填/多余参数、enum、format、数值范围；声明类型 coercion 先做一次、单独计数）。
 > **第二层（value-verified）**：schema 不通过的提议，只有当它与**同一 task/function 的逐字真实成功调用**完全一致时才计入（经验证据，单独报告，绝不并入 schema 合法率）。
 > `accepted = schema-valid + value-verified`；`schema_valid_rate = schema-valid / 提议数`。
+> **2026-11-25 起 schema 索引本身按记录证据修正**（见下方“schema 索引保真度”）：上游 `api_list` 与记录中真实成功调用矛盾时，用 >=3 个成功值、>=90% 一致性的证据做**类型修正**；空参数列表按成功调用回填为可选参数。每处修正都计入 `dataset.schema_index` / `protocol.schema_fidelity`。
 
 | 协议 | 可评估失败 | 提议修复 | schema 通过（含 coercion） | schema 拒绝失败 | value-verified | **accepted 覆盖** | value agreement（可验证中） | 缓存验证 |
 |---|---|---|---|---|---|---|---|---|
-| **LOMO（固定三模型训练 universe 内留一）** | 969 | 583 | **472（81.0%；150 条 coercion）** | 111 | 59 | **531/969 = 54.8%** | 127/276 = 46.0% | 48 恢复 / 0 反例 / 483 miss（48/531=9.0%） |
-| cross-model（3→2 模型） | 277 | 173 | **123（71.1%；30 条 coercion）** | 50 | 42 | **165/277 = 59.6%** | 78/147 = 53.1% | 15 恢复 / 150 miss |
-| **cross-group（跨任务集，未见任务）** | 76 | 57 | **30（52.6%；30 条 coercion）** | 27 | **27** | **57/76 = 75.0%** | **27/38 = 71.1%** | 全部 cache miss |
+| **LOMO（固定三模型训练 universe 内留一）** | 969 | 583 | **539（92.5%；131 条 coercion）** | 44 | 37 | **576/969 = 59.4%** | 127/279 = 45.5% | 48 恢复 / 0 反例 / 528 miss（48/576=8.3%） |
+| cross-model（3→2 模型） | 277 | 173 | **147（85.0%；24 条 coercion）** | 26 | 26 | **173/277 = 62.5%** | 79/148 = 53.4% | 15 恢复 / 158 miss |
+| **cross-group（跨任务集，未见任务）** | 76 | 57 | **57（100%；30 条 coercion）** | 0 | 0 | **57/76 = 75.0%** | **27/38 = 71.1%** | 全部 cache miss |
 
 **如何读这张表（关键）**：
-- 旧表里的 54.7% / 58.1% / 75.0% 只检查“参数名+必填”，是构造性通过率；现在的覆盖数字与旧口径**同量级甚至略高**，但每一分都拆成“schema 合法”或“逐字真实成功调用”两层证据，且 schema 合法率明显低于 100%（81.0% / 71.1% / 52.6%）。**不是靠放宽校验保数字**。
-- 覆盖率恢复主要来自两个**真实修复**：① 提议修复现在会先把值转换为 schema 声明的类型（`"1970"`→`1970` 等；LOMO 150 条、cross-model 30 条、cross-group 30 条通过 coercion 后合法）；② 上游 `api_list` 自身有保真度缺陷（把 watchmode 的 `start_date/end_date` 声明为 NUMBER，而**记录中的真实成功调用用的是 ISO 日期字符串**；部分函数参数列表为空），这些提议过不了声明 schema，但若与同 task/function 的真实成功调用逐字一致，则作为 value-verified 计入（cross-group 的 27 条文本抽取修复即此类，**27/27 与真实成功调用一致**）。
-- **cross-group 75% 的构成**：30 条来自 schema 默认值补全（coercion 后 schema-valid，未经验证）+ 27 条来自学习式文本抽取（value-verified，27/27 值一致）。旧口径把 57 条全部当“schema 合法”，是不对的；现在的分解更弱但更诚实。
-- **LOMO 协议诚实性（P1-6）**：主数字**不是**真正的五模型 leave-one-model-out。训练 universe 固定为 chatgpt / toolllama / gpt-3.5-turbo-1106：留出这三者之一时只用另外两个训练；留出 gpt-4-0613 / gpt-4-turbo-preview 时用全部三个训练——**两个 gpt-4 家族从不进入训练**。`metrics.json` 的 `protocol.lomo` 已如实写明。真 LOMO 敏感性（每个 fold 用其余四个家族训练）：**542/969 = 55.9%**（`results.lomo_sensitivity_exclude_fold`）。
+- **schema 索引保真度修复（2026-11-25，新增）**：上游 `api_list` 是 agent 可见声明，但可被记录证伪。新做的确定式修正共 **4 处类型修正 + 20 个回填参数**：
+  - `new_titles_for_watchmode` 的 `start_date`/`end_date`：api_list 声明 **NUMBER**，但记录中 11/11 次真实成功调用都用 ISO 日期字符串 → 修正为 **STRING**；
+  - `retrieve_data_for_instant_cameroon_news.page`、`users_for_reqres.page`：api_list 声明 STRING，3/3、4/4 次成功调用用整数 → 修正为 **INTEGER**；
+  - 20 个在 api_list 中参数列表为空的函数，按成功调用回填可选参数（如 `get_trending_for_url_content_extractor.category/region`）；
+  - 规则是保守的：需要 ≥3 个成功样本、≥90% 一致、只做 number/integer↔string 这类**不相容**标量修正；**不做 integer↔number 拓宽**、**不改 required 列表**；每一条修正连同证据样本数写入 artifact（`dataset.schema_index.fidelity_repair.type_correction_examples`、`protocol.schema_fidelity`）。
+- **修复后的口径变化（同一 engine、同一数据，仅 schema 索引不同）**：LOMO accepted **576/969 = 59.4%**（修复前 531 = 54.8%）、schema 合法率 **92.5%**（修复前 81.0%）、coercion **131**（修复前 150）、value-verified **37**（修复前 59）、schema 拒绝失败 **44**（修复前 111）；cross-model accepted **173/277 = 62.5%**（前 59.6%）、schema 合法率 85.0%（前 71.1%）；cross-group accepted 仍 57/76=75%，但 **57 条现在全部直接通过声明 schema**（date 参数类型修正后，之前靠 value-verified 的 27 条文本抽取变成 schema-valid）。
+- **cross-group 的 schema 合法率现在是 100%**：这不是构造性口径，而是因为该协议里唯一证伪的声明缺陷（watchmode 日期参数类型）已被记录证据修正；value-verified 层因此从 27 降为 0（同一批修复升级为 schema-valid），accepted 覆盖不变。
+- **LOMO 协议诚实性（P1-6）**：主数字**不是**真正的五模型 leave-one-model-out。训练 universe 固定为 chatgpt / toolllama / gpt-3.5-turbo-1106：留出这三者之一时只用另外两个训练；留出 gpt-4-0613 / gpt-4-turbo-preview 时用全部三个训练——**两个 gpt-4 家族从不进入训练**。`metrics.json` 的 `protocol.lomo` 已如实写明。真 LOMO 敏感性（每个 fold 用其余四个家族训练）：**597/969 = 61.6%**（`results.lomo_sensitivity_exclude_fold`）。
 
 **规则类别（两层证据口径，cross-model / cross-group）**：
 
 | 规则 | cross-model | cross-group | 说明 |
 |---|---|---|---|
-| 任务文本抽取（学习得到） | 12 accepted（全部 value-verified，12/12 值一致） | 27 accepted（全部 value-verified，27/27 值一致） | 日期/年份/关键词抽取；过不了声明 schema 时用“与真实成功调用逐字一致”验证 |
-| 经验记忆重放 | 87 accepted（57 schema-valid + 30 value-verified；66/84 值一致） | — | 同任务、其他模型跑成功过 |
-| 学习式参数众数 | 4 accepted（schema-valid） | — | 同函数的成功参数分布 |
-| schema 默认值补全 | 52 accepted（schema-valid，未验证提议） | 30 accepted（schema-valid，未验证提议） | 错误未给参数名时的启发式 |
+| 任务文本抽取（学习得到） | 12 accepted（**全部 schema-valid**，12/12 值一致） | 27 accepted（**全部 schema-valid**，27/27 值一致） | 日期/年份/关键词抽取；schema 修正后不再需要 value-verified 层 |
+| 经验记忆重放 | 95 accepted（69 schema-valid + 26 value-verified；67/85 值一致） | — | 同任务、其他模型跑成功过 |
+| 学习式参数众数 | 10 accepted（schema-valid） | — | 同函数的成功参数分布 |
+| schema 默认值补全 | 46 accepted（schema-valid，未验证提议） | 30 accepted（schema-valid，未验证提议） | 错误未给参数名时的启发式 |
 | 必填参数默认填充 | 10 accepted（schema-valid） | — | 从 schema example/default 补必填 |
 
 **其他离线口径**：
 - `dataset.real_failures=1,033` 与主表 `evaluable_failures=969` 相差 **64 = 30 条 raw arguments + 34 条 tool not in schemas**（这些失败在 `dataset.real_failures` 内、但不进入修复分母）；`metrics.json` 的 `results.skipped_no_schema*` 逐项解释（P1-5）。
 - 数据解析：**7,636 条 trace、30,120 次记录调用（764 个唯一 query、2,303 个唯一 (query, tool)、1,522 个工具）**；解析器对 **20 条** observation 无法解析、按成功处理（0.07%，`dataset.unparseable_observations_treated_as_success`）。
-- 缓存口径：`cache_verified_recovered=48 / cache_miss=483`，分母是 531 条 accepted 修复（9.0%）；正文里的 51.6% 是**参考解输入的缓存覆盖率**，两个分母不要混用（P1-4）。
-- 产物由 `scripts/build_metrics_artifact.py` 从被解析 records + `eval_toolguard_rules.py` 输出**确定性重建**，不再手工维护（P1-3）；复现链见下文“产物与复现溯源”。
+- 缓存口径：`cache_verified_recovered=48 / cache_miss=528`，分母是 576 条 accepted 修复（8.3%）；正文里的 51.6% 是**参考解输入的缓存覆盖率**，两个分母不要混用（P1-4）。
+- 产物由 `scripts/build_metrics_artifact.py` 从被解析 records + `eval_toolguard_rules.py` 输出**确定性重建**，不再手工维护（P1-3）；schema 索引修正也在同一生成器内完成并留痕；复现链见下文“产物与复现溯源”。
 
 ## Live 端到端 demo（真实公开 API + 真实 DeepSeek agent）
 
@@ -315,9 +320,9 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 
 ## 局限与下一步
 
-- **离线覆盖率采用两层证据，且声明 schema 本身有保真度上限**：`schema_valid_rate` 是 81.0%（LOMO，含 150 条 coercion）/ 71.1%（cross-model）/ 52.6%（cross-group），不再是 100%；accepted 覆盖 = schema-valid + value-verified。上游 `api_list` 把部分日期参数声明成 number（真实成功调用却用 ISO 日期字符串）、部分函数参数列表为空，因此 cross-group 的 27 条文本抽取修复只能通过“与真实成功调用逐字一致”这一层计入。**不能**再把 54.7% / 75% 说成“schema 合法修复覆盖率”；
-- **LOMO 名不副实（已如实标注）**：主协议是“固定三模型训练 universe、逐模型留出”，gpt-4-0613 / gpt-4-turbo-preview 从不进入训练；真 LOMO 敏感性为 **542/969=55.9%**（`results.lomo_sensitivity_exclude_fold`）；
-- 离线 replay：缓存只覆盖参考解输入（最终尝试命中率 51.6%），修复验证命中 **48/531=9.0%**，未命中不等于失败；
+- **离线覆盖率采用两层证据，且 schema 索引已按记录证据修正（2026-11-25）**：`schema_valid_rate` 现在是 92.5%（LOMO，含 131 条 coercion）/ 85.0%（cross-model）/ 100%（cross-group，唯一被证伪的日期参数类型已修正）；accepted 覆盖 = schema-valid + value-verified。上游 `api_list` 的 4 处类型错误与 20 个空参数列表已按记录证据修正（`dataset.schema_index`、`protocol.schema_fidelity` 逐条留痕，规则保守：≥3 个成功样本、≥90% 一致、不改 required、不做 integer↔number 拓宽）。**不能**再把 54.7% / 75% 说成“schema 合法修复覆盖率”，也不能把修复后的 92.5% 说成旧口径；
+- **LOMO 名不副实（已如实标注）**：主协议是“固定三模型训练 universe、逐模型留出”，gpt-4-0613 / gpt-4-turbo-preview 从不进入训练；真 LOMO 敏感性为 **597/969=61.6%**（`results.lomo_sensitivity_exclude_fold`）；
+- 离线 replay：缓存只覆盖参考解输入（最终尝试命中率 51.6%），修复验证命中 **48/576=8.3%**，未命中不等于失败；
 - value agreement 只在“某模型解过同一任务”时可验证，是严格下界；
 - 服务端/瞬态错误（全数据集 96 条）离线不可确定性修复；
 - 数据解析把 **20 条**无法解析的 observation 按成功处理（0.07%），可能低估真实失败；30,120 是**记录调用/重试次数**，来自 7,636 条 trace（764 个唯一 query、2,303 个唯一 (query, tool)），不是 30,120 个独立任务；

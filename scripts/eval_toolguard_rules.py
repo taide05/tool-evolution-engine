@@ -47,7 +47,7 @@ from tool_evolution.toolguard.extractors import ExtractorMap  # noqa: E402
 from tool_evolution.toolguard.memory import SuccessMemory  # noqa: E402
 from tool_evolution.toolguard.records import ToolCall, load_calls  # noqa: E402
 from tool_evolution.toolguard.rules import classify_error  # noqa: E402
-from tool_evolution.toolguard.schemas import build_schema_index  # noqa: E402
+from tool_evolution.toolguard.schemas import build_schema_index, refine_schema_index  # noqa: E402
 
 TRAIN_MODELS = {"chatgpt", "toolllama", "gpt-3.5-turbo-1106"}
 TEST_MODELS = {"gpt-4-0613", "gpt-4-turbo-preview"}
@@ -229,7 +229,10 @@ def main() -> int:
 
     calls = [c for c in load_calls(Path(args.calls)) if c.tool_name not in _SENTINEL_CALLS]
     schemas, schema_stats = build_schema_index(Path(args.queries))
+    schemas, schema_fidelity = refine_schema_index(schemas, calls)
     print(f"calls: {len(calls)} | schemas: {len(schemas)} ({schema_stats})")
+    print(f"schema fidelity repair: type_corrections={schema_fidelity['type_corrections']} "
+          f"params_added={schema_fidelity['params_added']}")
 
     backend = None
     if not args.no_cache and Path(args.cache).is_dir():
@@ -299,6 +302,11 @@ def main() -> int:
             "cache_verified_still_error": agg["cache_verified_verified_still_error"],
             "cache_miss": agg["cache_verified_cache_miss"],
         },
+    }
+
+    results["schema_index"] = {
+        "index": schema_stats,
+        "fidelity_repair": schema_fidelity,
     }
 
     compact = {k: {kk: vv for kk, vv in v.items() if kk not in ("examples", "per_kind")}

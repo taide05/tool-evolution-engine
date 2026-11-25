@@ -63,3 +63,148 @@ def _param(param: dict) -> tuple[str | None, dict[str, object]]:
     if default not in (None, ""):
         prop["example_value"] = default
     return name, prop
+
+
+def refine_schema_index(
+    index: dict[str, FunctionSchema],
+    calls,
+    *,
+    min_samples: int = 3,
+    agreement: float = 0.9,
+) -> tuple[dict[str, FunctionSchema], dict[str, object]]:
+    """Correct schema-index declarations that contradict recorded successful calls.
+
+    2026-11-25 schema-fidelity repair.  The released StableToolBench ``api_list`` is the
+    agent-visible spec, but it is demonstrably wrong for some parameters: e.g. watchmode
+    date parameters are declared ``NUMBER`` while every recorded *successful* call passes
+    an ISO date string, and some functions declare empty parameter lists.  Repairing the
+    index (instead of silently coercing/waiving at repair time) needs explicit rules and
+    provenance:
+
+    1. **Type correction** for scalar parameters: when at least ``min_samples`` recorded
+       successful values exist and at least ``agreement`` of them share one concrete JSON
+       type, and that type is *incompatible* with the declared scalar type
+       (number/integer declared vs observed string, or string declared vs observed
+       integer/number), the declared type is replaced by the observed type.  Numeric
+       widening/narrowing (integer <-> number) is never performed.
+    2. **Parameter back-fill**: when a function's declared parameter list is empty but its
+       recorded successful calls consistently carry arguments, those argument names are
+       added as *optional* properties with their observed dominant scalar type.  Required
+       lists are never changed.
+
+    All corrections are counted (with up to 10 examples) and written into the metrics
+    artifact, so the schema change is visible evidence rather than a quiet moving target.
+    """
+    # observed[(function, param)] = {concrete_type: count}
+    observed: dict[tuple[str, str], dict[str, int]] = {}
+    arg_presence: dict[str, dict[str, int]] = {}
+    observed_functions: set[str] = set()
+    for call in calls:
+        if not call.recorded_ok or call.tool_name not in index:
+            continue
+        arguments = call.arguments or {}
+        if "__raw__" in arguments:
+            continue
+        observed_functions.add(call.tool_name)
+        for name, value in arguments.items():
+            kind = _json_type(value)
+            if kind is None:
+                continue
+            bucket = observed.setdefault((call.tool_name, name), {})
+            bucket[kind] = bucket.get(kind, 0) + 1
+            arg_presence.setdefault(call.tool_name, {})
+            arg_presence[call.tool_name][name] = arg_presence[call.tool_name].get(name, 0) + 1
+
+    refined: dict[str, FunctionSchema] = {}
+    type_corrections: list[dict[str, object]] = []
+    params_added: list[dict[str, object]] = []
+    for function, schema in index.items():
+        properties = {name: dict(prop) for name, prop in schema.properties.items()}
+        required = schema.required
+        if not properties and function in arg_presence:
+            presence = arg_presence[function]
+            for name, count in sorted(presence.items()):
+                bucket = observed.get((function, name)) or {}
+                kind = _dominant_type(bucket, count, agreement)
+                if kind is None or kind not in ("string", "number", "integer", "boolean"):
+                    continue
+                properties[name] = {
+                    "type": kind,
+                    "description": "inferred from recorded successful calls (api_list declared an empty parameter list)",
+                }
+                params_added.append({"function": function, "param": name, "observed_type": kind,
+                                     "observations": count})
+        for name, prop in list(properties.items()):
+            declared = prop.get("type")
+            if declared not in ("number", "integer", "string", "boolean"):
+                continue
+            bucket = observed.get((function, name))
+            if not bucket:
+                continue
+            total = sum(bucket.values())
+            if total < min_samples:
+                continue
+            kind, count = max(bucket.items(), key=lambda item: item[1])
+            if not count or count / total < agreement:
+                continue
+            if _incompatible(declared, kind):
+                prop["type"] = kind
+                prop["type_corrected_from"] = declared
+                prop["type_correction_evidence"] = f"{count}/{total} recorded successful calls use {kind}"
+                type_corrections.append({
+                    "function": function,
+                    "param": name,
+                    "declared": declared,
+                    "observed_type": kind,
+                    "observations": total,
+                    "agreement": round(count / total, 3),
+                })
+        refined[function] = FunctionSchema(
+            name=function, properties=properties, required=required)
+    stats: dict[str, object] = {
+        "refined": True,
+        "observed_functions": len(observed_functions),
+        "type_corrections": len(type_corrections),
+        "params_added": len(params_added),
+        "type_correction_examples": type_corrections[:10],
+        "param_addition_examples": params_added[:10],
+        "min_samples": min_samples,
+        "agreement_threshold": agreement,
+        "explanation": (
+            "The released api_list is the agent-visible spec; where it contradicts "
+            "recorded successful calls (>=3 samples, >=90% one scalar type) the index "
+            "declaration is corrected and every change is counted here. Required lists are "
+            "never changed; numeric widening/narrowing (integer<->number) is never applied."),
+    }
+    return refined, stats
+
+
+def _json_type(value) -> str | None:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return None
+
+
+def _dominant_type(bucket: dict[str, int], total: int, agreement: float) -> str | None:
+    if not bucket or total < 1:
+        return None
+    kind, count = max(bucket.items(), key=lambda item: item[1])
+    if count / total < agreement:
+        return None
+    return kind
+
+
+def _incompatible(declared: str, observed: str) -> bool:
+    if declared == observed:
+        return False
+    if declared in ("number", "integer") and observed == "string":
+        return True
+    if declared == "string" and observed in ("integer", "number"):
+        return True
+    return False

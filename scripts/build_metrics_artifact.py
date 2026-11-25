@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from tool_evolution.toolguard.records import load_calls  # noqa: E402
 from tool_evolution.toolguard.rules import classify_error  # noqa: E402
-from tool_evolution.toolguard.schemas import build_schema_index  # noqa: E402
+from tool_evolution.toolguard.schemas import build_schema_index, refine_schema_index  # noqa: E402
 
 TRAIN_MODELS = ["chatgpt", "gpt-3.5-turbo-1106", "toolllama"]
 TEST_MODELS = ["gpt-4-0613", "gpt-4-turbo-preview"]
@@ -350,8 +350,14 @@ def main() -> int:
 
     calls = load_calls(Path(args.calls))
     schemas, schema_stats = build_schema_index(Path(args.queries))
+    evaluation_calls = [call for call in calls if call.tool_name not in SENTINEL_CALLS]
+    schemas, schema_fidelity = refine_schema_index(schemas, evaluation_calls)
     parser_stats = json.loads(Path(args.parser_stats).read_text(encoding="utf-8"))
     dataset = _dataset_block(calls, parser_stats, schemas, SENTINEL_CALLS)
+    dataset["schema_index"] = {
+        "declared": schema_stats,
+        "fidelity_repair": schema_fidelity,
+    }
     skipped = _skipped_no_schema(calls, schemas, SENTINEL_CALLS)
 
     eval_payload = json.loads(Path(args.eval).read_text(encoding="utf-8"))
@@ -361,6 +367,32 @@ def main() -> int:
         true_lomo_payload = json.loads(true_lomo_path.read_text(encoding="utf-8"))
 
     payload = build(eval_payload, true_lomo_payload, dataset, skipped, args.generated_at)
+    # make the schema-fidelity repair visible in protocol + limitations (never silent)
+    payload["protocol"]["schema_fidelity"] = {
+        "type_corrections": schema_fidelity["type_corrections"],
+        "params_added": schema_fidelity["params_added"],
+        "observed_functions": schema_fidelity["observed_functions"],
+        "min_samples": schema_fidelity["min_samples"],
+        "agreement_threshold": schema_fidelity["agreement_threshold"],
+        "rules": ("declared api_list scalar types are corrected only when >=3 recorded "
+                  "successful values agree >=90% on an incompatible scalar type; empty "
+                  "parameter lists are back-filled as optional params; required lists never "
+                  "change; integer<->number widening is never applied"),
+    }
+    repaired_limitation = (
+        "The declared agent-visible schema (upstream StableToolBench api_list) has fidelity "
+        "limits; the index is now repaired where recorded successful calls prove it wrong "
+        f"({schema_fidelity['type_corrections']} scalar type corrections, "
+        f"{schema_fidelity['params_added']} back-filled parameters; every change counted in "
+        "dataset.schema_index and protocol.schema_fidelity). Remaining upstream defects "
+        "without enough recorded evidence are still reported as schema-rejected proposals / "
+        "value-verified repairs, not silently waived.")
+    payload["limitations"] = [
+        repaired_limitation if "fidelity limits" in item else item
+        for item in payload["limitations"]
+    ]
+    if not any("fidelity limits" in item for item in payload["limitations"]):
+        payload["limitations"].append(repaired_limitation)
     output = Path(args.output)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8",
                       newline="\n")

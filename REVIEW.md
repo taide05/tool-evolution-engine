@@ -46,7 +46,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 
 **明确不在本次范围**：
 
-- 任何 live 实验的**重跑**：本轮没有新的 live 数据；`live_*` / `mcp_*` artifact 与上一轮逐字相同（`metrics.json` 是本轮唯一被改写的 artifact，且由 `scripts/build_metrics_artifact.py` 从 records/评测输出确定性重建）；
+- 任何 live 实验的**重跑**：V4 重跑不计入此项（见 §3）；本轮的 schema 索引修正只影响离线 `metrics.json`，由 `scripts/build_metrics_artifact.py` 从 records/评测输出确定性重建；
 - 旧 TEE 25 条：不属本轮范围，未改动；
 - `README.md` 正文的旧 TEE 指标：历史口径，顶部已有说明；
 - 任何“生产环境效果”的声明：故障/崩溃/漂移全部是**确定性注入**，不是生产观测。
@@ -77,9 +77,10 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | Claim（TOOLGUARD 中的主数字） | 证据 artifact | 如何独立核验 |
 |---|---|---|
 | 离线数据：30,120 次评估调用（7,636 trace；764 唯一 query、2,303 唯一 (query, tool)）/ 1,033 次失败；64 条 skipped_no_schema = 30 raw + 34 无 schema | `metrics.json` | `results.dataset`、`results.skipped_no_schema*`；`evidence_summary.py` 的 `offline` 段 |
-| 离线修复（两层证据，`metrics.json` v3）：LOMO **accepted 531/969 = 54.8%**（提议 583；schema 通过 472=81.0%，其中 150 条经类型 coercion；schema 拒绝失败 111；value-verified 59）；cross-model **165/277 = 59.6%**；cross-group **57/76 = 75.0%**（30 schema-valid coercion + 27 value-verified 文本抽取，27/27 值一致） | `metrics.json` | `results.*`：`proposed = schema_passed + schema_rejected_failures`；`accepted = schema_passed + value_verified_repairs`；`schema_valid_rate = schema_passed/proposed`；`coverage = accepted/evaluable_failures`。三数均可手算 |
-| LOMO 协议诚实性：主口径是“固定三模型训练 universe、逐模型留出”，gpt-4 家族从不训练；真 LOMO 敏感性 **542/969=55.9%** | `metrics.json` | `protocol.lomo`、`results.lomo_per_fold[*].train_models_used`、`results.lomo_sensitivity_exclude_fold` |
-| schema/修复的两层证据：schema-valid（含 coercion，单独计数）+ value-verified（与同 task/function 真实成功调用逐字一致）；声明 schema 本身有保真度缺陷（api_list 把日期参数声明成 number 等） | `metrics.json` + `engine.py`/`schema_check.py` | `results.*.{schema_passed, coerced_repairs, value_verified_repairs, schema_rejected_proposals}`；`protocol.schema_funnel`；复算脚本 `.scratch/evidence/analyze_rejection_reasons.py`、`recoverability_probe.py` |
+| 离线修复（两层证据 + schema 索引保真度修复，`metrics.json` v4）：LOMO **accepted 576/969 = 59.4%**（提议 583；schema 通过 539=92.5%，其中 131 条经类型 coercion；schema 拒绝失败 44；value-verified 37；真 LOMO 敏感性 597/969=61.6%）；cross-model **173/277 = 62.5%**；cross-group **57/76 = 75.0%**（schema 修正后 57 条全部 schema-valid） | `metrics.json` | `results.*`：`proposed = schema_passed + schema_rejected_failures`；`accepted = schema_passed + value_verified_repairs`；`schema_valid_rate = schema_passed/proposed`；`coverage = accepted/evaluable_failures`。三数均可手算 |
+| **schema 索引保真度修复（本轮新增）**：4 处类型修正（watchmode `start_date/end_date` number→string；两个 `page` string→integer）+ 20 个空参数列表回填；规则保守（≥3 成功样本/≥90% 一致/不改 required/不做 integer↔number 拓宽），每处修正留痕 | `metrics.json` | `dataset.schema_index.fidelity_repair`（type_correction_examples / param_addition_examples）、`protocol.schema_fidelity`；重跑 `eval_toolguard_rules.py` + `build_metrics_artifact.py` 可复算 |
+| LOMO 协议诚实性：主口径是“固定三模型训练 universe、逐模型留出”，gpt-4 家族从不训练；真 LOMO 敏感性 **597/969=61.6%** | `metrics.json` | `protocol.lomo`、`results.lomo_per_fold[*].train_models_used`、`results.lomo_sensitivity_exclude_fold` |
+| schema/修复的两层证据：schema-valid（含 coercion，单独计数）+ value-verified（与同 task/function 真实成功调用逐字一致）；声明 schema 的保真度缺陷已按记录证据修正，剩余缺陷仍如实报告 | `metrics.json` + `engine.py`/`schema_check.py`/`schemas.py` | `results.*.{schema_passed, coerced_repairs, value_verified_repairs, schema_rejected_proposals}`；`protocol.schema_funnel`/`schema_fidelity`；复算脚本 `.scratch/evidence/analyze_rejection_reasons.py`、`recoverability_probe.py` |
 | live V1：27 短任务，normal 双方 27/27；stress 25/27 vs 26/27；工具失败 -80%~-93%、tokens -22% | `live_demo.json` | `results.normal/stress`（per_task 27 条） |
 | **单模型 V4（当前主口径，HN 契约修正后）**：clean+1 baseline **59/93 (63.4%)** vs guard **93/93 (100%)**，McNemar **p=1.16e-10**（配对 `guard_only=34 / baseline_only=0`），tokens -33.3%；clean+4 双方 31/31；10 轮 31/31 vs 30/31；注入 epoch baseline 365 / guard 382，guard 轮内恢复 191、agent 可见工具错误 216→0 | `live_demo_hard_v4.json`（310 格） | `evidence_summary.py` 的 `live_demo_hard_v4`；aggregate 与 records 由契约强制一致；预算锚点复用 V3 calibration（`protocol.calibration.source`），V3→V4 只改 HN schema |
 | 单模型 V3（**历史**，HN schema drift 契约修复能力演示）：clean+1 baseline 51/93 (54.8%) vs guard 93/93，p=4.55e-13，tokens -36.4%；clean+4 90.3%→100%；10 轮 96.8%→96.8%；epoch baseline 382 / guard 400；guard 用 backend error-hint coercion 使 HN 子集 12/12 | `live_demo_hard_v3.json`（310 格） | 与 V4 对比 HN/非 HN 子集：HN 子集 baseline 2/12→12/12；本轮 `--from-records` 重建过 failure_mode/reproduce，**数字未变** |
@@ -118,8 +119,8 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 
 ## 5. 已知局限与“不能声称”清单（审阅重点压测处）
 
-1. **离线覆盖率采用两层证据，且声明 schema 本身有保真度上限**：`schema_valid_rate` 是 81.0%（LOMO，含 150 条 coercion）/ 71.1%（cross-model）/ 52.6%（cross-group），**不是 100%**；accepted 覆盖 = schema-valid + value-verified。上游 `api_list` 把部分日期参数声明成 number（真实成功调用却用 ISO 日期字符串）、部分函数参数列表为空；例如 cross-group 的文本抽取修复与记录中的真实成功调用 27/27 逐字一致，但过不了声明 schema，因此只按 value-verified 层计入。**不能**把 54.8% / 75.0% 说成“schema 合法覆盖率”。
-2. **LOMO 名不副实已如实标注**：主口径固定三模型训练 universe，gpt-4 家族只做测试；真 LOMO 敏感性 **55.9%**。
+1. **离线覆盖率采用两层证据；声明 schema 的保真度缺陷已按记录证据修正（2026-11-25）**：`schema_valid_rate` 现在是 92.5%（LOMO，含 131 条 coercion）/ 85.0%（cross-model）/ 100%（cross-group）；accepted 覆盖 = schema-valid + value-verified。上游 `api_list` 与记录成功调用矛盾处（watchmode 日期参数声明 number、两个 page 声明 string、20 个空参数列表）已在 schema 索引层修正并逐条留痕（≥3 成功样本、≥90% 一致，不改 required、不做 integer↔number 拓宽）；cross-group 的 27 条文本抽取修复因此从 value-verified 升级为 schema-valid。**不能**把 54.8% / 75.0% 说成“schema 合法覆盖率”，也不能把修复前的 81.0% 当现状。
+2. **LOMO 名不副实已如实标注**：主口径固定三模型训练 universe，gpt-4 家族只做测试；真 LOMO 敏感性 **61.6%**。
 3. **故障/崩溃/漂移是确定性注入**，不是生产观测。`clean+1` 是受控压力条件，不能读作“生产失败率”；正确口径是成功-预算曲线。
 4. **天气/FX ground truth 是直播值**：V3 换了不可变 HN 任务 + 每模型重建 GT；仍有极小漂移。
 5. **预算锚点**：单模型 V4 复用 V3 calibration、多模型 V4 复用 V3 per-model calibration（同一预算锚点，schema 是唯一变量；`protocol.calibration.source` 已记录），不是独立新校准；MCP 已改为两臂分别校准并锚定 baseline（`mcp_demo_v3.json`，clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6），旧 V2 的 guard 锚定保留为历史。
@@ -167,7 +168,8 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `src/tool_evolution/toolguard/artifact_contracts.py` | 逐字段重算比对、metrics 漏斗/对账、tasks_per_model↔record expected 一致性、负例可捕获 |
 | `scripts/toolguard_evidence_summary.py` | 重写：records 重算所有 live 指标；offline 段为 counts + 重算比率 |
 | `scripts/eval_toolguard_rules.py` | schema 漏斗统计（proposed/rejected/passed）、LOMO 训练策略可选（`--lomo-train-policy`）、诚实协议文本 |
-| `scripts/build_metrics_artifact.py`（新） | 离线 metrics.json 确定性生成器（含 skipped_no_schema 解释、真 LOMO 敏感性） |
+| `scripts/build_metrics_artifact.py`（新） | 离线 metrics.json 确定性生成器（含 skipped_no_schema 解释、真 LOMO 敏感性、schema 索引保真度修正留痕） |
+| `src/tool_evolution/toolguard/schemas.py` | **schema 索引保真度修正**：`refine_schema_index()` 按记录成功调用做保守类型修正（4 处）与空参数回填（20 个），统计写入 artifact |
 | `benchmarks/toolguard/metrics.json` | 由上述生成器重跑生成（本轮被改写的 artifact 之一） |
 | `src/tool_evolution/toolguard/schema_check.py`（新） | 完整 JSON-Schema 子集校验（类型/enum/format/范围/数组/嵌套） |
 | `src/tool_evolution/toolguard/{memory,rules,engine}.py` | 接入严格校验；RepairResult 增加 proposed/schema_errors/rejected_proposals/candidates/value_verified；引擎记录被拒提议；`coerce_values_to_schema()` 先做声明类型转换（`schema_type_coercion`）；schema 不通过但逐字命中同 task/function 真实成功调用时按 `recorded_success_match`（value-verified 层）接受 |
