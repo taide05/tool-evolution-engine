@@ -52,7 +52,7 @@ ToolGuard 是一个夹在 Agent 与工具之间的中间件：**采集每次工�
 
 ## Live 端到端 demo（真实公开 API + 真实 DeepSeek agent）
 
-四轮递进验证：前三轮使用真实 DeepSeek `deepseek-v4-flash` agent，第四轮换成 3 个模型（qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max）；全程真实免 key 公开 API、程序化答案校验（**无 LLM judge**）。比较类答案的判定已从“候选名出现”升级为**关系断言**（winner 必须与数值排序一致、否定词处理、million 等单位归一；见下）。合成元素只有**确定性的故障/崩溃/配置漂移注入**，全部在 artifact 中逐项披露；DeepSeek 或公开 API 不可用时 demo 停止报错，**不会回退离线/mock**。
+四轮递进验证：前三轮使用真实 DeepSeek `deepseek-v4-flash` agent，第四轮换成 3 个模型（qwen3.8-flash / DeepSeek-V4.1-Flash / qwen4-max）；全程真实免 key 公开 API、程序化答案校验（**无 LLM judge**）。比较类答案的判定已从“候选名出现”升级为**关系断言**（winner 必须与数值排序一致、否定词处理、million 等单位归一；见下）。A/B 的故障/崩溃/漂移是确定性注入（保证可复现）；另有独立的**真实线上故障 trace** 证据（2026-11-25 新增，见“真实线上故障 trace”一节），二者互补。DeepSeek 或公开 API 不可用时 demo 停止报错，**不会回退离线/mock**。
 
 ### 第一轮：27 个短任务 / 6 个 API（可靠性与成本口径）
 
@@ -190,6 +190,27 @@ artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp
 artifact：[`benchmarks/toolguard/live_demo_multimodel_v4.json`](benchmarks/toolguard/live_demo_multimodel_v4.json)（558 格逐条记录、三模型 placement/Wilson CI/成本、逐条修复事件、`tasks_per_model` 与每条记录的 `expected` 快照、`protocol.hn_schema=consistent`、`protocol.calibration.source` 指向复用锚点）。V2 版 artifact（`live_demo_multimodel.json`，含 karma 任务）保留为演进记录。
 
 **这一轮的局限**：3 个模型是复制而非模型间假设检验；cheap/strong 同属 Qwen 家族；每个模型只做 1 次 calibration（V4 复用 V3 锚点，属受控对照）；故障仍是确定性注入；紧预算 guard 已 100%，存在 ceiling effect（进一步提升空间只能靠更难的题）。
+
+### 真实线上故障 trace（2026-11-25 新增）
+
+live A/B 的故障是**确定性注入**（为了可复现与配对）；本轮补一条互补证据：直接抓**真实 public API 错误**，让中间件修，修好的调用**真实重放**验证——没有任何合成故障、没有 LLM 调用、成本 $0。
+
+**方法**（两个新脚本，均可复现）：
+1. `scripts/collect_real_fault_traces.py`：对 live demo 的 6 类真实公开 API 构造 **16 个真实错误场景**（未知国家/未知 PyPI 包/未知 HN id/非法坐标/类型不匹配等），记录真实返回的 `error_kind`/`error_message`/args/timestamp → `benchmarks/toolguard/real_traces/real_fault_traces.json`。捕获成功 **16/16**：invalid_argument 6、not_found 9、request_error 1。
+2. `scripts/run_real_fault_repair.py`：把每条真实错误**只返回一次**给 `ToolGuard`（其它调用照常打真实 API）；guard 修复后调用真实 API，因此 “recovered” = **在线验证成功**，不是模拟成功 → `benchmarks/toolguard/real_traces/real_fault_repair_run.json`。
+
+**结果（可逐条核对）**：
+
+| 类别 | 数量 | 结果 |
+|---|---|---|
+| invalid_argument（契约/类型错误，且修复值可从参数推导） | 3 | **3/3 修复并在线验证成功**：`story_id "8863"→8863`（error_hint_coercion）、`latitude/longitude "48.85"/"2.35"→float`（schema_coercion）、`year "2020"→2020`（error_hint_coercion） |
+| invalid_argument（不可推导：非数字字符串 / 空必填字符串 / 整数值 float） | 3 | 0 修复——guard **不伪造**修复；其中 integral float `8863.0→int` 未转换是一个**具体能力缺口**（已记录，未在本轮扩大改动） |
+| not_found（未知国家/包/HN id/用户/汇率） | 9 | 0 修复——语义错误不可由中间件确定性修复，**拒绝伪造** |
+| request_error（坐标越界 → 真实 HTTP 400） | 1 | 0 修复——非瞬态（`>=400` 非 retryable），不重试 |
+
+- 结论：在真实线上错误上，中间件**只修可推导的契约/类型错误**（3/3），对其余 13 条语义/越界错误诚实失败；这支持“guard 不是拿失败换成功”的 claim；
+- **定位**：这是 repair layer 的隔离验证（无 LLM/agent 采样），**补充而非替代**注入故障 A/B；多步任务下的 baseline-vs-guard 因果仍以 V4 A/B 为准；
+- 证据由 `tests/test_toolguard/test_real_fault_traces.py` 固定（16 条 trace / 3 条预期恢复 / 13 条不可修复集合），防止证据腐化；这两个 JSON 放在 `benchmarks/toolguard/real_traces/` 子目录，属于**证据数据**而非 13 个契约 artifact 之一。
 
 ## 架构：一个中间件，三种传输层
 
@@ -339,4 +360,4 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
 - MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
 - 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
-- 下一步（待执行）：① 继续修正 schema 索引保真度（日期参数类型、空参数列表）后再看离线覆盖是否还能提升；② 用真实线上故障 trace 替代部分注入；③ 三个模型的紧预算 guard 已全部到 100%，需要更难的题/更紧的预算；④ 把 HN 契约修正推广到更多任务族/工具（当前只有 HN 一个合成契约缺陷）。
+- 下一步（待执行）：① schema 索引保真度已按证据修正（4 处类型 + 20 个参数）；剩余无足够证据的缺陷仍如实报告，继续收集样本即可扩展；② 真实线上故障 trace 已用于 repair-layer 验证（3/3 可推导契约错误修复并在线验证，13 条语义错误诚实失败）；下一步是把 real-trace 注入接进完整 A/B（而非只做 repair-layer）、并补 integral-float→integer 这类具体 coercion 缺口；③ 三个模型的紧预算 guard 已全部到 100%，需要更难的题/更紧的预算；④ 把 HN 契约修正推广到更多任务族/工具（当前只有 HN 一个合成契约缺陷）。

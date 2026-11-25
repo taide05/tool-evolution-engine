@@ -1,0 +1,262 @@
+{
+  "artifact_version": 1,
+  "generated_at": "2026-11-25T17:25:41.173053+00:00",
+  "description": "Real online fault traces captured by calling the live demo's real public APIs with bad/edge arguments. Used by scripts/run_real_fault_repair.py to exercise the middleware repair layer against genuine API errors (not injected faults).",
+  "collector": "scripts/collect_real_fault_traces.py",
+  "cost_usd": 0.0,
+  "summary": {
+    "cases": 16,
+    "real_errors_captured": 16,
+    "unexpected_success": 0,
+    "by_error_kind": {
+      "invalid_argument": 6,
+      "not_found": 9,
+      "request_error": 1
+    },
+    "by_tool": {
+      "find_country_by_capital": 1,
+      "geocode_city": 1,
+      "get_country_gdp_per_capita": 1,
+      "get_country_info": 1,
+      "get_country_population": 2,
+      "get_exchange_rate": 1,
+      "get_hn_item": 3,
+      "get_hn_user": 1,
+      "get_package_release_date": 1,
+      "get_package_version": 1,
+      "get_weather": 3
+    }
+  },
+  "records": [
+    {
+      "trace_id": "country_info_unknown_country",
+      "tool": "get_country_info",
+      "arguments": {
+        "country": "Zzzland-Not-A-Country"
+      },
+      "description": "unknown country name against the real World Bank country table",
+      "api_host": "api.worldbank.org",
+      "captured_at": "2026-11-25T17:24:34.306426+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "country not found: Zzzland-Not-A-Country",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "find_country_unknown_capital",
+      "tool": "find_country_by_capital",
+      "arguments": {
+        "capital": "Atlantis"
+      },
+      "description": "unknown capital city",
+      "api_host": "api.worldbank.org",
+      "captured_at": "2026-11-25T17:24:41.709355+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "no country found for capital: Atlantis",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "country_population_unknown",
+      "tool": "get_country_population",
+      "arguments": {
+        "country": "Zzzland"
+      },
+      "description": "unknown country code for an indicator query",
+      "api_host": "api.worldbank.org",
+      "captured_at": "2026-11-25T17:24:41.709618+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "country not found: Zzzland",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "country_gdp_unknown",
+      "tool": "get_country_gdp_per_capita",
+      "arguments": {
+        "country": "Zzzland"
+      },
+      "description": "unknown country code for a GDP query",
+      "api_host": "api.worldbank.org",
+      "captured_at": "2026-11-25T17:24:41.709923+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "country not found: Zzzland",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "weather_invalid_coordinates",
+      "tool": "get_weather",
+      "arguments": {
+        "latitude": 999.0,
+        "longitude": 999.0
+      },
+      "description": "out-of-range coordinates",
+      "api_host": "api.open-meteo.com",
+      "captured_at": "2026-11-25T17:24:41.710218+00:00",
+      "outcome": "error",
+      "error_kind": "request_error",
+      "error_message": "HTTP 400: {\"reason\":\"Latitude must be in range of -90 to 90°. Given: 999.0.\",\"error\":true}",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "weather_non_numeric_latitude",
+      "tool": "get_weather",
+      "arguments": {
+        "latitude": "not-a-number",
+        "longitude": 0.0
+      },
+      "description": "type mismatch: latitude arrives as a string",
+      "api_host": "api.open-meteo.com",
+      "captured_at": "2026-11-25T17:24:43.252663+00:00",
+      "outcome": "error",
+      "error_kind": "invalid_argument",
+      "error_message": "latitude must be a number",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "weather_numeric_strings",
+      "tool": "get_weather",
+      "arguments": {
+        "latitude": "48.85",
+        "longitude": "2.35"
+      },
+      "description": "type mismatch: coordinates arrive as numeric strings (coercible contract error)",
+      "api_host": "api.open-meteo.com",
+      "captured_at": "2026-11-25T17:24:43.252680+00:00",
+      "outcome": "error",
+      "error_kind": "invalid_argument",
+      "error_message": "latitude must be a number",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "country_population_year_as_string",
+      "tool": "get_country_population",
+      "arguments": {
+        "country": "Brazil",
+        "year": "2020"
+      },
+      "description": "type mismatch: year arrives as a string (coercible contract error)",
+      "api_host": "api.worldbank.org",
+      "captured_at": "2026-11-25T17:24:43.252688+00:00",
+      "outcome": "error",
+      "error_kind": "invalid_argument",
+      "error_message": "year must be an integer",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "hn_story_id_float",
+      "tool": "get_hn_item",
+      "arguments": {
+        "story_id": 8863.0
+      },
+      "description": "type mismatch: story_id arrives as an integral float",
+      "api_host": "hacker-news.firebaseio.com",
+      "captured_at": "2026-11-25T17:24:43.252696+00:00",
+      "outcome": "error",
+      "error_kind": "invalid_argument",
+      "error_message": "story_id must be an integer",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "geocode_empty_city",
+      "tool": "geocode_city",
+      "arguments": {
+        "name": ""
+      },
+      "description": "empty city name",
+      "api_host": "geocoding-api.open-meteo.com",
+      "captured_at": "2026-11-25T17:24:43.252704+00:00",
+      "outcome": "error",
+      "error_kind": "invalid_argument",
+      "error_message": "name must be a non-empty string",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "pypi_unknown_package",
+      "tool": "get_package_version",
+      "arguments": {
+        "package": "this-package-does-not-exist-xyzzz"
+      },
+      "description": "unknown PyPI package",
+      "api_host": "pypi.org",
+      "captured_at": "2026-11-25T17:24:43.252712+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "HTTP 404 not found",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "pypi_unknown_version",
+      "tool": "get_package_release_date",
+      "arguments": {
+        "package": "numpy",
+        "version": "999.0.0"
+      },
+      "description": "known package with an unknown version",
+      "api_host": "pypi.org",
+      "captured_at": "2026-11-25T17:24:45.115504+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "no release 999.0.0 for package numpy",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "hn_missing_item",
+      "tool": "get_hn_item",
+      "arguments": {
+        "story_id": 0
+      },
+      "description": "non-existent HN item id",
+      "api_host": "hacker-news.firebaseio.com",
+      "captured_at": "2026-11-25T17:24:48.883350+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "no Hacker News item: 0",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "hn_story_id_as_string",
+      "tool": "get_hn_item",
+      "arguments": {
+        "story_id": "8863"
+      },
+      "description": "type mismatch: story_id arrives as a string (real backend contract error)",
+      "api_host": "hacker-news.firebaseio.com",
+      "captured_at": "2026-11-25T17:25:14.331892+00:00",
+      "outcome": "error",
+      "error_kind": "invalid_argument",
+      "error_message": "story_id must be an integer",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "hn_unknown_user",
+      "tool": "get_hn_user",
+      "arguments": {
+        "username": "user-that-does-not-exist-xyzzz"
+      },
+      "description": "unknown HN username",
+      "api_host": "hacker-news.firebaseio.com",
+      "captured_at": "2026-11-25T17:25:14.331911+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "no Hacker News user: user-that-does-not-exist-xyzzz",
+      "source": "real public API call (captured, not injected)"
+    },
+    {
+      "trace_id": "fx_unknown_currency",
+      "tool": "get_exchange_rate",
+      "arguments": {
+        "base": "ZZZ",
+        "target": "ZZZ"
+      },
+      "description": "unknown currency codes",
+      "api_host": "open.er-api.com",
+      "captured_at": "2026-11-25T17:25:39.742511+00:00",
+      "outcome": "error",
+      "error_kind": "not_found",
+      "error_message": "no rate for ZZZ->ZZZ",
+      "source": "real public API call (captured, not injected)"
+    }
+  ]
+}

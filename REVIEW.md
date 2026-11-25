@@ -90,6 +90,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | 多模型 V3（历史，HN drift 演示）：clean+1 baseline 28/62 (45.2%) / 32/62 (51.6%) / 34/62 (54.8%) → guard 57/62 (91.9%) / 62/62 / 62/62；HN 子集 baseline 1/8（三模型） | `live_demo_multimodel_v3.json`（558 格） | 与 V4 对比 HN/非 HN 子集；本轮 `--from-records` 重建 failure_mode/tasks_per_model，成功率未变 |
 | MCP V2：双 server 96 格，clean+1 baseline 11/32 vs guard 32/32（p=9.54e-7）；17–20 次真实崩溃/重连 | `mcp_demo_v2.json` | `guard_repairs_by_rule`（从 guard_events 重算）；records 的 `mcp_restarts` |
 | MCP V3（本轮重跑，P1-2 修正）：两臂分开校准、预算锚定 baseline；clean+1 baseline **13/32（40.6%）** vs guard **32/32（100%）**（p=3.81e-6），clean+4 14/16 vs 16/16；$0.098/667s；artifact 用 `--from-records` 重建生成元数据（records/aggregate 未变） | `mcp_demo_v3.json` | `protocol.budget_anchor=baseline`、`calibration.tasks[*].baseline_turns/guard_turns`；`guard_repairs_by_rule` 从 guard_events 重算；`--from-records` 可重建 |
+| **真实线上故障 trace（本轮新增）**：对 6 类真实公开 API 构造 16 个真实错误场景并捕获真实错误（invalid_argument 6 / not_found 9 / request_error 1）；逐条只回放一次给 guard：**3/3 可推导契约错误修复且在线验证成功**（HN story_id string→int、weather 坐标 numeric-string→float、World Bank year string→int），13 条语义/越界错误诚实失败（0 伪造修复）；成本 $0 | `benchmarks/toolguard/real_traces/real_fault_traces.json`、`real_fault_repair_run.json` | 重跑 `python scripts/collect_real_fault_traces.py && python scripts/run_real_fault_repair.py`；`test_real_fault_traces.py` 固定 16/3/13 与"不 recovered 必须不可语义修复"的集合 |
 | 比较类 verifier：反向答案判失败；已提交数据重判 success 变化 0/756（含单/多模型 V4） | `verify.py` + `rescore_toolguard_verifier.py` | 跑 rescore；负例见 `test_relation_verifier.py`；重判只读、不改 artifact |
 | 契约可自证：任意改 tokens/rate/turns/tool_errors/Wilson/p 都失败 | `artifact_contracts.py` + `test_artifact_tamper.py` | `pytest tests/test_toolguard/test_artifact_tamper.py`（临时副本篡改，**13 个 artifact** 复制后逐字段改） |
 | 成本：多模型 V4 评测 **$2.00**（558 格；复用 V3 per-model calibration，无额外校准花费）；V3 历史版 $2.08 + $0.30 | `live_demo_multimodel_v4.json` | 由 records usage × `protocol.models` 公开单价可重算（`artifact_metrics.recompute_multimodel`） |
@@ -121,7 +122,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 
 1. **离线覆盖率采用两层证据；声明 schema 的保真度缺陷已按记录证据修正（2026-11-25）**：`schema_valid_rate` 现在是 92.5%（LOMO，含 131 条 coercion）/ 85.0%（cross-model）/ 100%（cross-group）；accepted 覆盖 = schema-valid + value-verified。上游 `api_list` 与记录成功调用矛盾处（watchmode 日期参数声明 number、两个 page 声明 string、20 个空参数列表）已在 schema 索引层修正并逐条留痕（≥3 成功样本、≥90% 一致，不改 required、不做 integer↔number 拓宽）；cross-group 的 27 条文本抽取修复因此从 value-verified 升级为 schema-valid。**不能**把 54.8% / 75.0% 说成“schema 合法覆盖率”，也不能把修复前的 81.0% 当现状。
 2. **LOMO 名不副实已如实标注**：主口径固定三模型训练 universe，gpt-4 家族只做测试；真 LOMO 敏感性 **61.6%**。
-3. **故障/崩溃/漂移是确定性注入**，不是生产观测。`clean+1` 是受控压力条件，不能读作“生产失败率”；正确口径是成功-预算曲线。
+3. **故障/崩溃/漂移是确定性注入**，不是生产观测。`clean+1` 是受控压力条件，不能读作“生产失败率”；正确口径是成功-预算曲线。**补充证据**：另有真实线上错误 trace 的 repair-layer 验证（16 条真实错误：3/3 可推导契约错误修复并在线验证，13 条语义错误诚实失败；见 §3），但它不替代 A/B 的配对因果。
 4. **天气/FX ground truth 是直播值**：V3 换了不可变 HN 任务 + 每模型重建 GT；仍有极小漂移。
 5. **预算锚点**：单模型 V4 复用 V3 calibration、多模型 V4 复用 V3 per-model calibration（同一预算锚点，schema 是唯一变量；`protocol.calibration.source` 已记录），不是独立新校准；MCP 已改为两臂分别校准并锚定 baseline（`mcp_demo_v3.json`，clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6），旧 V2 的 guard 锚定保留为历史。
 6. **多模型是复制而非模型间假设检验**：3 个模型；cheap/strong 同属 Qwen 家族；**“能力越弱收益越大”在 V4 下方向成立**：clean+1 增益 qwen3.8-flash **+37.1pp** > DeepSeek-Flash **+35.5pp** > qwen4-max **+30.6pp**（去掉 HN 后 +42.6/+40.7/+35.2pp，同样单调）；但三个模型紧预算 guard 都到 100%（ceiling effect），该结论只是方向性。V3 的“mid 最大”，部分来自当时 HN 合成契约 bug 对不同模型的非对称影响，V4 已消除。多模型 V4 与单模型一样已修正 HN 契约（HN 子集 baseline clean+1 1/8→8/8，三个模型）。
@@ -184,6 +185,8 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `benchmarks/toolguard/live_demo_multimodel_v4.json`（新） | **多模型 V4 主口径**：558 格重跑（clean+1 baseline 39/62、40/62、43/62 vs guard 62/62 全模型；p=2.4e-7/4.8e-7/3.8e-6；复用 V3 per-model calibration 作受控对照） |
 | `scripts/toolguard_evidence_summary.py` / `rescore_toolguard_verifier.py` | 收录 V4 单/多模型 artifact（13 artifacts；rescore 756 条） |
 | `scripts/rescore_toolguard_verifier.py`（新） | 新 verifier 离线只读重判已提交答案 |
+| `scripts/collect_real_fault_traces.py` / `run_real_fault_repair.py`（新） | 真实线上错误 trace 采集 + repair-layer 在线验证（16 条真实错误，3/3 可推导契约错误修复，13 条语义错误诚实失败，成本 $0） |
+| `tests/test_toolguard/test_real_fault_traces.py`（新） | 固定真实 trace 证据（16/3/13 与不可修复集合），防止证据腐化 |
 | `benchmarks/toolguard/mcp_demo_v3.json`（新） | MCP baseline/guard 分开校准重跑（96 格；clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6） |
 | `benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json`（新） | HN 一致 schema 对照（186 格；baseline 51/93→61/93，HN 子集 2/12→12/12） |
 | `benchmarks/toolguard/{live_demo_hard_v3,live_demo_multimodel_v3}.json` | `--from-records` 免费重建：重算 failure_mode、恢复 `tasks_per_model`、修 reproduce；**数字未变** |
@@ -199,6 +202,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 - [ ] `pytest tests/test_toolguard` **116 passed**；`validate_toolguard_artifacts.py` 13 artifacts 全过
 - [ ] 篡改 tokens/rate/turns/tool_errors/Wilson/p 后 validator 必须报错（`test_artifact_tamper.py`）
 - [ ] `toolguard_evidence_summary.py` 输出与 TOOLGUARD.md 主数字一致；live 段确为 records 重算
+- [ ] 真实线上故障 trace：`collect_real_fault_traces.py` + `run_real_fault_repair.py` 重跑后 16 条真实错误中 3 条可推导契约错误恢复并在线验证，其余 13 条不可语义修复（`test_real_fault_traces.py`）
 - [ ] `metrics.json` 可由 `build_metrics_artifact.py` 从评测输出重建；`proposed = schema_passed + schema_rejected_failures` 且 `accepted = schema_passed + value_verified_repairs` 自洽
 - [ ] HN 契约：`LiveHardBackend()` 默认广告 integer `story_id`，仅 `hn_schema="drifting"` 才注入 string 漂移（`test_live_hard_backend_hn_schema_modes`）；V4 artifact `protocol.hn_schema=consistent`、`protocol.calibration.source` 指向 V3 锚点
 - [ ] `schema_valid_rate` 确实 < 100%（LOMO 81.0% / cross-model 71.1% / cross-group 52.6%）；被拒提议、coercion、value-verified 分别计数
