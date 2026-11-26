@@ -86,6 +86,9 @@ def coerce_arguments(function: str, arguments: dict[str, Any], parameters: dict[
                 repaired[name] = int(number) if expected == "integer" and number.is_integer() else number
             except ValueError:
                 continue
+        elif expected == "integer" and isinstance(value, float) and value.is_integer():
+            # integral floats are lossless integers (real online trace: HN story_id 8863.0)
+            repaired[name] = int(value)
         elif expected == "string" and not isinstance(value, str):
             repaired[name] = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
         elif expected == "boolean" and isinstance(value, str) and value.lower() in ("true", "false"):
@@ -243,15 +246,27 @@ class ToolGuard:
             return None
         name, expected = match.group(1), match.group(2)
         for key, value in arguments.items():
-            if key.lower() != name or not isinstance(value, str):
+            if key.lower() != name:
                 continue
-            try:
-                number = float(value.strip().replace(",", ""))
-            except ValueError:
-                return None
-            repaired = dict(arguments)
-            repaired[key] = int(number) if expected == "integer" and number.is_integer() else number
-            return repaired, {key: expected}
+            if isinstance(value, str):
+                try:
+                    number = float(value.strip().replace(",", ""))
+                except ValueError:
+                    return None
+                repaired = dict(arguments)
+                repaired[key] = int(number) if expected == "integer" and number.is_integer() else number
+                return repaired, {key: expected}
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                repaired = dict(arguments)
+                if expected == "integer" and isinstance(value, float) and value.is_integer():
+                    repaired[key] = int(value)
+                elif expected == "integer" and isinstance(value, int):
+                    repaired[key] = value
+                elif expected == "number":
+                    repaired[key] = float(value)
+                else:
+                    return None
+                return repaired, {key: expected}
         return None
 
     def _retry(self, function_name: str, arguments: dict[str, Any], result, event: GuardEvent,

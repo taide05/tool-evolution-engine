@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -72,10 +73,24 @@ def _event_summary(events) -> list[dict]:
     return summary
 
 
+TRANSIENT_KINDS = ("timeout", "rate_limit", "server_error")
+
+
+def _error_kind_prefix(error: str | None) -> str:
+    text = (error or "").strip().lower()
+    for kind in TRANSIENT_KINDS:
+        if text.startswith(kind):
+            return kind
+    return ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--traces", default=DEFAULT_TRACES)
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
+    parser.add_argument("--verification-attempts", type=int, default=3,
+                        help="retry the whole replay when the repaired call hits a transient "
+                             "live-API failure (timeout/request_error/rate_limit)")
     args = parser.parse_args()
 
     traces_path = REPO / args.traces
@@ -83,10 +98,30 @@ def main() -> int:
     traces = [trace for trace in payload["records"] if trace["outcome"] == "error"]
     records: list[dict] = []
     for trace in traces:
-        backend = TraceReplayBackend([trace])
-        guard = ToolGuard(backend, sleep_scale=0.0)
-        result = guard.call(trace["tool"], trace["arguments"])
+        result = None
+        backend = None
+        guard = None
+        attempts_total = 0
+        replay_attempts = 0
+        for replay in range(1, args.verification_attempts + 1):
+            replay_attempts = replay
+            backend = TraceReplayBackend([trace])
+            guard = ToolGuard(backend, sleep_scale=0.0)
+            result = guard.call(trace["tool"], trace["arguments"])
+            attempts_total += len(backend.calls)
+            if result.ok:
+                break
+            if _error_kind_prefix(result.error) and replay < args.verification_attempts:
+                time.sleep(2.0 * replay)  # live API unhealthy: retry the online verification
+                continue
+            break
         repaired_calls = [call for call in backend.calls if call["matched_trace"] is None]
+        if result.ok:
+            verification_status = "success"
+        elif _error_kind_prefix(result.error):
+            verification_status = "api_unavailable"
+        else:
+            verification_status = "still_error"
         record = {
             "trace_id": trace["trace_id"],
             "tool": trace["tool"],
@@ -94,8 +129,11 @@ def main() -> int:
             "real_error_kind": trace["error_kind"],
             "real_error_message": trace["error_message"],
             "guard_outcome": "recovered" if result.ok else "not_recovered",
+            "verification_status": verification_status,
+            "replay_attempts": replay_attempts,
             "guard_result_error": None if result.ok else result.error,
             "guard_attempts": backend.calls,
+            "attempts_total": attempts_total,
             "repaired_calls": repaired_calls,
             "repaired_arguments": repaired_calls[-1]["arguments"] if repaired_calls else None,
             "online_verified": bool(result.ok),
@@ -103,18 +141,23 @@ def main() -> int:
             "guard_stats": dict(guard.stats),
         }
         records.append(record)
-        status = "RECOVERED+ONLINE-VERIFIED" if result.ok else "not recovered"
+        status = {"success": "RECOVERED+ONLINE-VERIFIED",
+                  "api_unavailable": "verification unavailable (live API unhealthy)",
+                  "still_error": "not recovered"}[verification_status]
         print(f"[{trace['trace_id']:32s}] {trace['error_kind']:16s} -> {status} "
-              f"(attempts={len(backend.calls)})")
+              f"(replays={replay_attempts}, calls={attempts_total})")
 
     recovered = [record for record in records if record["online_verified"]]
+    unavailable = [record for record in records if record["verification_status"] == "api_unavailable"]
+    failed = [record for record in records
+              if not record["online_verified"] and record["verification_status"] == "still_error"]
     summary = {
         "traces": len(records),
         "recovered_and_online_verified": len(recovered),
-        "not_recovered": len(records) - len(recovered),
+        "verification_unavailable": len(unavailable),
+        "not_recovered": len(failed),
         "recovered_by_error_kind": _count(recovered, "real_error_kind"),
-        "not_recovered_by_error_kind": _count(
-            [record for record in records if not record["online_verified"]], "real_error_kind"),
+        "not_recovered_by_error_kind": _count(failed, "real_error_kind"),
         "recovered_by_tool": _count(recovered, "tool"),
     }
     output_payload = {

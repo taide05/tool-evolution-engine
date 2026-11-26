@@ -12,21 +12,20 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-
 ROOT = Path(__file__).resolve().parents[2]
 TRACES = ROOT / "benchmarks/toolguard/real_traces/real_fault_traces.json"
 REPAIR_RUN = ROOT / "benchmarks/toolguard/real_traces/real_fault_repair_run.json"
 
 RECOVERED_IDS = {
     "hn_story_id_as_string",
+    "hn_story_id_float",
     "weather_numeric_strings",
     "country_population_year_as_string",
 }
-# invalid_argument traces that are NOT derivable: a non-numeric string, an empty required
-# string, and an integral float (the guard does not widen float->integer; concrete finding).
+# invalid_argument traces that are NOT derivable: a non-numeric string and an empty
+# required string (the guard does not fabricate values).
 NON_DERIVABLE_INVALID_ARGUMENT = {
     "weather_non_numeric_latitude",
-    "hn_story_id_float",
     "geocode_empty_city",
 }
 NON_REPAIRABLE_KINDS = {"not_found", "request_error"}
@@ -63,8 +62,11 @@ def test_real_fault_replay_recovers_only_derivable_contract_errors() -> None:
     for trace_id in RECOVERED_IDS:
         record = records[trace_id]
         assert record["guard_outcome"] == "recovered"
+        assert record["verification_status"] == "success"
         assert record["repaired_arguments"] is not None
-        assert record["repaired_arguments"] != record["bad_arguments"]
+        # compare serialised forms: 8863 == 8863.0 in Python but the JSON types differ
+        assert (json.dumps(record["repaired_arguments"], sort_keys=True)
+                != json.dumps(record["bad_arguments"], sort_keys=True))
         # the repaired call was executed against the real API (online verification)
         assert any(call["matched_trace"] is None for call in record["guard_attempts"])
     non_derivable_invalid = {
@@ -73,9 +75,10 @@ def test_real_fault_replay_recovers_only_derivable_contract_errors() -> None:
     }
     assert non_derivable_invalid == NON_DERIVABLE_INVALID_ARGUMENT
     for trace_id, record in records.items():
-        if trace_id in RECOVERED_IDS or record["real_error_kind"] == "invalid_argument":
+        if trace_id in RECOVERED_IDS:
             continue
         assert record["online_verified"] is False
-        # everything else the guard did not recover must be semantically non-repairable
-        assert record["real_error_kind"] in NON_REPAIRABLE_KINDS, (trace_id, record)
+        assert record["verification_status"] == "still_error"
+        assert record["real_error_kind"] in (NON_REPAIRABLE_KINDS | {"invalid_argument"}), record
+    assert payload["summary"]["verification_unavailable"] == 0
     assert payload["cost_usd"] == 0.0

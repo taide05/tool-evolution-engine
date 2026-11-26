@@ -44,6 +44,10 @@ def coerce_values_to_schema(arguments: dict, schema: FunctionSchema) -> dict:
                 coerced[name] = int(number)
             elif expected == "number":
                 coerced[name] = number
+        elif isinstance(value, float) and expected == "integer" and value.is_integer():
+            # integral floats are losslessly representable as integers (e.g. 8863.0 -> 8863);
+            # non-integral floats are left untouched and fail validation honestly.
+            coerced[name] = int(value)
         elif isinstance(value, (int, float)) and not isinstance(value, bool) \
                 and expected == "string":
             coerced[name] = str(value)

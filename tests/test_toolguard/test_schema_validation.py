@@ -201,6 +201,9 @@ def test_coerce_values_to_schema_types() -> None:
     coerced = coerce_values_to_schema(
         {"start_year": "1970", "page": "1", "label": 42, "flag": "true"}, schema)
     assert coerced == {"start_year": 1970.0, "page": 1, "label": "42", "flag": True}
+    # integral floats are lossless integers (real online trace: HN item 8863.0)
+    assert coerce_values_to_schema({"page": 8863.0}, schema) == {"page": 8863}
+    assert isinstance(coerce_values_to_schema({"page": 8863.0}, schema)["page"], int)
 
 
 def test_coerce_values_leaves_unconvertible_values_untouched() -> None:
@@ -356,6 +359,27 @@ def test_guard_rejects_schema_invalid_repair_and_records_it() -> None:
     assert guard.stats["schema_rejected"] == 1
     # the backend only ever saw the original (failing) call, never the invalid repair
     assert all(name == "get_weather_forecast" for name, _ in backend.calls)
+
+
+def test_guard_repairs_integral_float_for_integer_param() -> None:
+    """Real online trace gap: 8863.0 must be coerced to 8863 by the live guard."""
+    backend = _FakeBackend(
+        [
+            CallResult("error", error="invalid_argument: story_id must be an integer"),
+            CallResult("ok", response={"id": 8863}),
+        ],
+        [{"type": "function", "function": {"name": "get_hn_item", "parameters": {
+            "type": "object",
+            "properties": {"story_id": {"type": "integer"}},
+            "required": ["story_id"]}}}],
+    )
+    guard = ToolGuard(backend, sleep_scale=0.0)
+    result = guard.call("get_hn_item", {"story_id": 8863.0})
+    assert result.ok
+    assert backend.calls[-1][1] == {"story_id": 8863}
+    assert isinstance(backend.calls[-1][1]["story_id"], int)
+    event = guard.events[0]
+    assert "coercion" in event.rule
 
 
 def test_guard_records_unavailable_schema_instead_of_silently_passing() -> None:

@@ -1,6 +1,6 @@
 {
   "artifact_version": 1,
-  "generated_at": "2026-11-25T17:26:23.509389+00:00",
+  "generated_at": "2026-11-26T02:30:15.495606+00:00",
   "description": "Real online fault traces replayed through ToolGuard. Each record feeds one genuine captured API error to the middleware; when the guard repairs the call the repaired call is executed against the real API, so online_verified means a real successful response. Not a full A/B: it isolates the repair layer without LLM/agent sampling, and complements (does not replace) the injected-fault A/B.",
   "runner": "scripts/run_real_fault_repair.py",
   "trace_source": "benchmarks\\toolguard\\real_traces\\real_fault_traces.json",
@@ -8,19 +8,20 @@
   "cost_usd": 0.0,
   "summary": {
     "traces": 16,
-    "recovered_and_online_verified": 3,
-    "not_recovered": 13,
+    "recovered_and_online_verified": 4,
+    "verification_unavailable": 0,
+    "not_recovered": 12,
     "recovered_by_error_kind": {
-      "invalid_argument": 3
+      "invalid_argument": 4
     },
     "not_recovered_by_error_kind": {
-      "invalid_argument": 3,
+      "invalid_argument": 2,
       "not_found": 9,
       "request_error": 1
     },
     "recovered_by_tool": {
       "get_country_population": 1,
-      "get_hn_item": 1,
+      "get_hn_item": 2,
       "get_weather": 1
     }
   },
@@ -34,6 +35,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "country not found: Zzzland-Not-A-Country",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: country not found: Zzzland-Not-A-Country",
       "guard_attempts": [
         {
@@ -44,6 +47,7 @@
           "matched_trace": "country_info_unknown_country"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -75,6 +79,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "no country found for capital: Atlantis",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: no country found for capital: Atlantis",
       "guard_attempts": [
         {
@@ -85,6 +91,7 @@
           "matched_trace": "find_country_unknown_capital"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -116,6 +123,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "country not found: Zzzland",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: country not found: Zzzland",
       "guard_attempts": [
         {
@@ -126,6 +135,7 @@
           "matched_trace": "country_population_unknown"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -157,6 +167,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "country not found: Zzzland",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: country not found: Zzzland",
       "guard_attempts": [
         {
@@ -167,6 +179,7 @@
           "matched_trace": "country_gdp_unknown"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -199,6 +212,8 @@
       "real_error_kind": "request_error",
       "real_error_message": "HTTP 400: {\"reason\":\"Latitude must be in range of -90 to 90°. Given: 999.0.\",\"error\":true}",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "request_error: HTTP 400: {\"reason\":\"Latitude must be in range of -90 to 90°. Given: 999.0.\",\"error\":true}",
       "guard_attempts": [
         {
@@ -226,6 +241,7 @@
           "matched_trace": null
         }
       ],
+      "attempts_total": 3,
       "repaired_calls": [
         {
           "tool": "get_weather",
@@ -278,6 +294,8 @@
       "real_error_kind": "invalid_argument",
       "real_error_message": "latitude must be a number",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "invalid_argument: latitude must be a number",
       "guard_attempts": [
         {
@@ -289,6 +307,7 @@
           "matched_trace": "weather_non_numeric_latitude"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -321,6 +340,8 @@
       "real_error_kind": "invalid_argument",
       "real_error_message": "latitude must be a number",
       "guard_outcome": "recovered",
+      "verification_status": "success",
+      "replay_attempts": 1,
       "guard_result_error": null,
       "guard_attempts": [
         {
@@ -340,6 +361,7 @@
           "matched_trace": null
         }
       ],
+      "attempts_total": 2,
       "repaired_calls": [
         {
           "tool": "get_weather",
@@ -386,6 +408,8 @@
       "real_error_kind": "invalid_argument",
       "real_error_message": "year must be an integer",
       "guard_outcome": "recovered",
+      "verification_status": "success",
+      "replay_attempts": 1,
       "guard_result_error": null,
       "guard_attempts": [
         {
@@ -405,6 +429,7 @@
           "matched_trace": null
         }
       ],
+      "attempts_total": 2,
       "repaired_calls": [
         {
           "tool": "get_country_population",
@@ -447,8 +472,10 @@
       },
       "real_error_kind": "invalid_argument",
       "real_error_message": "story_id must be an integer",
-      "guard_outcome": "not_recovered",
-      "guard_result_error": "invalid_argument: story_id must be an integer",
+      "guard_outcome": "recovered",
+      "verification_status": "success",
+      "replay_attempts": 1,
+      "guard_result_error": null,
       "guard_attempts": [
         {
           "tool": "get_hn_item",
@@ -456,27 +483,45 @@
             "story_id": 8863.0
           },
           "matched_trace": "hn_story_id_float"
+        },
+        {
+          "tool": "get_hn_item",
+          "arguments": {
+            "story_id": 8863
+          },
+          "matched_trace": null
         }
       ],
-      "repaired_calls": [],
-      "repaired_arguments": null,
-      "online_verified": false,
+      "attempts_total": 2,
+      "repaired_calls": [
+        {
+          "tool": "get_hn_item",
+          "arguments": {
+            "story_id": 8863
+          },
+          "matched_trace": null
+        }
+      ],
+      "repaired_arguments": {
+        "story_id": 8863
+      },
+      "online_verified": true,
       "guard_events": [
         {
-          "rule": "invalid_argument",
-          "schema_validated": false,
+          "rule": "error_hint_coercion",
+          "schema_validated": true,
           "schema_errors": [],
-          "recovered": false
+          "recovered": true
         }
       ],
       "guard_stats": {
         "calls": 1,
-        "recovered": 0,
-        "failed_after_repair": 1,
+        "recovered": 1,
+        "failed_after_repair": 0,
         "original_errors": 1,
         "retry_sleep_s": 0.0,
         "schema_rejected": 0,
-        "schema_validated": 0,
+        "schema_validated": 1,
         "schema_unchecked": 0
       }
     },
@@ -489,6 +534,8 @@
       "real_error_kind": "invalid_argument",
       "real_error_message": "name must be a non-empty string",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "invalid_argument: name must be a non-empty string",
       "guard_attempts": [
         {
@@ -499,6 +546,7 @@
           "matched_trace": "geocode_empty_city"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -530,6 +578,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "HTTP 404 not found",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: HTTP 404 not found",
       "guard_attempts": [
         {
@@ -540,6 +590,7 @@
           "matched_trace": "pypi_unknown_package"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -572,6 +623,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "no release 999.0.0 for package numpy",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: no release 999.0.0 for package numpy",
       "guard_attempts": [
         {
@@ -583,6 +636,7 @@
           "matched_trace": "pypi_unknown_version"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -614,6 +668,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "no Hacker News item: 0",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: no Hacker News item: 0",
       "guard_attempts": [
         {
@@ -624,6 +680,7 @@
           "matched_trace": "hn_missing_item"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -655,6 +712,8 @@
       "real_error_kind": "invalid_argument",
       "real_error_message": "story_id must be an integer",
       "guard_outcome": "recovered",
+      "verification_status": "success",
+      "replay_attempts": 1,
       "guard_result_error": null,
       "guard_attempts": [
         {
@@ -672,6 +731,7 @@
           "matched_trace": null
         }
       ],
+      "attempts_total": 2,
       "repaired_calls": [
         {
           "tool": "get_hn_item",
@@ -713,6 +773,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "no Hacker News user: user-that-does-not-exist-xyzzz",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: no Hacker News user: user-that-does-not-exist-xyzzz",
       "guard_attempts": [
         {
@@ -723,6 +785,7 @@
           "matched_trace": "hn_unknown_user"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
@@ -755,6 +818,8 @@
       "real_error_kind": "not_found",
       "real_error_message": "no rate for ZZZ->ZZZ",
       "guard_outcome": "not_recovered",
+      "verification_status": "still_error",
+      "replay_attempts": 1,
       "guard_result_error": "not_found: no rate for ZZZ->ZZZ",
       "guard_attempts": [
         {
@@ -766,6 +831,7 @@
           "matched_trace": "fx_unknown_currency"
         }
       ],
+      "attempts_total": 1,
       "repaired_calls": [],
       "repaired_arguments": null,
       "online_verified": false,
