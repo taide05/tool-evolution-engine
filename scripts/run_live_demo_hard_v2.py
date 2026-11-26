@@ -686,6 +686,10 @@ def main() -> int:
                              "traces for selected logical calls (robustness check)")
     parser.add_argument("--real-traces", default=DEFAULT_REAL_TRACES,
                         help="captured real fault traces used by --fault-source real-trace")
+    parser.add_argument("--include-hard-tasks", action="store_true",
+                        help="append the V5 hard tasks (longer multi-source chains) to the pool; "
+                             "used to probe the guard's tight-budget ceiling without changing the "
+                             "V4 main protocol")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--from-records", action="store_true",
                         help="rebuild the artifact at --output from its checkpoint records (no "
@@ -700,7 +704,7 @@ def main() -> int:
     conditions = parse_budgets(args.budgets)
     repeats = parse_repeats(args.repeats, conditions)
     clean = LiveHardBackend()
-    tasks, skipped = build_tasks(clean)
+    tasks, skipped = build_tasks(clean, include_hard=args.include_hard_tasks)
     if args.task_ids:
         wanted = [value.strip() for value in args.task_ids.split(",") if value.strip()]
         order = {task_id: index for index, task_id in enumerate(wanted)}

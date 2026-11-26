@@ -62,7 +62,7 @@ ARMS = ("baseline", "guard")
 # ---------------------------------------------------------------------------
 # task construction: ground truth is fetched live before any agent runs
 # ---------------------------------------------------------------------------
-def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
+def build_tasks(backend: LiveHardBackend, include_hard: bool = False) -> tuple[list[dict], list[str]]:
     tasks: list[dict] = []
     skipped: list[str] = []
 
@@ -508,12 +508,123 @@ def build_tasks(backend: LiveHardBackend) -> tuple[list[dict], list[str]]:
     except Exception as exc:  # noqa: BLE001
         skipped.append(f"weather_compare_australia_canada: {exc}")
 
+    # =========================================================================
+    # V5 hard tasks (2026-11-25): longer chains, multi-source derived arithmetic and
+    # relational answers. They exist to probe the guard's tight-budget ceiling (all
+    # three models were at 100% on the V4 pool) without changing the V4 protocol:
+    # only runs started with --include-hard-tasks see them.
+    # =========================================================================
+    if include_hard:
+        try:
+            rows = []
+            for capital in ("Bern", "Canberra", "Ottawa"):
+                country = safe("find_country_by_capital", capital=capital)["country"]
+                gdp = safe("get_country_gdp_per_capita", country=country)["gdp_per_capita_usd"]
+                rows.append({"capital": capital, "country": country, "gdp": gdp})
+            highest = max(rows, key=lambda row: row["gdp"])
+            lowest = min(rows, key=lambda row: row["gdp"])
+            gap = highest["gdp"] - lowest["gdp"]
+            add("hard_gdp_triple_gap",
+                "Among the countries whose capitals are Bern, Canberra and Ottawa, which country has "
+                "the highest GDP per capita (current US dollars), what is that country's capital, and "
+                "what is the gap in GDP per capita between the highest and the lowest of the three "
+                "(rounded to the nearest whole US dollar)? Give the country, the capital, and the gap.",
+                {"rows": rows, "highest_country": highest["country"],
+                 "highest_capital": highest["capital"], "gap": gap},
+                lambda answer, expected: (
+                    contains_text(answer, expected["highest_country"])
+                    and contains_text(answer, expected["highest_capital"])
+                    and contains_number(answer, expected["gap"], max(2.0, expected["gap"] * 0.01))
+                ),
+                9)
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f"hard_gdp_triple_gap: {exc}")
+
+        try:
+            rows = []
+            for country in ("Japan", "Norway", "Portugal"):
+                chain = weather_chain(country)
+                rows.append({"country": country, "capital": chain["capital"],
+                             "temperature_c": chain["temperature_c"]})
+            warmest = max(rows, key=lambda row: row["temperature_c"])
+            coldest = min(rows, key=lambda row: row["temperature_c"])
+            spread = warmest["temperature_c"] - coldest["temperature_c"]
+            add("hard_weather_spread_three",
+                "Right now, among the capitals of Japan, Norway and Portugal: which capital is the "
+                "warmest, and what is the temperature spread (warmest minus coldest) in degrees "
+                "Celsius to one decimal place? Give the warmest capital and the spread.",
+                {"rows": rows, "warmest_capital": warmest["capital"],
+                 "spread": spread, "warmest_temp": warmest["temperature_c"],
+                 "coldest_temp": coldest["temperature_c"]},
+                lambda answer, expected: (
+                    contains_text(answer, expected["warmest_capital"])
+                    and contains_number(answer, expected["spread"], max(0.3, expected["spread"] * 0.03))
+                ),
+                12)
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f"hard_weather_spread_three: {exc}")
+
+        try:
+            releases = {}
+            for package in ("requests", "flask", "httpx"):
+                version, release_date = latest_release(package)
+                releases[package] = {"version": version, "release_date": release_date}
+            parsed = {pkg: datetime.strptime(data["release_date"], "%Y-%m-%d")
+                      for pkg, data in releases.items()}
+            earliest_pkg = min(parsed, key=parsed.get)
+            latest_pkg = max(parsed, key=parsed.get)
+            span_days = (parsed[latest_pkg] - parsed[earliest_pkg]).days
+            add("hard_pypi_release_span",
+                "Among the current versions of the PyPI packages requests, flask and httpx: which "
+                "package's current version was released earliest, on what date (YYYY-MM-DD), and how "
+                "many days separate the earliest and the latest of those three release dates?",
+                {"releases": releases, "earliest_package": earliest_pkg,
+                 "earliest_date": releases[earliest_pkg]["release_date"],
+                 "latest_date": releases[latest_pkg]["release_date"], "span_days": span_days},
+                lambda answer, expected: (
+                    contains_text(answer, expected["earliest_package"])
+                    and contains_number(answer, expected["span_days"], 1.0)
+                ),
+                9)
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f"hard_pypi_release_span: {exc}")
+
+        try:
+            rows = []
+            for story_id in (1, 8863):
+                username, created_year = hn_author_created_year(story_id)
+                rows.append({"story_id": story_id, "username": username,
+                             "created_year": created_year})
+            older = min(rows, key=lambda row: row["created_year"])
+            newer = max(rows, key=lambda row: row["created_year"])
+            gap_years = newer["created_year"] - older["created_year"]
+            add("hard_hn_author_age_gap",
+                "For Hacker News items 1 and 8863: which author's account was created earlier, "
+                "both account-creation years, and the gap in years between the two account-creation "
+                "years? Give the earlier author's username, both years, and the gap.",
+                {"rows": rows, "older_username": older["username"],
+                 "newer_username": newer["username"], "older_year": older["created_year"],
+                 "newer_year": newer["created_year"], "gap_years": gap_years},
+                lambda answer, expected: (
+                    contains_text(answer, expected["older_username"])
+                    and contains_number(answer, expected["older_year"], 0.0)
+                    and contains_number(answer, expected["newer_year"], 0.0)
+                    and contains_number(answer, expected["gap_years"], 0.0)
+                ),
+                7)
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f"hard_hn_author_age_gap: {exc}")
+
     for task in tasks:
         task["category"] = _category_for(task["id"])
     return tasks, skipped
 
 
 _CATEGORY_PREFIXES = (
+    ("hard_gdp", "worldbank"),
+    ("hard_weather", "weather"),
+    ("hard_pypi", "pypi"),
+    ("hard_hn", "hn"),
     ("capital_weather", "weather"),
     ("weather_compare", "weather"),
     ("temperature_gap", "weather"),

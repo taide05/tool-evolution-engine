@@ -215,6 +215,16 @@ live A/B 的故障是**确定性注入**（为了可复现与配对）；本轮�
 - **已接进 A/B 的故障源（新能力）**：live runner 新增 `--fault-source real-trace`（`live.RealTraceFaultBackend`）：对确定性选中的逻辑调用先回放一条**真实捕获错误**，然后再打真实 API；两臂共享同一故障面，注入的 trace id/kind 逐格记录。已跑 **12 格 smoke**（6 任务 × 2 臂，clean+1，$0.018，注入 7 条真实 trace：invalid_argument 6 + request_error 1）：baseline 5/6 vs guard 5/6——真实错误里多数属语义/不可回放修复类，guard 不能魔法提升；这证明该故障源是**鲁棒性检查**而非 headline 替代品，完整统计 A/B 留作可选后续；
 - 证据由 `tests/test_toolguard/test_real_fault_traces.py` 固定（16 条 trace / 4 条预期恢复 / 12 条不可修复集合）与 `tests/test_toolguard/test_real_trace_backend.py`（确定性/工具匹配/kind 过滤/委托），防止证据腐化；`benchmarks/toolguard/real_traces/` 下的 JSON 属于**证据数据**而非 13 个契约 artifact 之一。
 
+### V5 更难任务 pilot（2026-11-25 新增）
+
+V4 的一个已知局限是 **ceiling effect**：三个模型在紧预算 clean+1 下 guard 全部 100%，看不出提升空间。本轮加了一个**默认不启用**的更难任务扩展（`--include-hard-tasks`，V4 主任务池不变）来做 pilot：
+
+- **4 个 hard tasks**（更长链 + 多源派生算术 + 关系型答案）：`hard_gdp_triple_gap`（3 国 GDP→排序→gap）、`hard_weather_spread_three`（3 国天气→最暖城市+温差）、`hard_pypi_release_span`（3 包 latest release→最早包+跨包天数差）、`hard_hn_author_age_gap`（2 个 item→作者→账号年龄差）；pool 31→35（仅该 flag 下）；
+- **方法**：先对这 4 个任务做 fault-free calibration（turns 3/4/3/3），再跑 `clean+1 × 3 repeats × 2 arms = 24 格`（fault 注入同 V4；成本 **$0.039 / 234s**）；
+- **结果**：baseline **10/12（83.3%）** vs guard **12/12（100%）**——guard 仍然 ceiling；失败仅出现在 baseline 的 `hard_gdp_triple_gap`（1 格）与 `hard_pypi_release_span`（1 格），guard 每格录得 1–5 次轮内修复、turns 3 vs baseline 5–11；
+- **负结果与设计含义**：单纯“加长链/加算术”**不能**打破 guard ceiling，因为该 pilot 的难度仍是**故障驱动**的，而 guard 把故障在轮内吸收（不消耗 agent 轮次）；要真正让 guard 也失败，需要 ① 无故障时也会失败的**推理难度**（两边都会失败），或 ② 超过 guard 重试预算的持续故障/不可修复错误（guard 也无能为力），或 ③ 更高的任务语义复杂度。本轮只记录该负结果与设计结论，未继续扩大 paid run；
+- 证据：`benchmarks/toolguard/real_traces/hard_pilot_v5.json`（24 格记录、calibration、逐条修复事件）；默认 V4 主口径与 13 个契约 artifact **不受影响**。
+
 ## 架构：一个中间件，三种传输层
 
 中间件只依赖 `ToolBackend` 协议（`schemas()` 返回工具清单，`call(name, arguments)` 返回统一 `CallResult`）：
@@ -363,4 +373,4 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
 - MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
 - 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
-- 下一步（待执行）：① schema 索引保真度已按证据修正（4 处类型 + 20 个参数）；剩余无足够证据的缺陷仍如实报告，继续收集样本即可扩展；② 真实线上故障 trace 已用于 repair-layer 验证（4/4 可推导契约错误修复并在线验证，12 条语义错误诚实失败），integral-float→integer 缺口已修；`--fault-source real-trace` 已接进 A/B 并完成 12 格 smoke（baseline=guard=5/6，说明真实错误多为不可修复类），完整统计 A/B 为可选后续；③ 三个模型的紧预算 guard 已全部到 100%，需要更难的题/更紧的预算；④ 把 HN 契约修正推广到更多任务族/工具（当前只有 HN 一个合成契约缺陷）。
+- 下一步（待执行）：① schema 索引保真度已按证据修正（4 处类型 + 20 个参数）；剩余无足够证据的缺陷仍如实报告，继续收集样本即可扩展；② 真实线上故障 trace 已用于 repair-layer 验证（4/4 可推导契约错误修复并在线验证，12 条语义错误诚实失败），integral-float→integer 缺口已修；`--fault-source real-trace` 已接进 A/B 并完成 12 格 smoke；③ 三个模型的紧预算 guard 已全部到 100%（V5 hard pilot 仍是 100%），说明 ceiling 需要“无故障也会失败的推理难度 / 超过 guard 重试预算的故障 / 更高语义复杂度”来打破，单纯加长链无效（负结果已记录）；④ 把 HN 契约修正推广到更多任务族/工具（当前只有 HN 一个合成契约缺陷）。

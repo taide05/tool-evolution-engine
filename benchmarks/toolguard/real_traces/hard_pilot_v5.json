@@ -1,0 +1,1464 @@
+{
+  "artifact_version": 2,
+  "experiment": "ToolGuard_hard_multistep_live_ab_v4_task_pool_hn_consistent",
+  "generated_at": "2026-11-26T06:34:53.797814+00:00",
+  "model": "deepseek-v4-flash",
+  "protocol": {
+    "task_pool": "V4: the V3 drift-hardened 31-task pool with the HN contract fixed (schema matches backend, 2026-11-25 review decision); ground truth built from the same live APIs before the eval",
+    "hn_schema": "consistent",
+    "hn_schema_note": "consistent contract (main protocol): get_hn_item.story_id is an integer in the agent-visible schema, matching the backend and the real HN API; the synthetic drift is not injected here. The drift-based repair capability is demonstrated separately in live_demo_hard_v3.json and its attribution control live_demo_hard_v3_hnconsistent.json",
+    "rebuilt_from_records": false,
+    "arms": [
+      "baseline",
+      "guard"
+    ],
+    "budget_conditions": {
+      "clean+1": "per-task turn budget = fault-free calibration turns + 1"
+    },
+    "repeats": {
+      "clean+1": 3
+    },
+    "workers": 2,
+    "wall_seconds": 233.6,
+    "calibration": {
+      "description": "one fault-free run per task measured the turn requirement that anchors the budget sweep",
+      "source": ".scratch\\toolguard\\hard_calibration_v5.json",
+      "tasks": {
+        "hard_gdp_triple_gap": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "hard_weather_spread_three": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "hard_pypi_release_span": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "hard_hn_author_age_gap": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        }
+      }
+    },
+    "fault_injection": {
+      "source": "synthetic",
+      "model": "deterministic transient fault epochs: the first N attempts of a faulted logical call fail (timeout / HTTP 429 / HTTP 5xx), then the real call runs",
+      "attempts_to_fail": 2,
+      "p_timeout": 0.2,
+      "p_rate_limit": 0.1,
+      "p_server_error": 0.08,
+      "seed": 7,
+      "repeat_seed_rule": "fault seed = seed + repeat * 101"
+    },
+    "tool_surface": {
+      "tools": [
+        "get_country_info",
+        "find_country_by_capital",
+        "get_country_population",
+        "get_country_gdp_per_capita",
+        "geocode_city",
+        "get_weather",
+        "get_package_version",
+        "get_package_release_date",
+        "get_hn_item",
+        "get_hn_user",
+        "get_hn_top_story",
+        "get_exchange_rate"
+      ],
+      "apis": [
+        "api.worldbank.org",
+        "geocoding-api.open-meteo.com",
+        "api.open-meteo.com",
+        "pypi.org",
+        "hacker-news.firebaseio.com",
+        "open.er-api.com"
+      ]
+    },
+    "verification": "programmatic; ground truth computed from the same live APIs before the runs"
+  },
+  "tasks": [
+    {
+      "id": "hard_gdp_triple_gap",
+      "question": "Among the countries whose capitals are Bern, Canberra and Ottawa, which country has the highest GDP per capita (current US dollars), what is that country's capital, and what is the gap in GDP per capita between the highest and the lowest of the three (rounded to the nearest whole US dollar)? Give the country, the capital, and the gap.",
+      "expected": {
+        "rows": [
+          {
+            "capital": "Bern",
+            "country": "Switzerland",
+            "gdp": 114769.01
+          },
+          {
+            "capital": "Canberra",
+            "country": "Australia",
+            "gdp": 65129.72
+          },
+          {
+            "capital": "Ottawa",
+            "country": "Canada",
+            "gdp": 55697.66
+          }
+        ],
+        "highest_country": "Switzerland",
+        "highest_capital": "Bern",
+        "gap": 59071.34999999999
+      },
+      "min_turns": 9,
+      "category": "worldbank"
+    },
+    {
+      "id": "hard_weather_spread_three",
+      "question": "Right now, among the capitals of Japan, Norway and Portugal: which capital is the warmest, and what is the temperature spread (warmest minus coldest) in degrees Celsius to one decimal place? Give the warmest capital and the spread.",
+      "expected": {
+        "rows": [
+          {
+            "country": "Japan",
+            "capital": "Tokyo",
+            "temperature_c": 14.0
+          },
+          {
+            "country": "Norway",
+            "capital": "Oslo",
+            "temperature_c": -6.2
+          },
+          {
+            "country": "Portugal",
+            "capital": "Lisbon",
+            "temperature_c": 9.9
+          }
+        ],
+        "warmest_capital": "Tokyo",
+        "spread": 20.2,
+        "warmest_temp": 14.0,
+        "coldest_temp": -6.2
+      },
+      "min_turns": 12,
+      "category": "weather"
+    },
+    {
+      "id": "hard_pypi_release_span",
+      "question": "Among the current versions of the PyPI packages requests, flask and httpx: which package's current version was released earliest, on what date (YYYY-MM-DD), and how many days separate the earliest and the latest of those three release dates?",
+      "expected": {
+        "releases": {
+          "requests": {
+            "version": "2.34.2",
+            "release_date": "2026-05-14"
+          },
+          "flask": {
+            "version": "3.1.3",
+            "release_date": "2026-02-19"
+          },
+          "httpx": {
+            "version": "0.28.1",
+            "release_date": "2024-12-06"
+          }
+        },
+        "earliest_package": "httpx",
+        "earliest_date": "2024-12-06",
+        "latest_date": "2026-05-14",
+        "span_days": 524
+      },
+      "min_turns": 9,
+      "category": "pypi"
+    },
+    {
+      "id": "hard_hn_author_age_gap",
+      "question": "For Hacker News items 1 and 8863: which author's account was created earlier, both account-creation years, and the gap in years between the two account-creation years? Give the earlier author's username, both years, and the gap.",
+      "expected": {
+        "rows": [
+          {
+            "story_id": 1,
+            "username": "pg",
+            "created_year": 2006
+          },
+          {
+            "story_id": 8863,
+            "username": "dhouston",
+            "created_year": 2007
+          }
+        ],
+        "older_username": "pg",
+        "newer_username": "dhouston",
+        "older_year": 2006,
+        "newer_year": 2007,
+        "gap_years": 1
+      },
+      "min_turns": 7,
+      "category": "hn"
+    }
+  ],
+  "skipped": [],
+  "records": [
+    {
+      "task": "hard_gdp_triple_gap",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland, whose capital is Bern, has the highest GDP per capita, with a gap of $59,071 over the lowest of the three.",
+      "turns": 2,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3166,
+        "completion_tokens": 499,
+        "total_tokens": 3665
+      },
+      "elapsed_ms": 5234.04,
+      "faults_injected": 4,
+      "fault_kinds": {
+        "server_error": 4
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 300.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_gdp_per_capita",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_gdp_per_capita",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_gdp_triple_gap",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "format_miss",
+      "answer": "Switzerland (capital Bern) has the highest GDP per capita among the three, and the gap versus the lowest (Canada, $55,015.71) is about $52,686 (2024 values: 107,702.07 − 55,015.71 ≈ 52,686).",
+      "turns": 6,
+      "tool_calls": 11,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 10535,
+        "completion_tokens": 613,
+        "total_tokens": 11148
+      },
+      "elapsed_ms": 6866.83,
+      "faults_injected": 4,
+      "fault_kinds": {
+        "server_error": 4
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_gdp_triple_gap",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland (capital Bern) has the highest GDP per capita at $114,769, and the gap versus lowest Canada is $59,071.",
+      "turns": 5,
+      "tool_calls": 9,
+      "tool_errors": 3,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7960,
+        "completion_tokens": 443,
+        "total_tokens": 8403
+      },
+      "elapsed_ms": 4850.49,
+      "faults_injected": 3,
+      "fault_kinds": {
+        "server_error": 2,
+        "rate_limit": 1
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_gdp_triple_gap",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland (capital Bern) has the highest GDP per capita, and the gap versus lowest Canada is $59,071.",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4480,
+        "completion_tokens": 292,
+        "total_tokens": 4772
+      },
+      "elapsed_ms": 3395.13,
+      "faults_injected": 2,
+      "fault_kinds": {
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_gdp_triple_gap",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland (capital Bern) has the highest GDP per capita at ~$114,769, and the gap versus the lowest (Canada, $55,697.66) is about $59,071.",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4486,
+        "completion_tokens": 306,
+        "total_tokens": 4792
+      },
+      "elapsed_ms": 3643.84,
+      "faults_injected": 6,
+      "fault_kinds": {
+        "rate_limit": 2,
+        "timeout": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 450.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "find_country_by_capital",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_gdp_per_capita",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_gdp_triple_gap",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Switzerland has the highest GDP per capita; its capital is Bern, and the gap between it ($114,769) and the lowest, Canada ($55,698), is $59,071.",
+      "turns": 8,
+      "tool_calls": 12,
+      "tool_errors": 6,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 13898,
+        "completion_tokens": 604,
+        "total_tokens": 14502
+      },
+      "elapsed_ms": 7581.02,
+      "faults_injected": 6,
+      "fault_kinds": {
+        "rate_limit": 2,
+        "timeout": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_weather_spread_three",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 13,
+      "clean_turns": 12,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The warmest capital is Tokyo at 13.9°C, with a temperature spread of 20.1°C.",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4658,
+        "completion_tokens": 383,
+        "total_tokens": 5041
+      },
+      "elapsed_ms": 16615.65,
+      "faults_injected": 6,
+      "fault_kinds": {
+        "timeout": 2,
+        "rate_limit": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 450.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_weather_spread_three",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 13,
+      "clean_turns": 12,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo is the warmest capital at 13.6 °C, and the spread between Tokyo and Oslo (-6.2 °C) is 19.8 °C.",
+      "turns": 6,
+      "tool_calls": 12,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 10902,
+        "completion_tokens": 639,
+        "total_tokens": 11541
+      },
+      "elapsed_ms": 24094.83,
+      "faults_injected": 4,
+      "fault_kinds": {
+        "timeout": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_weather_spread_three",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 13,
+      "clean_turns": 12,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo is the warmest capital at 13.9 °C, with a spread of 20.1 °C (Tokyo 13.9, Lisbon 9.8, Oslo −6.2).",
+      "turns": 11,
+      "tool_calls": 17,
+      "tool_errors": 8,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 21686,
+        "completion_tokens": 943,
+        "total_tokens": 22629
+      },
+      "elapsed_ms": 44497.04,
+      "faults_injected": 8,
+      "fault_kinds": {
+        "rate_limit": 4,
+        "timeout": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_weather_spread_three",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 13,
+      "clean_turns": 12,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo is the warmest capital at 13.6 °C, with a spread of 19.8 °C (13.6 − −6.2).",
+      "turns": 4,
+      "tool_calls": 9,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 6694,
+        "completion_tokens": 459,
+        "total_tokens": 7153
+      },
+      "elapsed_ms": 25546.81,
+      "faults_injected": 4,
+      "fault_kinds": {
+        "timeout": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 300.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_weather_spread_three",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 13,
+      "clean_turns": 12,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo is the warmest capital at 13.6°C, with a temperature spread of 19.8°C.",
+      "turns": 9,
+      "tool_calls": 17,
+      "tool_errors": 10,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 19758,
+        "completion_tokens": 1018,
+        "total_tokens": 20776
+      },
+      "elapsed_ms": 27862.23,
+      "faults_injected": 10,
+      "fault_kinds": {
+        "timeout": 6,
+        "rate_limit": 4
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_pypi_release_span",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "**httpx** (0.28.1) was released earliest, on **2024-12-06**, and **524 days** separate it from the latest release (requests 2.34.2, 2026-05-14).",
+      "turns": 8,
+      "tool_calls": 12,
+      "tool_errors": 6,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 14178,
+        "completion_tokens": 893,
+        "total_tokens": 15071
+      },
+      "elapsed_ms": 8935.09,
+      "faults_injected": 6,
+      "fault_kinds": {
+        "rate_limit": 4,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_pypi_release_span",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "httpx’s current version (0.28.1) was released earliest, on 2024-12-06, and 524 days separate it from the latest release (requests 2.34.2 on 2026-05-14).",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4578,
+        "completion_tokens": 668,
+        "total_tokens": 5246
+      },
+      "elapsed_ms": 5625.27,
+      "faults_injected": 6,
+      "fault_kinds": {
+        "rate_limit": 4,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 3,
+      "guard_retry_sleep_ms": 450.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_weather_spread_three",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 13,
+      "clean_turns": 12,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "Tokyo is the warmest at 13.6 °C, with a temperature spread of 19.8 °C.",
+      "turns": 3,
+      "tool_calls": 9,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 5305,
+        "completion_tokens": 569,
+        "total_tokens": 5874
+      },
+      "elapsed_ms": 22628.19,
+      "faults_injected": 10,
+      "fault_kinds": {
+        "timeout": 6,
+        "rate_limit": 4
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 5,
+      "guard_retry_sleep_ms": 750.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_country_info",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "geocode_city",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_weather",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_pypi_release_span",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 10,
+      "tool_calls": 14,
+      "tool_errors": 8,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 17927,
+        "completion_tokens": 730,
+        "total_tokens": 18657
+      },
+      "elapsed_ms": 9749.62,
+      "faults_injected": 8,
+      "fault_kinds": {
+        "timeout": 4,
+        "rate_limit": 4
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_pypi_release_span",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "httpx's current version (0.28.1, released 2024-12-06) is the earliest, and 524 days separate it from the latest (requests 2.34.2, 2026-05-14).",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4488,
+        "completion_tokens": 583,
+        "total_tokens": 5071
+      },
+      "elapsed_ms": 5072.21,
+      "faults_injected": 8,
+      "fault_kinds": {
+        "timeout": 4,
+        "rate_limit": 4
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 4,
+      "guard_retry_sleep_ms": 600.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_version",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_pypi_release_span",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "httpx's current version (0.28.1) was released earliest, on 2024-12-06, and 524 days separate it from the latest release date (requests 2.34.2 on 2026-05-14).",
+      "turns": 3,
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4534,
+        "completion_tokens": 571,
+        "total_tokens": 5105
+      },
+      "elapsed_ms": 3927.98,
+      "faults_injected": 2,
+      "fault_kinds": {
+        "timeout": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_package_release_date",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_pypi_release_span",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 10,
+      "clean_turns": 9,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The earliest is httpx 0.28.1, released 2024-12-06, which is 524 days before the latest release (requests 2.34.2 on 2026-05-14).",
+      "turns": 5,
+      "tool_calls": 8,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 8320,
+        "completion_tokens": 674,
+        "total_tokens": 8994
+      },
+      "elapsed_ms": 5148.74,
+      "faults_injected": 2,
+      "fault_kinds": {
+        "timeout": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_hn_author_age_gap",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 8,
+      "clean_turns": 7,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "**pg** created their account earlier — pg: 2006, dhouston: 2007, a gap of 1 year.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4333,
+        "completion_tokens": 612,
+        "total_tokens": 4945
+      },
+      "elapsed_ms": 96338.24,
+      "faults_injected": 4,
+      "fault_kinds": {
+        "timeout": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 2,
+      "guard_retry_sleep_ms": 300.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_item",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_item",
+          "error": "server_error: HTTP 503 server error (attempt 1)",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_hn_author_age_gap",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 8,
+      "clean_turns": 7,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "**pg** (author of item 1) created their account first — in **2006** (Oct 9, 2006), versus **dhouston** in **2007** (Mar 29, 2007) — a gap of **1 year**.",
+      "turns": 5,
+      "tool_calls": 8,
+      "tool_errors": 4,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7758,
+        "completion_tokens": 714,
+        "total_tokens": 8472
+      },
+      "elapsed_ms": 97047.17,
+      "faults_injected": 4,
+      "fault_kinds": {
+        "timeout": 2,
+        "server_error": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_hn_author_age_gap",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 8,
+      "clean_turns": 7,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The earlier author was pg (2006), versus dhouston (2007), a gap of 1 year.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4420,
+        "completion_tokens": 455,
+        "total_tokens": 4875
+      },
+      "elapsed_ms": 10115.23,
+      "faults_injected": 2,
+      "fault_kinds": {
+        "rate_limit": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_item",
+          "error": "rate_limit: HTTP 429 rate limited",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_hn_author_age_gap",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 8,
+      "clean_turns": 7,
+      "repeat": 1,
+      "fault_seed": 108,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The earlier account is **pg** (created 2006), versus **dhouston** (2007), a gap of 1 year.",
+      "turns": 5,
+      "tool_calls": 6,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7470,
+        "completion_tokens": 334,
+        "total_tokens": 7804
+      },
+      "elapsed_ms": 10774.18,
+      "faults_injected": 2,
+      "fault_kinds": {
+        "rate_limit": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hard_hn_author_age_gap",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 8,
+      "clean_turns": 7,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "**pg** (Hacker News item 1) created their account in **2006**, vs. **dhouston** in **2007** — a gap of **1 year**.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4311,
+        "completion_tokens": 345,
+        "total_tokens": 4656
+      },
+      "elapsed_ms": 10341.04,
+      "faults_injected": 2,
+      "fault_kinds": {
+        "timeout": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 150.0,
+      "guard_events": [
+        {
+          "rule": "transient_retry:2",
+          "function": "get_hn_item",
+          "error": "timeout: request timed out",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": true,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        }
+      ]
+    },
+    {
+      "task": "hard_hn_author_age_gap",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 8,
+      "clean_turns": 7,
+      "repeat": 2,
+      "fault_seed": 209,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "**pg** (created 2006) is earlier than dhouston (2007) — a gap of 1 year.",
+      "turns": 5,
+      "tool_calls": 6,
+      "tool_errors": 2,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 7870,
+        "completion_tokens": 424,
+        "total_tokens": 8294
+      },
+      "elapsed_ms": 10919.48,
+      "faults_injected": 2,
+      "fault_kinds": {
+        "timeout": 2
+      },
+      "fault_source": "synthetic",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    }
+  ],
+  "aggregate": {
+    "conditions": {
+      "clean+1": {
+        "mean_budget": 10.25,
+        "arms": {
+          "baseline": {
+            "cells": 12,
+            "success": 10,
+            "success_rate": 0.8333,
+            "success_wilson_95": [
+              0.552,
+              0.953
+            ],
+            "turns": 83,
+            "turns_per_cell": 6.917,
+            "tool_calls": 132,
+            "tool_errors": 59,
+            "exhausted": 1,
+            "faults_injected": 59,
+            "fault_kinds": {
+              "server_error": 16,
+              "rate_limit": 21,
+              "timeout": 22
+            },
+            "guard_recoveries": 0,
+            "guard_retry_sleep_ms": 0.0,
+            "mcp_calls": 0,
+            "mcp_errors": 0,
+            "mcp_restarts": 0,
+            "usage": {
+              "prompt_tokens": 148262,
+              "completion_tokens": 8029,
+              "total_tokens": 156291
+            },
+            "elapsed_ms": 258326.72
+          },
+          "guard": {
+            "cells": 12,
+            "success": 12,
+            "success_rate": 1.0,
+            "success_wilson_95": [
+              0.7575,
+              1.0
+            ],
+            "turns": 36,
+            "turns_per_cell": 3.0,
+            "tool_calls": 72,
+            "tool_errors": 0,
+            "exhausted": 0,
+            "faults_injected": 56,
+            "fault_kinds": {
+              "server_error": 16,
+              "rate_limit": 18,
+              "timeout": 22
+            },
+            "guard_recoveries": 28,
+            "guard_retry_sleep_ms": 4200.0,
+            "mcp_calls": 0,
+            "mcp_errors": 0,
+            "mcp_restarts": 0,
+            "usage": {
+              "prompt_tokens": 55453,
+              "completion_tokens": 5742,
+              "total_tokens": 61195
+            },
+            "elapsed_ms": 208483.63
+          }
+        },
+        "paired_cells": {
+          "both_success": 10,
+          "baseline_only": 0,
+          "guard_only": 2,
+          "neither": 0,
+          "mcnemar_exact_p": 0.5
+        },
+        "per_category": {
+          "worldbank": {
+            "baseline": [
+              2,
+              3
+            ],
+            "guard": [
+              3,
+              3
+            ]
+          },
+          "weather": {
+            "baseline": [
+              3,
+              3
+            ],
+            "guard": [
+              3,
+              3
+            ]
+          },
+          "pypi": {
+            "baseline": [
+              2,
+              3
+            ],
+            "guard": [
+              3,
+              3
+            ]
+          },
+          "hn": {
+            "baseline": [
+              3,
+              3
+            ],
+            "guard": [
+              3,
+              3
+            ]
+          }
+        },
+        "failure_modes": {
+          "baseline": {
+            "format_miss": 1,
+            "no_answer": 1
+          }
+        }
+      }
+    },
+    "budget_curve": [
+      {
+        "condition": "clean+1",
+        "mean_budget": 10.25,
+        "baseline_success_rate": 0.8333,
+        "guard_success_rate": 1.0,
+        "baseline_cells": 12,
+        "guard_cells": 12
+      }
+    ]
+  },
+  "key_findings": [
+    "clean+1 (mean budget 10.25): baseline 10/12 vs guard 12/12 (McNemar p=0.5)",
+    "clean+1: turns/cell baseline 6.917 -> guard 3.0, tokens baseline 156291 -> guard 61195, agent-visible tool errors 59 -> 0"
+  ],
+  "limitations": [
+    "Deterministic transient-fault injection (first *attempts_to_fail* attempts of a faulted logical call fail), not observed production failures; the injection rate and epoch length are experimental parameters, not measured values.",
+    "Single model (deepseek-v4-flash) by decision; repeat seeds vary the injected fault surface only, they do not re-sample model behaviour.",
+    "The budget sweep uses per-task budgets calibrated from one fault-free run per task; the calibrated turn requirement is itself a point estimate (no repeat of calibration).",
+    "Task-pool provenance: V1 artifact = 20 tasks (commit 02ac71a), V2 artifact = 32 tasks (commit 43c4e89), V3 artifact = 31 tasks with drift-hardened ground truth (HN karma replaced by immutable account-creation year, commit 8ad347e). This runner now produces the V3 task-pool artifact; older artifacts are reproduced from their commits.",
+    "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has no live-mutable HN karma tasks.",
+    "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
+    "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
+    "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item schema declares story_id as integer, matching the backend and the real Hacker News API, so the synthetic contract mismatch is no longer injected into this run. The drifting variant is kept only as the targeted contract-repair demonstration (live_demo_hard_v3.json) with its attribution control (live_demo_hard_v3_hnconsistent.json)."
+  ],
+  "reproduce": [
+    "python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4.json",
+    "python scripts/run_live_demo_hard_v2.py --hn-schema consistent --workers 2 --calibration .scratch\\toolguard\\hard_calibration_v5.json --output benchmarks/toolguard/live_demo_hard_v4.json",
+    "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
+  ]
+}

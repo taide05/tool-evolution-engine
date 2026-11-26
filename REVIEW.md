@@ -2,9 +2,9 @@
 
 > **给外部审阅者（AI 或人）**：这份文档告诉你交付了什么、证据在哪里、如何**不依赖作者自述**地核对这些数字、以及哪些结论**不能**采信。若只读三份文件：本文件 → [TOOLGUARD.md](TOOLGUARD.md)（设计与结果）→ `benchmarks/toolguard/*.json`（逐格证据）。
 >
-> **2026-11-24 证据链修复轮 + 2026-11-25 HN 契约修正（单/多模型 V4，已本地提交，未 push）**：针对外部审阅的 3 个 P0 + P1/P2，本轮只修证据链、不加功能：证据汇总从 records 重算全部派生字段并加篡改负例、完整 JSON Schema 校验 + schema 漏斗、比较类 verifier 改为关系断言 + 离线重判、离线 metrics 改为确定性生成 + LOMO 协议如实标注、P2 文档/复现修复；随后按评审决定修正 HN schema 契约并重跑出**单/多模型 V4 主口径**（见 §3/§5）。**未 push**；重跑预算见 TOOLGUARD 局限与下一步。
+> **2026-11-24 证据链修复轮 + 2026-11-25 HN 契约修正（单/多模型 V4，已提交并 push 到 `origin/feat/toolguard`，最新 `af97244`）**：针对外部审阅的 3 个 P0 + P1/P2，本轮只修证据链、不加功能：证据汇总从 records 重算全部派生字段并加篡改负例、完整 JSON Schema 校验 + schema 漏斗、比较类 verifier 改为关系断言 + 离线重判、离线 metrics 改为确定性生成 + LOMO 协议如实标注、P2 文档/复现修复；随后按评审决定修正 HN schema 契约并重跑出**单/多模型 V4 主口径**，另做 schema 索引保真度修复与真实线上故障 trace 证据（见 §3/§5）。
 
-- 分支：`feat/toolguard`（基线 `opt/tee-tools` @ `7fd644c`）；本轮修复在本地 commit（`git log -1`），**未 push**
+- 分支：`feat/toolguard`（基线 `opt/tee-tools` @ `7fd644c`）；本轮修复已 commit 并 push：`origin/feat/toolguard` @ `af97244`（`3e35e47` 之后）
 - 工作区状态：干净；本文件描述的是“本轮修复 commit”这一审阅状态（之前的 `3e35e47` 是被审阅的交付基线）
 - 审阅包内容：`REVIEW.md`（本文）+ `TOOLGUARD.md`（正式结果文档）+ 13 个 JSON artifact + 代码/测试
 - 作者：AI coding agent（单次会话），所以本文档按“可被反驳”的方式写：每个结论都给了可执行核验方式
@@ -29,7 +29,7 @@ python scripts/rescore_toolguard_verifier.py                  # 新关系验证�
 想看“本轮修复改了什么”：
 
 ```bash
-git log --oneline -3         # 本轮证据链修复 commit（含 V4 HN 修正；未 push）
+git log --oneline -3         # 本轮证据链修复 commit（已 push 到 origin/feat/toolguard）
 git show --stat HEAD         # 最近一次修复的内容
 git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 ```
@@ -91,6 +91,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | MCP V2：双 server 96 格，clean+1 baseline 11/32 vs guard 32/32（p=9.54e-7）；17–20 次真实崩溃/重连 | `mcp_demo_v2.json` | `guard_repairs_by_rule`（从 guard_events 重算）；records 的 `mcp_restarts` |
 | MCP V3（本轮重跑，P1-2 修正）：两臂分开校准、预算锚定 baseline；clean+1 baseline **13/32（40.6%）** vs guard **32/32（100%）**（p=3.81e-6），clean+4 14/16 vs 16/16；$0.098/667s；artifact 用 `--from-records` 重建生成元数据（records/aggregate 未变） | `mcp_demo_v3.json` | `protocol.budget_anchor=baseline`、`calibration.tasks[*].baseline_turns/guard_turns`；`guard_repairs_by_rule` 从 guard_events 重算；`--from-records` 可重建 |
 | **真实线上故障 trace（本轮新增）**：对 6 类真实公开 API 构造 16 个真实错误场景并捕获真实错误（invalid_argument 6 / not_found 9 / request_error 1）；逐条回放给 guard：**4/4 可推导契约错误修复且在线验证成功**（HN story_id string→int、HN story_id integral-float→int、weather 坐标 numeric-string→float、World Bank year string→int），12 条语义/越界错误诚实失败（0 伪造修复）；live API 抖动单独记为 `verification_status=api_unavailable`；另已接进 A/B（`--fault-source real-trace`，12 格 smoke：baseline=guard=5/6，注入 7 条真实 trace）；成本 $0（smoke $0.018） | `benchmarks/toolguard/real_traces/`（traces / repair run / ab smoke） | 重跑 `collect_real_fault_traces.py && run_real_fault_repair.py`；A/B smoke 用 `run_live_demo_hard_v2.py --fault-source real-trace --task-ids ... --budgets clean+1 --repeats clean+1:1`；`test_real_fault_traces.py` + `test_real_trace_backend.py` 固定证据与后端行为 |
+| **V5 更难任务 pilot（本轮新增）**：4 个 opt-in hard tasks（`--include-hard-tasks`，默认 V4 pool 不变），fault-free calibration 后跑 clean+1×3 repeats×2 arms = 24 格：baseline **10/12（83.3%）** vs guard **12/12（100%）**，guard 仍 ceiling（每格 1–5 次轮内修复、turns 3 vs 5–11）；成本 $0.039/234s。负结果：单纯加长链/算术不破 ceiling（难度仍是故障驱动，guard 在轮内吸收） | `benchmarks/toolguard/real_traces/hard_pilot_v5.json` | `python scripts/run_live_demo_hard_v2.py --include-hard-tasks --task-ids hard_gdp_triple_gap,hard_weather_spread_three,hard_pypi_release_span,hard_hn_author_age_gap --budgets clean+1 --repeats clean+1:3 --calibration .scratch/toolguard/hard_calibration_v5.json` |
 | 比较类 verifier：反向答案判失败；已提交数据重判 success 变化 0/756（含单/多模型 V4） | `verify.py` + `rescore_toolguard_verifier.py` | 跑 rescore；负例见 `test_relation_verifier.py`；重判只读、不改 artifact |
 | 契约可自证：任意改 tokens/rate/turns/tool_errors/Wilson/p 都失败 | `artifact_contracts.py` + `test_artifact_tamper.py` | `pytest tests/test_toolguard/test_artifact_tamper.py`（临时副本篡改，**13 个 artifact** 复制后逐字段改） |
 | 成本：多模型 V4 评测 **$2.00**（558 格；复用 V3 per-model calibration，无额外校准花费）；V3 历史版 $2.08 + $0.30 | `live_demo_multimodel_v4.json` | 由 records usage × `protocol.models` 公开单价可重算（`artifact_metrics.recompute_multimodel`） |
@@ -126,14 +127,14 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 4. **天气/FX ground truth 是直播值**：V3 换了不可变 HN 任务 + 每模型重建 GT；仍有极小漂移。
 5. **预算锚点**：单模型 V4 复用 V3 calibration、多模型 V4 复用 V3 per-model calibration（同一预算锚点，schema 是唯一变量；`protocol.calibration.source` 已记录），不是独立新校准；MCP 已改为两臂分别校准并锚定 baseline（`mcp_demo_v3.json`，clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6），旧 V2 的 guard 锚定保留为历史。
 6. **多模型是复制而非模型间假设检验**：3 个模型；cheap/strong 同属 Qwen 家族；**“能力越弱收益越大”在 V4 下方向成立**：clean+1 增益 qwen3.8-flash **+37.1pp** > DeepSeek-Flash **+35.5pp** > qwen4-max **+30.6pp**（去掉 HN 后 +42.6/+40.7/+35.2pp，同样单调）；但三个模型紧预算 guard 都到 100%（ceiling effect），该结论只是方向性。V3 的“mid 最大”，部分来自当时 HN 合成契约 bug 对不同模型的非对称影响，V4 已消除。多模型 V4 与单模型一样已修正 HN 契约（HN 子集 baseline clean+1 1/8→8/8，三个模型）。
-7. **三个模型的紧预算 guard 都到 100%**（ceiling effect）；V4 多模型 clean+1/clean+4 guard 均无失败。
+7. **三个模型的紧预算 guard 都到 100%**（ceiling effect）；V4 多模型 clean+1/clean+4 guard 均无失败；**V5 硬任务 pilot 也没有打破**（baseline 10/12 vs guard 12/12）。要打破 ceiling 需要“无故障也会失败的推理难度 / 超过 guard 重试预算的故障 / 更高语义复杂度”，单纯加长链无效（负结果已记录）。
 8. **离线修复覆盖 ≠ 端到端成功**：value agreement 只在“其他模型解过同任务”时可验证（严格下界）；schema 默认值补全是未验证提议。
 9. **验证器**：比较类已改关系断言，离线重判 756 条（含单/多模型 V4）0 变化；旧成功率只能视为上界。V1 两个 artifact 无逐条 answer，无法重判。
 10. **失败模式标签**：旧 `classify_failure()` 会被 metadata 标量误触发；本轮已用 `--from-records` 从 checkpoint 免费重建两个 V3 artifact 并重算标签（多模型 format_miss 20→3、no_expected_value 2→19；单模型无变化），reproduce 路径同修复（V4 新 artifact 生成时即用修正后的分类器）；旧 V2 artifact 标签仍为历史分类。
 11. **MCP V2 任务池是 V2 时代**（16 任务子集），与 V3 单模型/多模型数字不同源。
 12. **解析器**把 20 条无法解析的 observation 当成功（0.07%）；30,120 是记录调用/重试次数，不是独立任务数。
 13. **免费公开 API 非生产级**：GitHub 限流已从任务集移除；API 漂移可能影响复跑。
-14. **本轮修复已在本地 commit（未 push、无 CI）**：V4 是修正后的主口径，但 live 数字仍有 LLM 采样随机性（单模型复跑 ±2 格级波动，非 HN 子集在对照实验与 V4 完整重跑间出现 2 格差异是正常的）；审阅者复跑允许 ±1–2 格差异，但不能出现方向性反转。
+14. **本轮修复已 commit 并 push（无 CI）**：V4 是修正后的主口径，但 live 数字仍有 LLM 采样随机性（单模型复跑 ±2 格级波动，非 HN 子集在对照实验与 V4 完整重跑间出现 2 格差异是正常的）；审阅者复跑允许 ±1–2 格差异，但不能出现方向性反转。
 
 ---
 
@@ -188,6 +189,8 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `scripts/rescore_toolguard_verifier.py`（新） | 新 verifier 离线只读重判已提交答案 |
 | `scripts/collect_real_fault_traces.py` / `run_real_fault_repair.py`（新） | 真实线上错误 trace 采集 + repair-layer 在线验证（16 条真实错误，4/4 可推导契约错误修复，12 条语义错误诚实失败，成本 $0；瞬态 API 抖动单独记为 api_unavailable） |
 | `src/tool_evolution/toolguard/live.py` + `scripts/run_live_demo_hard_v2.py` | `RealTraceFaultBackend` + `--fault-source real-trace`：把真实捕获错误作为 A/B 故障源（确定性、两臂同故障面、逐格记录 trace id/kind）；12 格 smoke：baseline=guard=5/6（真实错误多为不可修复类，属鲁棒性检查） |
+| `scripts/run_live_demo_hard.py` / `run_live_demo_hard_v2.py` | **V5 更难任务 pilot（opt-in）**：`build_tasks(..., include_hard=True)` 追加 4 个长链/多源派生任务，`--include-hard-tasks` 启用；默认 V4 pool 不变。24 格 pilot：baseline 10/12 vs guard 12/12（ceiling 未破，负结果） |
+| `benchmarks/toolguard/real_traces/hard_pilot_v5.json`（新） | V5 hard pilot 逐格证据（24 格，成本 $0.039） |
 | `tests/test_toolguard/test_real_fault_traces.py`（新） | 固定真实 trace 证据（16/4/12 与不可修复集合），防止证据腐化 |
 | `benchmarks/toolguard/mcp_demo_v3.json`（新） | MCP baseline/guard 分开校准重跑（96 格；clean+1 baseline 13/32 vs guard 32/32，p=3.8e-6） |
 | `benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json`（新） | HN 一致 schema 对照（186 格；baseline 51/93→61/93，HN 子集 2/12→12/12） |
@@ -228,5 +231,5 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 - `.env`（DeepSeek/百炼 key）**永不提交**、`.env.example` 只有占位符；审阅无需 key；
 - `docs/`、`STATUS.md` 是作者本地笔记（gitignored），不随仓库分发；
 - 本会话与上一轮所有 API 消耗由作者承担；审阅者不必复跑；
-- 本轮修复已在**本地 commit**（作者已确认；**未 push**）；不修改旧 TEE 的 25 条历史指标；
+- 本轮修复已 commit 并 push 到 `origin/feat/toolguard`；不修改旧 TEE 的 25 条历史指标；
 - 若审阅者发现“文档数字与 artifact 不一致”，优先修复文档并记录 finding，而不是改 artifact。
