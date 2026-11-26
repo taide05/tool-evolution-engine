@@ -38,7 +38,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 
 ## 1. 审阅范围与不在范围
 
-**交付内容**（`feat/toolguard` 分支；16 个功能 commit + 本轮修复 commit `3e35e47..ea6a038`，已 push）：
+**交付内容**（`feat/toolguard` 分支；16 个功能 commit + 本轮修复 commit `3e35e47..HEAD`，已 push）：
 
 1. **ToolGuard 中间件**：离线（30,120 次记录调用）→ live 端到端（真实公开 API + 真实 LLM agent）→ 真实 MCP（双 stdio server、进程崩溃重连、catalog drift）→ 多模型复制（3 模型）。核心代码在 `src/tool_evolution/toolguard/`。
 2. **实验与证据**：4 轮 live 实验、13 个 contract artifact、逐格记录 + 逐条修复事件 + 局限声明、Wilson CI / 配对 McNemar；离线修复评测带完整 schema 漏斗与定量协议说明。
@@ -166,7 +166,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `8c76d4c` | 收口：V3 单模型 artifact（310 格）+ README/TOOLGUARD 溯源与一致性修订 |
 | `3e35e47` | REVIEW.md 审阅指引 + evidence summary 脚本 |
 
-### 本轮修复 commit（`3e35e47..ea6a038`，已 push 到 `origin/feat/toolguard`）
+### 本轮修复 commit（`3e35e47..HEAD`，已 push 到 `origin/feat/toolguard`）
 
 | commit | 内容 |
 |---|---|
@@ -179,6 +179,8 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `3cb677a` | integral-float→integer coercion（真实 trace 暴露的缺口） |
 | `af97244` | real-trace 故障源接入 A/B + 12 格 smoke |
 | `ea6a038` | V5 hard-task ceiling pilot（opt-in，负结果） |
+| `aef8fd3` | 收口：测试/artifact 计数、commit 范围、证据数据区分、审阅顺序与 checklist 最终对齐 |
+| 最新 commit | 本文件的最终收口修订（审阅时以 `git log -1` 为准） |
 
 ### 本轮变更文件汇总
 
@@ -251,7 +253,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 - `.env`（DeepSeek/百炼 key）**永不提交**、`.env.example` 只有占位符；审阅无需 key；
 - `docs/`、`STATUS.md` 是作者本地笔记（gitignored），不随仓库分发；
 - 本会话与上一轮所有 API 消耗由作者承担；审阅者不必复跑；
-- 本轮修复已 commit 并 push 到 `origin/feat/toolguard`（最新 `ea6a038`）；不修改旧 TEE 的 25 条历史指标；
+- 本轮修复已 commit 并 push 到 `origin/feat/toolguard`（最新 commit 以 `git log -1` 为准）；不修改旧 TEE 的 25 条历史指标；
 - **给审阅 AI 的建议顺序**：先跑 §0 四条命令（全部离线、无需 key）→ 读 TOOLGUARD 的「结果（离线）」「第二轮 V4」「真实线上故障 trace」「V5 hard pilot」→ 用 §3 证据地图抽查 3–5 个 claim → 读 §5 的“不能声称”清单并逐条压测 → 最后对照 §7 checklist 报告 findings；
 - 证据数据（`benchmarks/toolguard/real_traces/`）不是 contract artifact，但都有生成脚本与测试固定，审阅时可离线重跑 `collect_real_fault_traces.py` + `run_real_fault_repair.py`（只打免费公开 API）；
 - 若审阅者发现“文档数字与 artifact 不一致”，优先修复文档并记录 finding，而不是改 artifact。
