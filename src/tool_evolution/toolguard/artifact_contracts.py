@@ -13,6 +13,11 @@ paired counts, exact McNemar p, failure modes, capability placement).  The recom
 lives in :mod:`tool_evolution.toolguard.artifact_metrics` so the reviewer-facing
 ``scripts/toolguard_evidence_summary.py`` and this validator cannot disagree.
 
+The 2026-11-25 review added two more invariants: a reproduce command that writes into
+``benchmarks/toolguard/`` must write *this* artifact (never a different headline artifact),
+and every calibration task-id set (top-level, per-model or ``protocol.calibration.tasks``)
+must cover exactly the artifact's task pool.
+
 No network and no benchmark data are needed: everything is checked against the committed
 JSON files themselves.
 """
