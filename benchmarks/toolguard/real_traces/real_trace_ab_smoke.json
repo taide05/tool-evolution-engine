@@ -1,0 +1,733 @@
+{
+  "artifact_version": 2,
+  "experiment": "ToolGuard_hard_multistep_live_ab_v4_task_pool_hn_consistent",
+  "generated_at": "2026-11-26T03:18:13.614657+00:00",
+  "model": "deepseek-v4-flash",
+  "protocol": {
+    "task_pool": "V4: the V3 drift-hardened 31-task pool with the HN contract fixed (schema matches backend, 2026-11-25 review decision); ground truth built from the same live APIs before the eval",
+    "hn_schema": "consistent",
+    "hn_schema_note": "consistent contract (main protocol): get_hn_item.story_id is an integer in the agent-visible schema, matching the backend and the real HN API; the synthetic drift is not injected here. The drift-based repair capability is demonstrated separately in live_demo_hard_v3.json and its attribution control live_demo_hard_v3_hnconsistent.json",
+    "rebuilt_from_records": false,
+    "arms": [
+      "baseline",
+      "guard"
+    ],
+    "budget_conditions": {
+      "clean+1": "per-task turn budget = fault-free calibration turns + 1"
+    },
+    "repeats": {
+      "clean+1": 1
+    },
+    "workers": 1,
+    "wall_seconds": 100.2,
+    "calibration": {
+      "description": "one fault-free run per task measured the turn requirement that anchors the budget sweep",
+      "source": ".scratch\\toolguard\\hard_calibration_v4.json",
+      "tasks": {
+        "capital_weather_japan": {
+          "turns": 4,
+          "success": true,
+          "exhausted": false
+        },
+        "population_sum_australia_canada": {
+          "turns": 2,
+          "success": true,
+          "exhausted": false
+        },
+        "pypi_release_date_httpx": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "hn_item_8863_author_account_year": {
+          "turns": 3,
+          "success": true,
+          "exhausted": false
+        },
+        "fx_usd_cny_100": {
+          "turns": 2,
+          "success": true,
+          "exhausted": false
+        },
+        "gdp_ratio_bern_canberra": {
+          "turns": 2,
+          "success": true,
+          "exhausted": false
+        }
+      }
+    },
+    "fault_injection": {
+      "source": "real-trace",
+      "model": "captured real online error traces replayed deterministically: the first N attempts of a selected logical call return a real recorded API error, then the real call runs",
+      "attempts_to_fail": 2,
+      "p_timeout": 0.2,
+      "p_rate_limit": 0.1,
+      "p_server_error": 0.08,
+      "seed": 7,
+      "repeat_seed_rule": "fault seed = seed + repeat * 101",
+      "real_traces": "benchmarks/toolguard/real_traces/real_fault_traces.json",
+      "trace_provenance": "benchmarks/toolguard/real_traces/real_fault_traces.json (captured from real public API calls)"
+    },
+    "tool_surface": {
+      "tools": [
+        "get_country_info",
+        "find_country_by_capital",
+        "get_country_population",
+        "get_country_gdp_per_capita",
+        "geocode_city",
+        "get_weather",
+        "get_package_version",
+        "get_package_release_date",
+        "get_hn_item",
+        "get_hn_user",
+        "get_hn_top_story",
+        "get_exchange_rate"
+      ],
+      "apis": [
+        "api.worldbank.org",
+        "geocoding-api.open-meteo.com",
+        "api.open-meteo.com",
+        "pypi.org",
+        "hacker-news.firebaseio.com",
+        "open.er-api.com"
+      ]
+    },
+    "verification": "programmatic; ground truth computed from the same live APIs before the runs"
+  },
+  "tasks": [
+    {
+      "id": "capital_weather_japan",
+      "question": "What is the current temperature, in degrees Celsius, in the capital city of Japan? Use get_country_info for the capital, geocode_city for its coordinates, and get_weather for the temperature.",
+      "expected": {
+        "country": "Japan",
+        "capital": "Tokyo",
+        "latitude": 35.6895,
+        "longitude": 139.69171,
+        "temperature_c": 12.9
+      },
+      "min_turns": 4,
+      "category": "weather"
+    },
+    {
+      "id": "population_sum_australia_canada",
+      "question": "What is the combined (summed) population of Australia and Canada according to the World Bank? Give the exact integer total.",
+      "expected": {
+        "populations": [
+          27614411,
+          41651653
+        ],
+        "total": 69266064
+      },
+      "min_turns": 3,
+      "category": "worldbank"
+    },
+    {
+      "id": "pypi_release_date_httpx",
+      "question": "When was the latest version of the Python package httpx released on PyPI? Give the date as YYYY-MM-DD.",
+      "expected": {
+        "package": "httpx",
+        "version": "0.28.1",
+        "release_date": "2024-12-06"
+      },
+      "min_turns": 3,
+      "category": "pypi"
+    },
+    {
+      "id": "hn_item_8863_author_account_year",
+      "question": "In which year was the Hacker News account of the user who posted Hacker News item 8863 created?",
+      "expected": {
+        "story_id": 8863,
+        "username": "dhouston",
+        "created_year": 2007
+      },
+      "min_turns": 3,
+      "category": "hn"
+    },
+    {
+      "id": "fx_usd_cny_100",
+      "question": "How many Chinese yuan are 100 US dollars worth at the current exchange rate?",
+      "expected": {
+        "usd_cny": 6.678179,
+        "cny_value": 667.8179
+      },
+      "min_turns": 2,
+      "category": "fx"
+    },
+    {
+      "id": "gdp_ratio_bern_canberra",
+      "question": "What is the ratio of the GDP per capita of the country whose capital is Bern to the GDP per capita of the country whose capital is Canberra? Give it to two decimal places.",
+      "expected": {
+        "a": "Switzerland",
+        "b": "Australia",
+        "gdp_a": 114769.01,
+        "gdp_b": 65129.72,
+        "ratio": 1.7621603470735019
+      },
+      "min_turns": 4,
+      "category": "worldbank"
+    }
+  ],
+  "skipped": [],
+  "records": [
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 3,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7067,
+        "completion_tokens": 265,
+        "total_tokens": 7332
+      },
+      "elapsed_ms": 8037.36,
+      "faults_injected": 3,
+      "fault_kinds": {
+        "invalid_argument": 3
+      },
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "capital_weather_japan",
+      "category": "weather",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": false,
+      "failure_mode": "no_answer",
+      "answer": "",
+      "turns": 5,
+      "tool_calls": 5,
+      "tool_errors": 2,
+      "exhausted": true,
+      "usage": {
+        "prompt_tokens": 7080,
+        "completion_tokens": 276,
+        "total_tokens": 7356
+      },
+      "elapsed_ms": 9189.78,
+      "faults_injected": 4,
+      "fault_kinds": {
+        "invalid_argument": 3,
+        "request_error": 1
+      },
+      "fault_source": "real-trace",
+      "guard_recoveries": 1,
+      "guard_retry_sleep_ms": 50.0,
+      "guard_events": [
+        {
+          "rule": "invalid_argument",
+          "function": "geocode_city",
+          "error": "invalid_argument: name must be a non-empty string",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": false,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "invalid_argument",
+          "function": "geocode_city",
+          "error": "invalid_argument: name must be a non-empty string",
+          "repaired_function": "",
+          "repaired_arguments": {},
+          "recovered": false,
+          "schema_validated": false,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {}
+        },
+        {
+          "rule": "error_hint_coercion+transient_retry:1",
+          "function": "get_weather",
+          "error": "invalid_argument: latitude must be a number",
+          "repaired_function": "",
+          "repaired_arguments": {
+            "latitude": 35.6895,
+            "longitude": 139.69171
+          },
+          "recovered": true,
+          "schema_validated": true,
+          "schema_unavailable": false,
+          "schema_errors": [],
+          "schema_overrides": {
+            "latitude": "number"
+          }
+        }
+      ]
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "69266064",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2597,
+        "completion_tokens": 96,
+        "total_tokens": 2693
+      },
+      "elapsed_ms": 1721.35,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "population_sum_australia_canada",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The combined population of Australia (27,614,411) and Canada (41,651,653) is 69,266,064.",
+      "turns": 2,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2597,
+        "completion_tokens": 131,
+        "total_tokens": 2728
+      },
+      "elapsed_ms": 1311.04,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The latest version of httpx (0.28.1) was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3939,
+        "completion_tokens": 129,
+        "total_tokens": 4068
+      },
+      "elapsed_ms": 2191.35,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "pypi_release_date_httpx",
+      "category": "pypi",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "httpx's latest version 0.28.1 was released on 2024-12-06.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 3961,
+        "completion_tokens": 138,
+        "total_tokens": 4099
+      },
+      "elapsed_ms": 2588.27,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_8863_author_account_year",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The Hacker News account of dhouston (poster of item 8863) was created in 2007.",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4056,
+        "completion_tokens": 239,
+        "total_tokens": 4295
+      },
+      "elapsed_ms": 30402.03,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "hn_item_8863_author_account_year",
+      "category": "hn",
+      "condition": "clean+1",
+      "budget": 4,
+      "clean_turns": 3,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The author is **dhouston**, whose account was created in **2007** (timestamp 1175189462 → March 29, 2007).",
+      "turns": 3,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4011,
+        "completion_tokens": 161,
+        "total_tokens": 4172
+      },
+      "elapsed_ms": 30961.41,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_usd_cny_100",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 3,
+      "clean_turns": 2,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "100 US dollars are worth about 667.82 Chinese yuan at the current rate of 6.678179 CNY per USD.",
+      "turns": 2,
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2515,
+        "completion_tokens": 93,
+        "total_tokens": 2608
+      },
+      "elapsed_ms": 3224.42,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "fx_usd_cny_100",
+      "category": "fx",
+      "condition": "clean+1",
+      "budget": 3,
+      "clean_turns": 2,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "100 US dollars are worth about 667.82 Chinese yuan at the current rate (1 USD = 6.6782 CNY).",
+      "turns": 2,
+      "tool_calls": 1,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 2515,
+        "completion_tokens": 100,
+        "total_tokens": 2615
+      },
+      "elapsed_ms": 4192.81,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "gdp_ratio_bern_canberra",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "baseline",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The ratio is **1.76** (Switzerland $114,769.01 ÷ Australia $65,129.72).",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4172,
+        "completion_tokens": 262,
+        "total_tokens": 4434
+      },
+      "elapsed_ms": 3192.72,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    },
+    {
+      "task": "gdp_ratio_bern_canberra",
+      "category": "worldbank",
+      "condition": "clean+1",
+      "budget": 5,
+      "clean_turns": 4,
+      "repeat": 0,
+      "fault_seed": 7,
+      "arm": "guard",
+      "success": true,
+      "failure_mode": null,
+      "answer": "The ratio of Switzerland’s GDP per capita to Australia’s is **1.76**.",
+      "turns": 3,
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "exhausted": false,
+      "usage": {
+        "prompt_tokens": 4212,
+        "completion_tokens": 316,
+        "total_tokens": 4528
+      },
+      "elapsed_ms": 3205.12,
+      "faults_injected": 0,
+      "fault_kinds": {},
+      "fault_source": "real-trace",
+      "guard_recoveries": 0,
+      "guard_retry_sleep_ms": 0.0,
+      "guard_events": []
+    }
+  ],
+  "aggregate": {
+    "conditions": {
+      "clean+1": {
+        "mean_budget": 4.17,
+        "arms": {
+          "baseline": {
+            "cells": 6,
+            "success": 5,
+            "success_rate": 0.8333,
+            "success_wilson_95": [
+              0.4365,
+              0.9699
+            ],
+            "turns": 18,
+            "turns_per_cell": 3.0,
+            "tool_calls": 16,
+            "tool_errors": 3,
+            "exhausted": 1,
+            "faults_injected": 3,
+            "fault_kinds": {
+              "invalid_argument": 3
+            },
+            "guard_recoveries": 0,
+            "guard_retry_sleep_ms": 0.0,
+            "mcp_calls": 0,
+            "mcp_errors": 0,
+            "mcp_restarts": 0,
+            "usage": {
+              "prompt_tokens": 24346,
+              "completion_tokens": 1084,
+              "total_tokens": 25430
+            },
+            "elapsed_ms": 48769.23
+          },
+          "guard": {
+            "cells": 6,
+            "success": 5,
+            "success_rate": 0.8333,
+            "success_wilson_95": [
+              0.4365,
+              0.9699
+            ],
+            "turns": 18,
+            "turns_per_cell": 3.0,
+            "tool_calls": 16,
+            "tool_errors": 2,
+            "exhausted": 1,
+            "faults_injected": 4,
+            "fault_kinds": {
+              "invalid_argument": 3,
+              "request_error": 1
+            },
+            "guard_recoveries": 1,
+            "guard_retry_sleep_ms": 50.0,
+            "mcp_calls": 0,
+            "mcp_errors": 0,
+            "mcp_restarts": 0,
+            "usage": {
+              "prompt_tokens": 24376,
+              "completion_tokens": 1122,
+              "total_tokens": 25498
+            },
+            "elapsed_ms": 51448.43
+          }
+        },
+        "paired_cells": {
+          "both_success": 5,
+          "baseline_only": 0,
+          "guard_only": 0,
+          "neither": 1,
+          "mcnemar_exact_p": 1.0
+        },
+        "per_category": {
+          "weather": {
+            "baseline": [
+              0,
+              1
+            ],
+            "guard": [
+              0,
+              1
+            ]
+          },
+          "worldbank": {
+            "baseline": [
+              2,
+              2
+            ],
+            "guard": [
+              2,
+              2
+            ]
+          },
+          "pypi": {
+            "baseline": [
+              1,
+              1
+            ],
+            "guard": [
+              1,
+              1
+            ]
+          },
+          "hn": {
+            "baseline": [
+              1,
+              1
+            ],
+            "guard": [
+              1,
+              1
+            ]
+          },
+          "fx": {
+            "baseline": [
+              1,
+              1
+            ],
+            "guard": [
+              1,
+              1
+            ]
+          }
+        },
+        "failure_modes": {
+          "baseline": {
+            "no_answer": 1
+          },
+          "guard": {
+            "no_answer": 1
+          }
+        }
+      }
+    },
+    "budget_curve": [
+      {
+        "condition": "clean+1",
+        "mean_budget": 4.17,
+        "baseline_success_rate": 0.8333,
+        "guard_success_rate": 0.8333,
+        "baseline_cells": 6,
+        "guard_cells": 6
+      }
+    ]
+  },
+  "key_findings": [
+    "clean+1 (mean budget 4.17): baseline 5/6 vs guard 5/6 (McNemar p=1)",
+    "clean+1: turns/cell baseline 3.0 -> guard 3.0, tokens baseline 25430 -> guard 25498, agent-visible tool errors 3 -> 2"
+  ],
+  "limitations": [
+    "Deterministic transient-fault injection (first *attempts_to_fail* attempts of a faulted logical call fail), not observed production failures; the injection rate and epoch length are experimental parameters, not measured values.",
+    "Single model (deepseek-v4-flash) by decision; repeat seeds vary the injected fault surface only, they do not re-sample model behaviour.",
+    "The budget sweep uses per-task budgets calibrated from one fault-free run per task; the calibrated turn requirement is itself a point estimate (no repeat of calibration).",
+    "Task-pool provenance: V1 artifact = 20 tasks (commit 02ac71a), V2 artifact = 32 tasks (commit 43c4e89), V3 artifact = 31 tasks with drift-hardened ground truth (HN karma replaced by immutable account-creation year, commit 8ad347e). This runner now produces the V3 task-pool artifact; older artifacts are reproduced from their commits.",
+    "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has no live-mutable HN karma tasks.",
+    "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
+    "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
+    "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item schema declares story_id as integer, matching the backend and the real Hacker News API, so the synthetic contract mismatch is no longer injected into this run. The drifting variant is kept only as the targeted contract-repair demonstration (live_demo_hard_v3.json) with its attribution control (live_demo_hard_v3_hnconsistent.json).",
+    "Fault source `real-trace`: selected logical calls replay a genuine error captured from the real public APIs (see benchmarks/toolguard/real_traces/) before reaching the backend. This is a robustness check using real error text, not the headline synthetic-fault protocol; the injected trace id/count is recorded per cell in fault_kinds/real-trace stats and the wrapper is identical for both arms."
+  ],
+  "reproduce": [
+    "python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4.json",
+    "python scripts/run_live_demo_hard_v2.py --hn-schema consistent --workers 2 --calibration .scratch\\toolguard\\hard_calibration_v4.json --output benchmarks/toolguard/live_demo_hard_v4.json",
+    "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
+  ]
+}

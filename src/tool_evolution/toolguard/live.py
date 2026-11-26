@@ -392,3 +392,77 @@ class FaultyBackend:
 
 def sleep_s(seconds: float) -> None:  # patchable for tests
     time.sleep(seconds)
+
+
+class RealTraceFaultBackend:
+    """Injects captured **real online error traces** instead of synthetic fault epochs.
+
+    2026-11-25 follow-up: the live A/B experiments inject synthetic timeout/rate-limit
+    epochs for reproducibility.  This backend replays *genuine real API errors* captured by
+    ``scripts/collect_real_fault_traces.py``: for deterministically selected logical calls
+    (same ``(seed, function, arguments)`` rule as :class:`FaultyBackend`) the first
+    ``attempts_to_fail`` attempts return a captured real error (matched by tool name; only
+    trace kinds in ``injectable_kinds``), then the call reaches the real backend.
+
+    Both A/B arms share the same injected real-trace surface for identical calls.  When no
+    matching trace exists for a tool, the call passes through unchanged, so mixing this
+    source with tools that have no captured traces is safe.
+    """
+
+    def __init__(self, backend: Any, traces: list[dict[str, Any]], seed: int = 42,
+                 p_fault: float = 0.25, attempts_to_fail: int = 2,
+                 injectable_kinds: tuple[str, ...] = ("invalid_argument", "request_error",
+                                                      "timeout", "rate_limit", "server_error")):
+        self.backend = backend
+        self.seed = seed
+        self.p_fault = p_fault
+        self.attempts_to_fail = attempts_to_fail
+        self.injectable_kinds = set(injectable_kinds)
+        by_tool: dict[str, list[dict[str, Any]]] = {}
+        for trace in traces:
+            if trace.get("outcome") != "error":
+                continue
+            if str(trace.get("error_kind")) not in self.injectable_kinds:
+                continue
+            by_tool.setdefault(str(trace["tool"]), []).append(trace)
+        self.traces_by_tool = by_tool
+        self._remaining: dict[str, int] = {}
+        self.stats: dict[str, Any] = {
+            "injected": 0, "calls": 0, "faulted_calls": 0, "kinds": {},
+            "real_trace_ids": {},
+        }
+
+    def schemas(self):
+        return self.backend.schemas()
+
+    def available_tool_names(self):
+        available = getattr(self.backend, "available_tool_names", None)
+        if available is not None:
+            return available()
+        return [schema["function"]["name"] for schema in self.backend.schemas()]
+
+    def call(self, function_name: str, arguments: dict[str, Any]):
+        from .backend import CallResult
+
+        self.stats["calls"] += 1
+        key = f"{function_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)}"
+        candidates = self.traces_by_tool.get(function_name) or []
+        if key not in self._remaining:
+            roll = _stable_rng(self.seed, key, "real-trace").random()
+            faulted = bool(candidates) and self.p_fault > 0 and roll < self.p_fault
+            self._remaining[key] = self.attempts_to_fail if faulted else 0
+            if faulted:
+                self.stats["faulted_calls"] += 1
+        remaining = self._remaining[key]
+        if remaining > 0 and candidates:
+            self._remaining[key] = remaining - 1
+            attempt_index = self.attempts_to_fail - remaining
+            index = _stable_rng(self.seed, key, "trace", attempt_index).randrange(len(candidates))
+            trace = candidates[index]
+            kind = str(trace["error_kind"])
+            self.stats["injected"] += 1
+            self.stats["kinds"][kind] = self.stats["kinds"].get(kind, 0) + 1
+            trace_id = str(trace["trace_id"])
+            self.stats["real_trace_ids"][trace_id] = self.stats["real_trace_ids"].get(trace_id, 0) + 1
+            return CallResult("error", error=f"{kind}: {trace['error_message']}")
+        return self.backend.call(function_name, arguments)

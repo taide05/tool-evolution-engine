@@ -212,7 +212,8 @@ live A/B 的故障是**确定性注入**（为了可复现与配对）；本轮�
 - **integral-float 缺口已修**：本轮把 `8863.0→8863` 的 lossless integer coercion 同时补进 live guard 的 error-hint/schema coercion 与 engine，并由真实 trace 回放验证（修完 4/4）；离线 metrics 重算**逐字节未变**（该分支在离线提案中没有命中，不影响历史数字）；
 - **在线验证的可用性区分**：若修复后的真实调用遇到 live API 的瞬态故障（timeout/rate_limit/server_error），runner 会自动重试并在证据中记为 `verification_status=api_unavailable`（与“修复失败”分开），避免把 API 抖动误记成中间件失败；
 - **定位**：这是 repair layer 的隔离验证（无 LLM/agent 采样），**补充而非替代**注入故障 A/B；多步任务下的 baseline-vs-guard 因果仍以 V4 A/B 为准；
-- 证据由 `tests/test_toolguard/test_real_fault_traces.py` 固定（16 条 trace / 4 条预期恢复 / 12 条不可修复集合），防止证据腐化；这两个 JSON 放在 `benchmarks/toolguard/real_traces/` 子目录，属于**证据数据**而非 13 个契约 artifact 之一。
+- **已接进 A/B 的故障源（新能力）**：live runner 新增 `--fault-source real-trace`（`live.RealTraceFaultBackend`）：对确定性选中的逻辑调用先回放一条**真实捕获错误**，然后再打真实 API；两臂共享同一故障面，注入的 trace id/kind 逐格记录。已跑 **12 格 smoke**（6 任务 × 2 臂，clean+1，$0.018，注入 7 条真实 trace：invalid_argument 6 + request_error 1）：baseline 5/6 vs guard 5/6——真实错误里多数属语义/不可回放修复类，guard 不能魔法提升；这证明该故障源是**鲁棒性检查**而非 headline 替代品，完整统计 A/B 留作可选后续；
+- 证据由 `tests/test_toolguard/test_real_fault_traces.py` 固定（16 条 trace / 4 条预期恢复 / 12 条不可修复集合）与 `tests/test_toolguard/test_real_trace_backend.py`（确定性/工具匹配/kind 过滤/委托），防止证据腐化；`benchmarks/toolguard/real_traces/` 下的 JSON 属于**证据数据**而非 13 个契约 artifact 之一。
 
 ## 架构：一个中间件，三种传输层
 
@@ -362,4 +363,4 @@ artifact：[`benchmarks/toolguard/metrics.json`](benchmarks/toolguard/metrics.js
 - MCP V2 中 server 崩溃（第 2 次调用 `os._exit`）与 catalog drift（`fetch_exchange_rate` 别名）也是注入场景，其余（stdio 传输、进程死亡与重连、多 server 路由、HTTP、LLM）都是真实的；
 - MCP stdio 需要真实子进程管道（受限沙箱内需放宽权限），测试用 MCP SDK 内存 transport 覆盖 adapter 逻辑；
 - 免费公开 API 非生产级：GitHub 限流已从任务集移除，API 漂移可能影响复跑；
-- 下一步（待执行）：① schema 索引保真度已按证据修正（4 处类型 + 20 个参数）；剩余无足够证据的缺陷仍如实报告，继续收集样本即可扩展；② 真实线上故障 trace 已用于 repair-layer 验证（4/4 可推导契约错误修复并在线验证，12 条语义错误诚实失败），integral-float→integer 缺口已修；下一步是把 real-trace 注入接进完整 A/B（而非只做 repair-layer）；③ 三个模型的紧预算 guard 已全部到 100%，需要更难的题/更紧的预算；④ 把 HN 契约修正推广到更多任务族/工具（当前只有 HN 一个合成契约缺陷）。
+- 下一步（待执行）：① schema 索引保真度已按证据修正（4 处类型 + 20 个参数）；剩余无足够证据的缺陷仍如实报告，继续收集样本即可扩展；② 真实线上故障 trace 已用于 repair-layer 验证（4/4 可推导契约错误修复并在线验证，12 条语义错误诚实失败），integral-float→integer 缺口已修；`--fault-source real-trace` 已接进 A/B 并完成 12 格 smoke（baseline=guard=5/6，说明真实错误多为不可修复类），完整统计 A/B 为可选后续；③ 三个模型的紧预算 guard 已全部到 100%，需要更难的题/更紧的预算；④ 把 HN 契约修正推广到更多任务族/工具（当前只有 HN 一个合成契约缺陷）。

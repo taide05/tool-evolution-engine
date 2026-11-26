@@ -46,7 +46,7 @@ from run_live_demo_hard import build_tasks  # noqa: E402 - shared V2 task pool
 
 from tool_evolution.toolguard.agent import DeepSeekClient, LLMConfig, run_task  # noqa: E402
 from tool_evolution.toolguard.guard import ToolGuard  # noqa: E402
-from tool_evolution.toolguard.live import FaultyBackend  # noqa: E402
+from tool_evolution.toolguard.live import FaultyBackend, RealTraceFaultBackend  # noqa: E402
 from tool_evolution.toolguard.live_hard import LiveHardBackend  # noqa: E402
 from tool_evolution.toolguard.verify import (  # noqa: E402
     contains_number,
@@ -59,9 +59,20 @@ from tool_evolution.utils.config import settings  # noqa: E402
 MODEL = "deepseek-v4-flash"
 DEFAULT_OUTPUT = ".scratch/toolguard/live_demo_hard_v2.json"
 DEFAULT_CALIBRATION = ".scratch/toolguard/hard_calibration_v2.json"
+DEFAULT_REAL_TRACES = "benchmarks/toolguard/real_traces/real_fault_traces.json"
 ARMS = ("baseline", "guard")
 DEFAULT_BUDGETS = "clean+1,clean+4,10"
 DEFAULT_REPEATS = "clean+1:3,clean+4:1,10:1"
+
+_REAL_TRACE_CACHE: dict[str, list[dict]] = {}
+
+
+def load_real_fault_traces(path: str) -> list[dict]:
+    """Load the captured real fault traces (cached; deterministic evidence input)."""
+    if path not in _REAL_TRACE_CACHE:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        _REAL_TRACE_CACHE[path] = payload["records"]
+    return _REAL_TRACE_CACHE[path]
 
 
 # ---------------------------------------------------------------------------
@@ -291,14 +302,23 @@ def run_one(client: DeepSeekClient, item: dict, args: argparse.Namespace) -> dic
     for attempt in range(2):
         try:
             backend = LiveHardBackend(hn_schema=args.hn_schema)
-            faulty = FaultyBackend(
-                backend,
-                seed=args.seed + item["repeat"] * 101,
-                p_timeout=args.p_timeout,
-                p_rate_limit=args.p_rate_limit,
-                p_server_error=args.p_server_error,
-                attempts_to_fail=args.attempts_to_fail,
-            )
+            if args.fault_source == "real-trace":
+                faulty = RealTraceFaultBackend(
+                    backend,
+                    traces=load_real_fault_traces(args.real_traces),
+                    seed=args.seed + item["repeat"] * 101,
+                    p_fault=args.p_timeout + args.p_rate_limit + args.p_server_error,
+                    attempts_to_fail=args.attempts_to_fail,
+                )
+            else:
+                faulty = FaultyBackend(
+                    backend,
+                    seed=args.seed + item["repeat"] * 101,
+                    p_timeout=args.p_timeout,
+                    p_rate_limit=args.p_rate_limit,
+                    p_server_error=args.p_server_error,
+                    attempts_to_fail=args.attempts_to_fail,
+                )
             middleware = ToolGuard(faulty, sleep_scale=0.05) if item["arm"] == "guard" else None
             run = run_task(client, faulty, task["question"], middleware, max_turns=item["budget"])
             success = bool(task["verifier"](run.answer, task["expected"]))
@@ -322,6 +342,7 @@ def run_one(client: DeepSeekClient, item: dict, args: argparse.Namespace) -> dic
                 "elapsed_ms": run.elapsed_ms,
                 "faults_injected": faulty.stats["injected"],
                 "fault_kinds": dict(faulty.stats["kinds"]),
+                "fault_source": args.fault_source,
                 "guard_recoveries": middleware.stats["recovered"] if middleware is not None else 0,
                 "guard_retry_sleep_ms": round(middleware.stats["retry_sleep_s"] * 1000, 2)
                 if middleware is not None else 0.0,
@@ -418,6 +439,8 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
         fault={"attempts_to_fail": args.attempts_to_fail, "p_timeout": args.p_timeout,
                "p_rate_limit": args.p_rate_limit, "p_server_error": args.p_server_error,
                "seed": args.seed, "workers": args.workers},
+        fault_source=args.fault_source,
+        real_traces=args.real_traces,
         rebuilt_from_records=False)
     write_json(output, summary)
     print("\n=== budget curve ===")
@@ -438,7 +461,9 @@ def build_artifact_summary(
     hn_schema: str,
     calibration_source: str | None,
     fault: dict,
-    rebuilt_from_records: bool,
+    fault_source: str = "synthetic",
+    real_traces: str | None = None,
+    rebuilt_from_records: bool = False,
 ) -> dict:
     """Build the artifact payload from records (used by the live runner and --from-records).
 
@@ -462,6 +487,13 @@ def build_artifact_summary(
             "story_id as string while the backend requires an integer (synthetic drift, kept "
             "only for capability demonstration; it is not the main protocol after the "
             "2026-11-25 review decision).")
+    if fault_source == "real-trace":
+        limitations.append(
+            "Fault source `real-trace`: selected logical calls replay a genuine error captured "
+            "from the real public APIs (see benchmarks/toolguard/real_traces/) before reaching "
+            "the backend. This is a robustness check using real error text, not the headline "
+            "synthetic-fault protocol; the injected trace id/count is recorded per cell in "
+            "fault_kinds/real-trace stats and the wrapper is identical for both arms.")
     if rebuilt_from_records:
         limitations.append(
             "This artifact was rebuilt from the committed checkpoint records by "
@@ -537,14 +569,23 @@ def build_artifact_summary(
                           for task in tasks},
             },
             "fault_injection": {
-                "model": "deterministic transient fault epochs: the first N attempts of a faulted "
-                         "logical call fail (timeout / HTTP 429 / HTTP 5xx), then the real call runs",
+                "source": fault_source,
+                "model": ("captured real online error traces replayed deterministically: the first "
+                          "N attempts of a selected logical call return a real recorded API error, "
+                          "then the real call runs"
+                          if fault_source == "real-trace" else
+                          "deterministic transient fault epochs: the first N attempts of a faulted "
+                          "logical call fail (timeout / HTTP 429 / HTTP 5xx), then the real call runs"),
                 "attempts_to_fail": fault.get("attempts_to_fail"),
                 "p_timeout": fault.get("p_timeout"),
                 "p_rate_limit": fault.get("p_rate_limit"),
                 "p_server_error": fault.get("p_server_error"),
                 "seed": fault.get("seed"),
                 "repeat_seed_rule": "fault seed = seed + repeat * 101",
+                **({"real_traces": real_traces,
+                    "trace_provenance": "benchmarks/toolguard/real_traces/real_fault_traces.json "
+                                        "(captured from real public API calls)"}
+                   if fault_source == "real-trace" else {}),
             },
             "tool_surface": {
                 "tools": [tool["function"]["name"]
@@ -608,6 +649,8 @@ def run_from_records(args: argparse.Namespace) -> int:
                "p_server_error": fault_injection.get("p_server_error"),
                "seed": fault_injection.get("seed"),
                "workers": protocol.get("workers")},
+        fault_source=fault_injection.get("source") or "synthetic",
+        real_traces=fault_injection.get("real_traces"),
         rebuilt_from_records=True)
     write_json(output, summary)
     print(f"rebuilt {output} from {len(records)} records; failure-mode labels changed: "
@@ -636,6 +679,13 @@ def main() -> int:
                              "decision): get_hn_item.story_id integer in the agent-visible schema, "
                              "matching the backend; drifting: intentionally mismatched released "
                              "schema (string) kept only for the targeted contract-repair demo")
+    parser.add_argument("--fault-source", choices=("synthetic", "real-trace"),
+                        default="synthetic",
+                        help="synthetic: deterministic timeout/rate-limit/server-error epochs "
+                             "(headline protocol); real-trace: replay captured real online error "
+                             "traces for selected logical calls (robustness check)")
+    parser.add_argument("--real-traces", default=DEFAULT_REAL_TRACES,
+                        help="captured real fault traces used by --fault-source real-trace")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--from-records", action="store_true",
                         help="rebuild the artifact at --output from its checkpoint records (no "
