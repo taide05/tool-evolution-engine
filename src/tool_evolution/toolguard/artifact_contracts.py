@@ -20,6 +20,7 @@ JSON files themselves.
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -160,6 +161,18 @@ def _check_condition_block(name: str, label: str, published: dict,
 # ---------------------------------------------------------------------------
 # per-artifact checks
 # ---------------------------------------------------------------------------
+def _command_output(command: str) -> str | None:
+    """Return the value of ``--output`` in a reproduce command, if present."""
+    try:
+        parts = shlex.split(command, posix=False)
+    except ValueError:
+        parts = command.split()
+    for index, part in enumerate(parts):
+        if part == "--output" and index + 1 < len(parts):
+            return parts[index + 1].strip('"').strip("'")
+    return None
+
+
 def _check_common(name: str, data: dict, problems: list[str]) -> None:
     if not isinstance(data.get("artifact_version"), int):
         problems.append(f"{name}: artifact_version must be an int")
@@ -177,6 +190,16 @@ def _check_common(name: str, data: dict, problems: list[str]) -> None:
         if len(parts) >= 2 and parts[0] == "python" and parts[1].endswith(".py"):
             if not Path(parts[1]).exists():
                 problems.append(f"{name}: reproduce script does not exist: {parts[1]}")
+        # A reproduce command that writes into the artifact directory must write THIS
+        # artifact: a v3/historical rebuild that points at live_demo_hard_v4.json would
+        # silently overwrite the headline artifact (2026-11-25 review finding).
+        output = _command_output(command)
+        if output:
+            normalized = Path(output.replace("\\", "/"))
+            if "benchmarks/toolguard" in normalized.as_posix() and normalized.name != name:
+                problems.append(
+                    f"{name}: reproduce command writes {output} "
+                    f"(expected the artifact file itself: {name})")
 
 
 def _check_record(record: dict, name: str, problems: list[str]) -> None:
@@ -206,6 +229,40 @@ def _check_task_ids(name: str, data: dict, records: list[dict], problems: list[s
     for task in data.get("tasks") or []:
         if not isinstance(task.get("expected"), dict):
             problems.append(f"{name}: task without expected block: {task.get('id')}")
+
+
+def _check_calibration_tasks(name: str, data: dict, problems: list[str]) -> None:
+    """Every calibration task-id set must cover exactly the artifact's task ids.
+
+    Checks the top-level ``calibration.tasks`` block, each per-model
+    ``calibration.models[*].tasks`` block and the single-model ``protocol.calibration.tasks``
+    block: a calibration that silently misses/extra tasks would make the budget anchor
+    inconsistent with the evaluated pool (2026-11-25 review finding: only the top-level
+    block was checked, so the per-run ``protocol.calibration`` was never validated).
+    """
+    artifact_task_ids = {task["id"] for task in data.get("tasks") or []}
+    if not artifact_task_ids:
+        return
+    blocks: list[tuple[str, set[str]]] = []
+    calibration = data.get("calibration")
+    if isinstance(calibration, dict):
+        if isinstance(calibration.get("tasks"), dict):
+            blocks.append(("calibration.tasks", set(calibration["tasks"])))
+        models = calibration.get("models")
+        if isinstance(models, dict):
+            for key, model in models.items():
+                if isinstance(model, dict) and isinstance(model.get("tasks"), dict):
+                    blocks.append((f"calibration.models[{key}].tasks", set(model["tasks"])))
+    protocol_calibration = (data.get("protocol") or {}).get("calibration")
+    if isinstance(protocol_calibration, dict) and isinstance(protocol_calibration.get("tasks"), dict):
+        blocks.append(("protocol.calibration.tasks", set(protocol_calibration["tasks"])))
+    for label, task_ids in blocks:
+        if task_ids != artifact_task_ids:
+            missing = sorted(artifact_task_ids - task_ids)
+            extra = sorted(task_ids - artifact_task_ids)
+            problems.append(
+                f"{name}: {label} do not match artifact tasks "
+                f"(missing={missing[:3]}, extra={extra[:3]})")
 
 
 def _check_conditions_artifact(name: str, data: dict, problems: list[str],
@@ -242,6 +299,7 @@ def _check_conditions_artifact(name: str, data: dict, problems: list[str],
         artifact_task_ids = {task["id"] for task in data.get("tasks") or []}
         if artifact_task_ids and set(calibration_tasks) != artifact_task_ids:
             problems.append(f"{name}: calibration tasks do not match artifact tasks")
+    _check_calibration_tasks(name, data, problems)
 
 
 def _check_legacy_hard_conditions(name: str, data: dict, problems: list[str]) -> None:
@@ -305,6 +363,7 @@ def _check_multimodel(name: str, data: dict, problems: list[str]) -> None:
                 problems.append(
                     f"{name}: {model_key}/{record.get('task')} record expected snapshot "
                     "does not match tasks_per_model")
+    _check_calibration_tasks(name, data, problems)
 
 
 def _check_v1_live(name: str, data: dict, problems: list[str]) -> None:

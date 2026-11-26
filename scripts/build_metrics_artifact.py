@@ -206,6 +206,7 @@ def build(eval_payload: dict, true_lomo_payload: dict | None, dataset: dict,
     lomo_agg = results["lomo_aggregate"]
     cross_model_agg = results["cross_model"]
     cross_group_agg = results["cross_group"]
+    cross_group_text = cross_group_agg["per_rule_category"].get("text_extract", {})
     findings = [
         f"Offline replay over {dataset['tool_calls_evaluated']} evaluated calls from "
         f"{dataset['trajectories_parsed']} parsed trajectories: {dataset['real_failures']} "
@@ -226,19 +227,24 @@ def build(eval_payload: dict, true_lomo_payload: dict | None, dataset: dict,
         f"Cross-task generalisation (cross_group): {cross_group_agg['accepted_repairs']}/"
         f"{cross_group_agg['evaluable_failures']} evaluable failures repaired "
         f"({cross_group_agg['repair_coverage_of_failures']:.1%}); decomposition: "
-        f"{cross_group_agg['schema_passed']} schema-valid (type-coerced schema defaults) + "
-        f"{cross_group_agg['value_verified_repairs']} value-verified learned text-extraction "
-        f"repairs (the upstream api_list declares those date parameters as number, while both "
-        f"the extractor and the recorded successful calls use ISO date strings).",
+        f"{cross_group_agg['schema_passed']} schema-valid + "
+        f"{cross_group_agg['value_verified_repairs']} value-verified. The 27 learned "
+        f"text-extraction repairs now pass the declared schema directly "
+        f"({cross_group_text.get('schema_valid', 0)} schema-valid) because the schema index "
+        "repairs the date parameters that the upstream api_list declared as number using the "
+        "recorded successful ISO-string calls as evidence.",
         f"Learned text-extractor repairs: cross_model "
         f"{cross_model_agg['per_rule_category'].get('text_extract', {}).get('repairs', 0)} accepted "
-        f"(all value-verified), cross_group "
-        f"{cross_group_agg['per_rule_category'].get('text_extract', {}).get('repairs', 0)} accepted "
-        f"(all value-verified, value agreement "
-        f"{cross_group_agg['per_rule_category'].get('text_extract', {}).get('value_agreement', 0)}/"
-        f"{cross_group_agg['per_rule_category'].get('text_extract', {}).get('value_verifiable', 0)}); "
-        "value agreement with a recorded successful call is reported per category and is a "
-        "strict lower bound on verified repairs.",
+        f"({cross_model_agg['per_rule_category'].get('text_extract', {}).get('schema_valid', 0)} "
+        "schema-valid after the schema-index repair; value agreement "
+        f"{cross_model_agg['per_rule_category'].get('text_extract', {}).get('value_agreement', 0)}/"
+        f"{cross_model_agg['per_rule_category'].get('text_extract', {}).get('value_verifiable', 0)}), "
+        f"cross_group {cross_group_text.get('repairs', 0)} accepted "
+        f"({cross_group_text.get('schema_valid', 0)} schema-valid; value agreement "
+        f"{cross_group_text.get('value_agreement', 0)}/"
+        f"{cross_group_text.get('value_verifiable', 0)}); value agreement with a recorded "
+        "successful call is reported per category and is a strict lower bound on verified "
+        "repairs.",
         "Cache verification found 0 regressions: every verified cache replay returned a "
         "recorded successful response, while cache misses stay unverified (not failures).",
         f"LOMO protocol: leave-one-out inside the fixed three-model training universe "
@@ -353,6 +359,16 @@ def main() -> int:
     evaluation_calls = [call for call in calls if call.tool_name not in SENTINEL_CALLS]
     schemas, schema_fidelity = refine_schema_index(schemas, evaluation_calls)
     parser_stats = json.loads(Path(args.parser_stats).read_text(encoding="utf-8"))
+    # The parser stats are the only source for the unparseable-observation count (the raw
+    # StableToolBench files are not committed).  A stale/partial stats file used to inject a
+    # silent ``null`` into the artifact, so require the fields the artifact reports.
+    required_stats = {"traces", "calls", "unparseable_observations"}
+    missing_stats = sorted(required_stats - set(parser_stats))
+    if missing_stats:
+        print(f"ERROR: parser stats {args.parser_stats} is missing {missing_stats}; "
+              "re-run scripts/parse_toolbench_trajectories.py on the same baseline data",
+              file=sys.stderr)
+        return 2
     dataset = _dataset_block(calls, parser_stats, schemas, SENTINEL_CALLS)
     dataset["schema_index"] = {
         "declared": schema_stats,
@@ -374,10 +390,23 @@ def main() -> int:
         "observed_functions": schema_fidelity["observed_functions"],
         "min_samples": schema_fidelity["min_samples"],
         "agreement_threshold": schema_fidelity["agreement_threshold"],
-        "rules": ("declared api_list scalar types are corrected only when >=3 recorded "
-                  "successful values agree >=90% on an incompatible scalar type; empty "
-                  "parameter lists are back-filled as optional params; required lists never "
-                  "change; integer<->number widening is never applied"),
+        # complete back-fill record (dataset.schema_index.fidelity_repair carries it too)
+        "param_additions": schema_fidelity.get("param_additions") or [],
+        "rules": {
+            "type_correction": (
+                "declared api_list scalar types are corrected only when >=3 recorded "
+                "successful values agree >=90% on an INCOMPATIBLE scalar type "
+                "(number/integer declared vs observed string, or string declared vs observed "
+                "integer/number); integer<->number widening/narrowing is never applied"),
+            "param_backfill": (
+                "only for functions whose declared parameter list is empty: an argument name "
+                "observed in recorded successful calls is added as an OPTIONAL property only "
+                "when >=3 recorded successful values carry it and >=90% of those values share "
+                "one concrete scalar JSON type; required lists are never changed"),
+            "invariants": (
+                "every correction is counted and recorded with its evidence; param_additions "
+                "is the complete back-fill list (not sampled); no manual edits to the index"),
+        },
     }
     repaired_limitation = (
         "The declared agent-visible schema (upstream StableToolBench api_list) has fidelity "

@@ -377,10 +377,149 @@ def run_eval(tasks: list[dict], skipped: list[str], specs: list[dict], condition
                     args, conditions, repeats, wall_seconds, output, tasks_per_model)
 
 
+def _posix(value) -> str:
+    """Render a path for shell commands: forward slashes even when generated on Windows."""
+    return str(value).replace("\\", "/")
+
+
+def _artifact_metadata(*, specs: list[dict], tasks: list[dict], args: argparse.Namespace,
+                       conditions: list[str], repeats: dict[str, int],
+                       wall_seconds: float | None, output: Path,
+                       calibration_source: str | None,
+                       finalised_from_checkpoint: bool) -> dict:
+    """Metadata block (experiment/generated_at/protocol/limitations/reproduce).
+
+    Every reproduce command is generated from the arguments that produced *this* artifact
+    (actual output path, HN schema, budgets, repeats, workers, calibration file), so
+    replaying it can never silently overwrite the V4 headline artifact from a v3 rebuild.
+    """
+    output_path = _posix(output)
+    workers = getattr(args, "workers", None)
+    hn_schema = getattr(args, "hn_schema", "consistent")
+    budgets_spec = ",".join(conditions) or DEFAULT_BUDGETS
+    repeats_spec = ",".join(f"{condition}:{repeats.get(condition, 1)}"
+                            for condition in conditions) or DEFAULT_REPEATS
+    calibration = _posix(calibration_source) if calibration_source else None
+    reproduce: list[str] = []
+    if calibration:
+        reproduce.append(" ".join([
+            "python scripts/run_multimodel_live.py --mode calibrate",
+            f"--hn-schema {hn_schema}",
+            f"--workers {workers or 2}",
+            f"--calibration {calibration}"]))
+    eval_command = ["python scripts/run_multimodel_live.py --mode eval",
+                    f"--hn-schema {hn_schema}",
+                    f"--budgets {budgets_spec}",
+                    f"--repeats {repeats_spec}",
+                    f"--workers {workers or 2}"]
+    if calibration:
+        eval_command.append(f"--calibration {calibration}")
+    eval_command.append(f"--output {output_path}")
+    reproduce.append(" ".join(eval_command))
+    if finalised_from_checkpoint:
+        reproduce.append("python scripts/run_multimodel_live.py --from-records "
+                         f"--output {output_path}")
+    reproduce.append("python -m pytest tests/test_toolguard -q -p no:cacheprovider")
+    protocol = {
+        "models": [{"tier": spec["tier"], "key": spec["key"], "label": spec["label"],
+                    "model": spec["model"], "provider": spec["provider"],
+                    "price_input_per_m": spec["price_input_per_m"],
+                    "price_output_per_m": spec["price_output_per_m"]} for spec in specs],
+        "arms": list(ARMS),
+        "task_ids": [task["id"] for task in tasks],
+        "output_artifact": output_path,
+        "budget_conditions": {
+            condition: ("per-task turn budget = per-model fault-free calibration turns + "
+                        f"{condition.split('+', 1)[1]}" if condition.startswith("clean+")
+                        else f"{condition} turns for every task")
+            for condition in conditions
+        },
+        "repeats": repeats,
+        "workers": workers,
+        "wall_seconds": wall_seconds,
+        "finalised_from_checkpoint": finalised_from_checkpoint,
+        "failure_modes_recomputed": finalised_from_checkpoint,
+        "hn_schema": hn_schema,
+        "hn_schema_note": (
+            "consistent contract: get_hn_item.story_id is an integer in the "
+            "agent-visible schema, matching the backend and the real HN API"
+            if hn_schema == "consistent" else
+            "legacy drifting contract: get_hn_item advertises story_id as a "
+            "string while the backend requires an integer (historical V2/V3 "
+            "protocol)"),
+        "failure_modes_note": (
+            "rebuilt from the checkpoint: failure-mode labels were recomputed from "
+            "answer+expected with the fixed metadata-aware classifier (2026-11-24 review), "
+            "and tasks_per_model was rebuilt from the per-record expected snapshots"
+            if finalised_from_checkpoint else
+            "failure modes classified at run time with the fixed metadata-aware classifier"),
+        "fault_injection": {
+            "model": "deterministic transient fault epochs (first N attempts fail) per logical call",
+            "attempts_to_fail": getattr(args, "attempts_to_fail", 2),
+            "p_timeout": getattr(args, "p_timeout", 0.20),
+            "p_rate_limit": getattr(args, "p_rate_limit", 0.10),
+            "p_server_error": getattr(args, "p_server_error", 0.08),
+            "seed": getattr(args, "seed", 7),
+        },
+        "calibration": {
+            "source": calibration or "embedded in the artifact calibration payload",
+            "description": (
+                "per-model fault-free calibration reused from the V3 run so that the HN "
+                "schema is the only manipulated variable between the V3 and V4 artifacts"
+                if not finalised_from_checkpoint and calibration
+                and "multimodel_calibration" in calibration else
+                "per-model fault-free calibration payload stored at the top level"),
+        },
+        "verification": "programmatic; ground truth computed from the same live APIs before the runs",
+        "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift "
+                                "(weather/FX); every record carries the `expected` snapshot it was "
+                                "verified against",
+    }
+    limitations = [
+        "Multi-model axis is replication: each model's baseline-vs-guard comparison is paired; "
+        "no formal between-model hypothesis test (3 models only).",
+        "Transient faults are deterministic injections, not observed production failures; the "
+        "budget conditions are controlled stress conditions (clean+1 / clean+4).",
+        "One calibration run per task per model anchors the budget; repeat seeds vary the fault "
+        "surface, not model sampling (temperature 0 where the provider supports it).",
+        "Cheap and strong tiers are both Qwen-family models served by Alibaba Model Studio; the "
+        "measured fault-free placement does not show the expensive flagship outperforming the "
+        "mid-tier model on this tool-task set (see capability_placement).",
+        "Live-mutable ground truth: the HN top-story author's karma and current weather can change "
+        "between task construction and a run; a few guard failures are ground-truth drift or answer "
+        "formatting (failure_mode/answer in the records), not middleware failures.",
+        "V3 task-set change: the three HN karma tasks were replaced by immutable account-creation-year "
+        "tasks (same two-tool chain). HN karma is live-mutable: during the V2 multi-model run one "
+        "active author's karma changed 112 -> 161 within an hour, which made that task's ground truth "
+        "noise. The V2 multi-model artifact (commit fb13a1f) still contains the karma tasks.",
+        "When the artifact is finalised from a checkpoint (no re-run), task definitions are rebuilt "
+        "after the run; per-cell success flags were computed at run time with the then-fresh ground "
+        "truth, so drifting values in the metadata may differ slightly.",
+        "Prices are the published list prices at run time and are used only for the cost estimate.",
+        "Free public APIs are not production grade; API drift can affect reruns.",
+        ("HN contract: this is the V4 run with the consistent integer get_hn_item.story_id "
+         "schema (2026-11-25 review decision); the V3 drift artifact is kept as the contract-"
+         "repair capability demo. Per-model budget calibration is reused from the V3 run so "
+         "the HN schema is the only manipulated variable."
+         if hn_schema == "consistent" else
+         "HN contract drift mode: get_hn_item advertises story_id as string while the backend "
+         "requires an integer (historical V3 protocol)."),
+    ]
+    return {
+        "experiment": "ToolGuard_multimodel_live_ab",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "protocol": protocol,
+        "limitations": limitations,
+        "reproduce": reproduce,
+    }
+
+
 def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibration_payload: dict,
              tasks: list[dict], skipped: list[str], args: argparse.Namespace,
              conditions: list[str], repeats: dict[str, int], wall_seconds: float | None,
-             output: Path, tasks_per_model: dict[str, list[dict]] | None = None) -> int:
+             output: Path, tasks_per_model: dict[str, list[dict]] | None = None,
+             calibration_source: str | None = None,
+             finalised_from_checkpoint: bool | None = None) -> int:
     """Aggregate records (fresh run or rebuilt from a checkpoint) and write the artifact."""
     aggregates: dict[str, dict] = {}
     for spec in specs:
@@ -413,62 +552,20 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
         f"{cross['consistency']['guard_success_ge_baseline_on_all_models']}"
     )
 
+    calibration_source = (calibration_source
+                          or (str(args.calibration) if getattr(args, "calibration", None) else None))
+    finalised = (bool(getattr(args, "from_records", False))
+                 if finalised_from_checkpoint is None else finalised_from_checkpoint)
+    metadata = _artifact_metadata(
+        specs=specs, tasks=tasks, args=args, conditions=conditions, repeats=repeats,
+        wall_seconds=wall_seconds, output=output,
+        calibration_source=calibration_source,
+        finalised_from_checkpoint=finalised)
     summary = {
         "artifact_version": 1,
-        "experiment": "ToolGuard_multimodel_live_ab",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "protocol": {
-            "models": [{"tier": spec["tier"], "key": spec["key"], "label": spec["label"],
-                        "model": spec["model"], "provider": spec["provider"],
-                        "price_input_per_m": spec["price_input_per_m"],
-                        "price_output_per_m": spec["price_output_per_m"]} for spec in specs],
-            "arms": list(ARMS),
-            "budget_conditions": {
-                condition: ("per-task turn budget = per-model fault-free calibration turns + "
-                            f"{condition.split('+', 1)[1]}" if condition.startswith("clean+")
-                            else f"{condition} turns for every task")
-                for condition in conditions
-            },
-            "repeats": repeats,
-            "workers": args.workers,
-            "wall_seconds": wall_seconds,
-            "finalised_from_checkpoint": bool(getattr(args, "from_records", False)),
-            "failure_modes_recomputed": bool(getattr(args, "from_records", False)),
-            "hn_schema": getattr(args, "hn_schema", "consistent"),
-            "hn_schema_note": ("consistent contract: get_hn_item.story_id is an integer in the "
-                               "agent-visible schema, matching the backend and the real HN API"
-                               if getattr(args, "hn_schema", "consistent") == "consistent" else
-                               "legacy drifting contract: get_hn_item advertises story_id as a "
-                               "string while the backend requires an integer (historical V2/V3 "
-                               "protocol)"),
-            "failure_modes_note": (
-                "rebuilt from the checkpoint: failure-mode labels were recomputed from "
-                "answer+expected with the fixed metadata-aware classifier (2026-11-24 review), "
-                "and tasks_per_model was rebuilt from the per-record expected snapshots"
-                if getattr(args, "from_records", False) else
-                "failure modes classified at run time with the fixed metadata-aware classifier"),
-            "fault_injection": {
-                "model": "deterministic transient fault epochs (first N attempts fail) per logical call",
-                "attempts_to_fail": args.attempts_to_fail,
-                "p_timeout": args.p_timeout,
-                "p_rate_limit": args.p_rate_limit,
-                "p_server_error": args.p_server_error,
-                "seed": args.seed,
-            },
-            "calibration": {
-                "source": str(getattr(args, "calibration", "")),
-                "description": (
-                    "per-model fault-free calibration reused from the V3 run so that the HN "
-                    "schema is the only manipulated variable between the V3 and V4 artifacts"
-                    if getattr(args, "from_records", False) is False
-                    and "multimodel_calibration" in str(getattr(args, "calibration", "")) else
-                    "per-model fault-free calibration payload stored at the top level"),
-            },
-            "verification": "programmatic; ground truth computed from the same live APIs before the runs",
-            "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift "
-                                    "(weather/FX); every record carries the `expected` snapshot it was "
-                                    "verified against",
-        },
+        "experiment": metadata["experiment"],
+        "generated_at": metadata["generated_at"],
+        "protocol": metadata["protocol"],
         "calibration": calibration_payload,
         "tasks": [{key: value for key, value in task.items() if key != "verifier"} for task in tasks],
         "tasks_per_model": {
@@ -481,45 +578,8 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
         "aggregate": {"models": aggregates, "cross_model": cross},
         "key_findings": findings,
         "total_estimated_cost_usd": total_cost,
-        "limitations": [
-            "Multi-model axis is replication: each model's baseline-vs-guard comparison is paired; "
-            "no formal between-model hypothesis test (3 models only).",
-            "Transient faults are deterministic injections, not observed production failures; the "
-            "budget conditions are controlled stress conditions (clean+1 / clean+4).",
-            "One calibration run per task per model anchors the budget; repeat seeds vary the fault "
-            "surface, not model sampling (temperature 0 where the provider supports it).",
-            "Cheap and strong tiers are both Qwen-family models served by Alibaba Model Studio; the "
-            "measured fault-free placement does not show the expensive flagship outperforming the "
-            "mid-tier model on this tool-task set (see capability_placement).",
-            "Live-mutable ground truth: the HN top-story author's karma and current weather can change "
-            "between task construction and a run; a few guard failures are ground-truth drift or answer "
-            "formatting (failure_mode/answer in the records), not middleware failures.",
-            "V3 task-set change: the three HN karma tasks were replaced by immutable account-creation-year "
-            "tasks (same two-tool chain). HN karma is live-mutable: during the V2 multi-model run one "
-            "active author's karma changed 112 -> 161 within an hour, which made that task's ground truth "
-            "noise. The V2 multi-model artifact (commit fb13a1f) still contains the karma tasks.",
-            "When the artifact is finalised from a checkpoint (no re-run), task definitions are rebuilt "
-            "after the run; per-cell success flags were computed at run time with the then-fresh ground "
-            "truth, so drifting values in the metadata may differ slightly.",
-            "Prices are the published list prices at run time and are used only for the cost estimate.",
-            "Free public APIs are not production grade; API drift can affect reruns.",
-            ("HN contract: this is the V4 run with the consistent integer get_hn_item.story_id "
-             "schema (2026-11-25 review decision); the V3 drift artifact is kept as the contract-"
-             "repair capability demo. Per-model budget calibration is reused from the V3 run so "
-             "the HN schema is the only manipulated variable."
-             if getattr(args, "hn_schema", "consistent") == "consistent" else
-             "HN contract drift mode: get_hn_item advertises story_id as string while the backend "
-             "requires an integer (historical V3 protocol)."),
-        ],
-        "reproduce": [
-            "python scripts/run_multimodel_live.py --mode calibrate",
-            "python scripts/run_multimodel_live.py --mode eval --hn-schema consistent --workers 2 "
-            "--calibration .scratch/toolguard/multimodel_calibration.json "
-            "--output benchmarks/toolguard/live_demo_multimodel_v4.json",
-            "python scripts/run_multimodel_live.py --from-records "
-            "--output benchmarks/toolguard/live_demo_multimodel_v4.json",
-            "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
-        ],
+        "limitations": metadata["limitations"],
+        "reproduce": metadata["reproduce"],
     }
     write_json(output, summary)
     print("\n=== cross-model summary ===")
@@ -559,14 +619,80 @@ def _tasks_per_model_from_records(records: list[dict], tasks: list[dict]) -> dic
     }
 
 
-def run_from_records(tasks: list[dict], skipped: list[str], specs: list[dict],
-                     conditions: list[str], repeats: dict[str, int],
-                     args: argparse.Namespace) -> int:
-    """Rebuild the final artifact from a checkpoint records file (no new model calls)."""
-    output = Path(args.output)
+def _load_checkpoint(output: Path) -> dict | None:
+    if not output.exists():
+        print(f"ERROR: checkpoint {output} does not exist", file=sys.stderr)
+        return None
     checkpoint = json.loads(output.read_text(encoding="utf-8"))
-    records = checkpoint.get("records", [])
-    print(f"loaded {len(records)} records from checkpoint {output}")
+    if not checkpoint.get("records") or not checkpoint.get("tasks"):
+        print(f"ERROR: checkpoint {output} has no records/tasks", file=sys.stderr)
+        return None
+    return checkpoint
+
+
+def _checkpoint_conditions(checkpoint: dict) -> tuple[list[str], dict[str, int]]:
+    protocol = checkpoint.get("protocol") or {}
+    conditions = list((protocol.get("budget_conditions") or {}).keys())
+    repeats = dict(protocol.get("repeats") or {})
+    if not conditions:
+        conditions = sorted({row["condition"] for row in checkpoint["records"]})
+    if not repeats:
+        task_count = len(checkpoint.get("tasks") or [])
+        for condition in conditions:
+            rows = [row for row in checkpoint["records"] if row.get("condition") == condition]
+            repeats[condition] = max(1, len(rows) // max(task_count * len(ARMS), 1))
+    return conditions, repeats
+
+
+def _inherit_hn_schema(checkpoint: dict, args: argparse.Namespace) -> None:
+    protocol = checkpoint.get("protocol") or {}
+    args.hn_schema = protocol.get("hn_schema") or "drifting"
+
+
+def _checkpoint_calibration(checkpoint: dict, args: argparse.Namespace) -> dict:
+    path = Path(getattr(args, "calibration", "") or "")
+    if path.is_file():
+        return json.loads(path.read_text(encoding="utf-8"))
+    payload = checkpoint.get("calibration")
+    if isinstance(payload, dict) and payload.get("models"):
+        return payload
+    return {"models": {}}
+
+
+def _checkpoint_calibration_source(checkpoint: dict, args: argparse.Namespace) -> str | None:
+    protocol = checkpoint.get("protocol") or {}
+    block = protocol.get("calibration")
+    source = block.get("source") if isinstance(block, dict) else None
+    if not source:
+        explicit = getattr(args, "calibration", None)
+        if explicit and Path(str(explicit)).is_file():
+            source = str(explicit)
+    return source
+
+
+def run_from_checkpoint(specs: list[dict], args: argparse.Namespace) -> int:
+    """Rebuild the artifact from its committed checkpoint records (offline, no API calls).
+
+    The checkpoint is read straight from ``--output``: live task construction (which calls
+    public APIs) is skipped entirely, the aggregate is recomputed from the records, the
+    failure-mode labels are recomputed from ``answer`` + ``expected`` with the fixed
+    classifier, and the reproduce block is regenerated for this artifact's actual path.
+    """
+    output = Path(args.output)
+    checkpoint = _load_checkpoint(output)
+    if checkpoint is None:
+        return 2
+    records = checkpoint["records"]
+    tasks = checkpoint["tasks"]
+    skipped = checkpoint.get("skipped") or []
+    conditions, repeats = _checkpoint_conditions(checkpoint)
+    calibration_payload = _checkpoint_calibration(checkpoint, args)
+    calibrations = calibration_payload.get("models") or {}
+    if not calibrations:
+        print(f"ERROR: no per-model calibration available for {output}; pass --calibration "
+              "or use a checkpoint that embeds the calibration payload", file=sys.stderr)
+        return 2
+    print(f"loaded {len(records)} records / {len(tasks)} tasks from checkpoint {output}")
     missing_models = sorted({spec["key"] for spec in specs} - {row["model_key"] for row in records})
     if missing_models:
         print(f"ERROR: checkpoint is missing records for models: {missing_models}", file=sys.stderr)
@@ -594,17 +720,52 @@ def run_from_records(tasks: list[dict], skipped: list[str], specs: list[dict],
         print(f"WARNING: checkpoint records for {missing_snapshots} carry no per-record "
               "`expected` snapshot (older artifact); tasks_per_model will fall back to the "
               "current task metadata for those models.", file=sys.stderr)
-    calibration_payload = json.loads(Path(args.calibration).read_text(encoding="utf-8"))
-    calibrations = calibration_payload.get("models", {})
+    protocol = checkpoint.get("protocol") or {}
+    args.workers = protocol.get("workers") or getattr(args, "workers", 2)
     return finalize(records, specs, calibrations, calibration_payload, tasks, skipped,
                     args, conditions, repeats, None, output, tasks_per_model)
+
+
+def update_metadata_only(specs: list[dict], args: argparse.Namespace) -> int:
+    """Refresh only metadata; records/aggregate/tasks/calibration payload stay byte-identical.
+
+    Used to fix historical artifacts whose reproduce block named the wrong output path: the
+    data payload is copied from the checkpoint verbatim and only experiment/protocol/
+    limitations/reproduce are regenerated from the recorded protocol parameters.
+    """
+    output = Path(args.output)
+    checkpoint = _load_checkpoint(output)
+    if checkpoint is None:
+        return 2
+    protocol = checkpoint.get("protocol") or {}
+    conditions, repeats = _checkpoint_conditions(checkpoint)
+    args.workers = protocol.get("workers") or getattr(args, "workers", 2)
+    metadata = _artifact_metadata(
+        specs=specs, tasks=checkpoint["tasks"], args=args, conditions=conditions,
+        repeats=repeats, wall_seconds=protocol.get("wall_seconds"), output=output,
+        calibration_source=_checkpoint_calibration_source(checkpoint, args),
+        finalised_from_checkpoint=bool(protocol.get("finalised_from_checkpoint")))
+    # keep the recorded generation time; only metadata content is refreshed
+    metadata["generated_at"] = checkpoint.get("generated_at", metadata["generated_at"])
+    payload = dict(checkpoint)
+    payload.update(metadata)
+    write_json(output, payload)
+    changed = sorted(key for key in metadata if checkpoint.get(key) != metadata[key])
+    print(f"refreshed metadata for {output}; changed fields: {', '.join(changed)}")
+    print("records/aggregate/tasks/calibration payload/tasks_per_model were left untouched")
+    return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("calibrate", "eval"), default="eval")
     parser.add_argument("--from-records", action="store_true",
-                        help="rebuild the final artifact from the checkpoint records already at --output")
+                        help="rebuild the final artifact from the checkpoint records already at --output "
+                             "(offline: no live task construction / no API calls)")
+    parser.add_argument("--update-metadata", action="store_true",
+                        help="refresh ONLY experiment/protocol/limitations/reproduce of the "
+                             "artifact at --output from its checkpoint; records/aggregate/tasks/"
+                             "calibration payload are copied verbatim (offline)")
     parser.add_argument("--max-tasks", type=int, default=None)
     parser.add_argument("--budgets", default=DEFAULT_BUDGETS)
     parser.add_argument("--repeats", default=DEFAULT_REPEATS)
@@ -623,18 +784,19 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     args = parser.parse_args()
+    specs = model_specs()
 
-    if args.from_records and Path(args.output).exists():
-        checkpoint = json.loads(Path(args.output).read_text(encoding="utf-8"))
-        protocol = checkpoint.get("protocol") or {}
-        if "hn_schema" in protocol:
-            args.hn_schema = protocol["hn_schema"]
-        else:  # legacy drift artifacts (V2/V3) predate the field
-            args.hn_schema = "drifting"
+    if args.from_records or args.update_metadata:
+        checkpoint = _load_checkpoint(Path(args.output))
+        if checkpoint is None:
+            return 2
+        _inherit_hn_schema(checkpoint, args)
+        if args.update_metadata:
+            return update_metadata_only(specs, args)
+        return run_from_checkpoint(specs, args)
 
     conditions = parse_budgets(args.budgets)
     repeats = parse_repeats(args.repeats, conditions)
-    specs = model_specs()
 
     print("model axis:")
     for spec in specs:
@@ -654,9 +816,6 @@ def main() -> int:
             print(f"  {task['id']:42s} {task['category']:10s} min_turns>={task['min_turns']} "
                   f"expected={json.dumps(task['expected'], ensure_ascii=False)[:100]}")
         return 0
-
-    if args.from_records:
-        return run_from_records(tasks, skipped, specs, conditions, repeats, args)
 
     missing = [spec["key"] for spec in specs if not spec["api_key"]]
     if missing:

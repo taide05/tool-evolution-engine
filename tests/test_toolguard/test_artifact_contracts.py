@@ -56,3 +56,55 @@ def test_contract_detects_broken_aggregate() -> None:
         assert any("success" in problem for problem in problems), problems
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _copy_artifact(workdir: Path, name: str) -> dict:
+    data = json.loads((ROOT / "benchmarks" / "toolguard" / name).read_text(encoding="utf-8"))
+    (workdir / name).write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
+def test_contract_detects_reproduce_writing_another_artifact() -> None:
+    """A reproduce command must point at the artifact it documents, never at the V4 headline."""
+    workdir = ROOT / ".scratch" / "test-toolguard" / uuid.uuid4().hex
+    workdir.mkdir(parents=True, exist_ok=True)
+    try:
+        data = _copy_artifact(workdir, "live_demo_hard_v3.json")
+        data["reproduce"] = [
+            "python scripts/run_live_demo_hard_v2.py --from-records "
+            "--output benchmarks/toolguard/live_demo_hard_v4.json"]
+        (workdir / "live_demo_hard_v3.json").write_text(json.dumps(data), encoding="utf-8")
+        problems = validate_artifacts(workdir)
+        assert any("reproduce command writes" in problem for problem in problems), problems
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def test_contract_detects_protocol_calibration_task_mismatch() -> None:
+    """The per-run protocol.calibration.tasks block must cover exactly the artifact tasks."""
+    workdir = ROOT / ".scratch" / "test-toolguard" / uuid.uuid4().hex
+    workdir.mkdir(parents=True, exist_ok=True)
+    try:
+        data = _copy_artifact(workdir, "live_demo_hard_v4.json")
+        calibration_tasks = data["protocol"]["calibration"]["tasks"]
+        calibration_tasks.pop(sorted(calibration_tasks)[0])
+        (workdir / "live_demo_hard_v4.json").write_text(json.dumps(data), encoding="utf-8")
+        problems = validate_artifacts(workdir)
+        assert any("protocol.calibration.tasks" in problem for problem in problems), problems
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def test_contract_detects_multimodel_calibration_task_mismatch() -> None:
+    """Each per-model calibration task block must cover exactly the artifact tasks."""
+    workdir = ROOT / ".scratch" / "test-toolguard" / uuid.uuid4().hex
+    workdir.mkdir(parents=True, exist_ok=True)
+    try:
+        data = _copy_artifact(workdir, "live_demo_multimodel_v4.json")
+        model_block = next(iter(data["calibration"]["models"].values()))
+        model_block["tasks"].pop(sorted(model_block["tasks"])[0])
+        (workdir / "live_demo_multimodel_v4.json").write_text(json.dumps(data), encoding="utf-8")
+        problems = validate_artifacts(workdir)
+        assert any("calibration.models[" in problem for problem in problems), problems
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)

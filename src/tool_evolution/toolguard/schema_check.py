@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import date, datetime, time
 from typing import Any, Mapping
 
 from .records import FunctionSchema
@@ -84,13 +85,44 @@ def _matches_type(value: Any, expected: str) -> bool:
     return True  # unknown annotation: do not invent a check
 
 
+def _valid_date(value: str) -> bool:
+    """Strict calendar date: regex shape plus a real calendar (2024-02-30 must fail)."""
+    if not _DATE_RE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_datetime(value: str) -> bool:
+    if not _DATETIME_RE.match(value):
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_time(value: str) -> bool:
+    if not _TIME_RE.match(value):
+        return False
+    try:
+        time.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _check_format(value: str, fmt: str) -> bool:
     if fmt == "date":
-        return bool(_DATE_RE.match(value))
+        return _valid_date(value)
     if fmt == "date-time":
-        return bool(_DATETIME_RE.match(value))
+        return _valid_datetime(value)
     if fmt == "time":
-        return bool(_TIME_RE.match(value))
+        return _valid_time(value)
     if fmt == "email":
         return bool(_EMAIL_RE.match(value))
     if fmt in ("uri", "url"):

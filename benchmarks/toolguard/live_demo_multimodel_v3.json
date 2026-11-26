@@ -1,7 +1,7 @@
 {
   "artifact_version": 1,
   "experiment": "ToolGuard_multimodel_live_ab",
-  "generated_at": "2026-11-25T03:31:15.415272+00:00",
+  "generated_at": "2026-11-26T10:33:27.508005+00:00",
   "protocol": {
     "models": [
       {
@@ -36,6 +36,40 @@
       "baseline",
       "guard"
     ],
+    "task_ids": [
+      "capital_weather_japan",
+      "capital_weather_norway",
+      "capital_weather_portugal",
+      "capital_weather_compare_france_germany",
+      "capital_weather_compare_norway_portugal",
+      "capital_population_canberra",
+      "capital_population_ottawa",
+      "capital_gdp_switzerland",
+      "capital_income_brazil",
+      "capital_region_argentina",
+      "population_compare_oslo_wellington",
+      "population_sum_australia_canada",
+      "pypi_release_date_httpx",
+      "pypi_newer_requests_flask",
+      "pypi_newer_numpy_pandas",
+      "hn_item_1_author_account_year",
+      "hn_item_8863_author_account_year",
+      "hn_recent_item_author_account_year",
+      "fx_eur_jpy_cross",
+      "fx_usd_cny_100",
+      "gdp_ratio_bern_canberra",
+      "population_total_three_capitals",
+      "temperature_gap_norway_portugal",
+      "population_compare_france_germany_region",
+      "release_vs_hn_item_date",
+      "fx_triangular_check",
+      "package_earliest_of_three",
+      "capital_weather_triple",
+      "capital_income_population_brazil",
+      "gdp_gap_bern_ottawa",
+      "weather_compare_australia_canada"
+    ],
+    "output_artifact": "benchmarks/toolguard/live_demo_multimodel_v3.json",
     "budget_conditions": {
       "clean+1": "per-task turn budget = per-model fault-free calibration turns + 1",
       "clean+4": "per-task turn budget = per-model fault-free calibration turns + 4"
@@ -48,6 +82,8 @@
     "wall_seconds": null,
     "finalised_from_checkpoint": true,
     "failure_modes_recomputed": true,
+    "hn_schema": "drifting",
+    "hn_schema_note": "legacy drifting contract: get_hn_item advertises story_id as a string while the backend requires an integer (historical V2/V3 protocol)",
     "failure_modes_note": "rebuilt from the checkpoint: failure-mode labels were recomputed from answer+expected with the fixed metadata-aware classifier (2026-11-24 review), and tasks_per_model was rebuilt from the per-record expected snapshots",
     "fault_injection": {
       "model": "deterministic transient fault epochs (first N attempts fail) per logical call",
@@ -56,6 +92,10 @@
       "p_rate_limit": 0.1,
       "p_server_error": 0.08,
       "seed": 7
+    },
+    "calibration": {
+      "source": ".scratch/toolguard/multimodel_calibration.json",
+      "description": "per-model fault-free calibration payload stored at the top level"
     },
     "verification": "programmatic; ground truth computed from the same live APIs before the runs",
     "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift (weather/FX); every record carries the `expected` snapshot it was verified against"
@@ -29308,11 +29348,12 @@
     "V3 task-set change: the three HN karma tasks were replaced by immutable account-creation-year tasks (same two-tool chain). HN karma is live-mutable: during the V2 multi-model run one active author's karma changed 112 -> 161 within an hour, which made that task's ground truth noise. The V2 multi-model artifact (commit fb13a1f) still contains the karma tasks.",
     "When the artifact is finalised from a checkpoint (no re-run), task definitions are rebuilt after the run; per-cell success flags were computed at run time with the then-fresh ground truth, so drifting values in the metadata may differ slightly.",
     "Prices are the published list prices at run time and are used only for the cost estimate.",
-    "Free public APIs are not production grade; API drift can affect reruns."
+    "Free public APIs are not production grade; API drift can affect reruns.",
+    "HN contract drift mode: get_hn_item advertises story_id as string while the backend requires an integer (historical V3 protocol)."
   ],
   "reproduce": [
-    "python scripts/run_multimodel_live.py --mode calibrate",
-    "python scripts/run_multimodel_live.py --mode eval --workers 2 --output benchmarks/toolguard/live_demo_multimodel_v3.json",
+    "python scripts/run_multimodel_live.py --mode calibrate --hn-schema drifting --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json",
+    "python scripts/run_multimodel_live.py --mode eval --hn-schema drifting --budgets clean+1,clean+4 --repeats clean+1:2,clean+4:1 --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --output benchmarks/toolguard/live_demo_multimodel_v3.json",
     "python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]

@@ -431,6 +431,8 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
     wall_seconds = round(time.perf_counter() - started, 1)
 
     hn_schema = args.hn_schema
+    requested_task_ids = ([value.strip() for value in args.task_ids.split(",") if value.strip()]
+                          if args.task_ids else None)
     summary = build_artifact_summary(
         records=records, tasks=tasks, skipped=skipped, conditions=conditions,
         repeats=repeats, calibration=calibration, wall_seconds=wall_seconds,
@@ -441,7 +443,10 @@ def run_eval(client: DeepSeekClient, tasks: list[dict], skipped: list[str],
                "seed": args.seed, "workers": args.workers},
         fault_source=args.fault_source,
         real_traces=args.real_traces,
-        rebuilt_from_records=False)
+        rebuilt_from_records=False,
+        output_artifact=str(output),
+        task_ids=requested_task_ids,
+        include_hard_tasks=args.include_hard_tasks)
     write_json(output, summary)
     print("\n=== budget curve ===")
     print(json.dumps(summary["aggregate"]["budget_curve"], ensure_ascii=False, indent=2))
@@ -464,15 +469,48 @@ def build_artifact_summary(
     fault_source: str = "synthetic",
     real_traces: str | None = None,
     rebuilt_from_records: bool = False,
+    output_artifact: str | None = None,
+    task_ids: list[str] | None = None,
+    include_hard_tasks: bool = False,
+    generated_at: str | None = None,
 ) -> dict:
     """Build the artifact payload from records (used by the live runner and --from-records).
+
+    ``output_artifact`` is the actual path this payload is written to; every reproduce
+    command is generated from the arguments that produced this artifact (task subset,
+    fault source, hard-task flag, calibration, budgets/repeats), so replaying a reproduce
+    line can never silently overwrite a different (headline) artifact.
 
     ``rebuilt_from_records`` additionally records that the failure-mode labels were
     recomputed from ``answer`` + ``expected`` with the fixed classifier (2026-11-24 review),
     instead of being carried over from a previous run.
     """
     aggregate_block = aggregate(records)
+    task_ids = list(task_ids) if task_ids else None
+    hard_task_ids = [task["id"] for task in tasks if task["id"].startswith("hard_")]
+    # The HN attribution control is the V3 31-task pool with the consistent schema, run only
+    # at clean+1 x 3 repeats x 2 arms = 186 cells (the V4 headline runs all three budgets).
+    attribution_control = (
+        hn_schema == "consistent" and not include_hard_tasks and not task_ids
+        and conditions == ["clean+1"] and repeats.get("clean+1") == 3
+        and fault_source == "synthetic")
     limitations = list(V2_LIMITATIONS)
+    if attribution_control:
+        limitations.append(
+            "HN attribution control: the V3 31-task pool with the consistent integer "
+            "get_hn_item.story_id schema and the V3 budget anchor, run only at clean+1 x 3 "
+            "repeats x 2 arms (186 cells). It exists to attribute the V3->V4 difference to the "
+            "HN contract fix; it is not the V4 headline protocol (the full 310-cell budget "
+            "sweep is live_demo_hard_v4.json).")
+    if include_hard_tasks:
+        limitations.append(
+            f"V5 hard-task pilot (opt-in `--include-hard-tasks`): this artifact runs only the "
+            f"{len(hard_task_ids)} longer-chain hard tasks appended to the V4 pool "
+            f"({', '.join(hard_task_ids)}), not the V4 main 31-task protocol. The sample is a "
+            "pilot (clean+1 x 3 repeats x 2 arms = "
+            f"{len(records)} cells); it is a ceiling probe, not a statistical result. Its "
+            "negative result is reported honestly: longer fault-driven chains do not break the "
+            "guard ceiling because the guard absorbs the injected faults inside the agent turn.")
     if hn_schema == "consistent":
         limitations.append(
             "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item "
@@ -494,51 +532,77 @@ def build_artifact_summary(
             "the backend. This is a robustness check using real error text, not the headline "
             "synthetic-fault protocol; the injected trace id/count is recorded per cell in "
             "fault_kinds/real-trace stats and the wrapper is identical for both arms.")
+    if task_ids and not include_hard_tasks:
+        limitations.append(
+            f"Task subset: this artifact covers {len(task_ids)} of the V4 31-task pool "
+            f"({len(records)} cells), not the V4 headline protocol. It exists as a targeted "
+            "smoke/robustness check (real-trace fault source); the paired baseline-vs-guard "
+            "causality for the main claims stays with live_demo_hard_v4.json.")
     if rebuilt_from_records:
         limitations.append(
             "This artifact was rebuilt from the committed checkpoint records by "
             "`--from-records` (no new model calls); failure-mode labels were recomputed from "
             "answer+expected with the fixed metadata-aware classifier, and the reproduce "
-            "commands point at the current V4 output path (2026-11-24 review P2-1/P2-7).")
-    if calibration_source and "hard_calibration_v3" in calibration_source:
+            f"commands point at this artifact's actual output path "
+            f"({_as_posix(output_artifact)}).")
+    if calibration_source and "hard_calibration_v3" in calibration_source.replace("\\", "/"):
         limitations.append(
             "Budget calibration was reused from the V3 drift run "
-            f"({calibration_source}) so that the HN schema is the only manipulated variable "
-            "between the V3 and V4 artifacts: every task keeps the exact same fault-free turn "
-            "requirement (and therefore the same clean+N budget) in both runs.")
-    reproduce = [
-        ("python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent "
-         "--calibration .scratch/toolguard/hard_calibration_v4.json"
-         if calibration_source and "hard_calibration_v3" not in calibration_source else ""),
-        "python scripts/run_live_demo_hard_v2.py --hn-schema "
-        f"{hn_schema} --workers 2 --calibration "
-        f"{calibration_source or '.scratch/toolguard/hard_calibration_v4.json'} "
-        "--output benchmarks/toolguard/live_demo_hard_v4.json",
-        "python scripts/run_live_demo_hard_v2.py --from-records "
-        "--output benchmarks/toolguard/live_demo_hard_v4.json"
-        if rebuilt_from_records else
-        ("python scripts/run_live_demo_hard_v2.py --budgets clean+1 --repeats clean+1:3 "
-         "--hn-schema drifting --workers 2 "
-         "--calibration .scratch/toolguard/hard_calibration_v3.json "
-         "--output benchmarks/toolguard/live_demo_hard_v3.json"
-         if hn_schema == "drifting" else ""),
-        "python -m pytest tests/test_toolguard -q -p no:cacheprovider",
-    ]
-    reproduce = [entry for entry in reproduce if entry]
+            f"({_as_posix(calibration_source)}) so that the HN schema is the only manipulated "
+            "variable between the V3 and V4 artifacts: every task keeps the exact same "
+            "fault-free turn requirement (and therefore the same clean+N budget) in both runs.")
+    if include_hard_tasks:
+        experiment = "ToolGuard_hard_multistep_live_ab_v5_hard_task_pilot"
+        task_pool = (
+            f"V5 hard-task pilot (opt-in): {len(hard_task_ids)} longer-chain hard tasks "
+            f"({', '.join(hard_task_ids)}) appended to the V4 31-task pool; this artifact runs "
+            "only those hard tasks. The default V4 31-task main protocol is unaffected.")
+    elif fault_source == "real-trace":
+        experiment = ("ToolGuard_hard_multistep_live_ab_real_trace_fault_source_smoke"
+                      if task_ids else
+                      "ToolGuard_hard_multistep_live_ab_real_trace_fault_source")
+        task_pool = (
+            f"{len(task_ids) if task_ids else len(tasks)}-task subset of the V4 drift-hardened "
+            "31-task pool used as a real-trace fault-source robustness check (not the V4 main "
+            "protocol); the captured real API errors are replayed on selected logical calls and "
+            "the wrapper is identical for both arms")
+    elif attribution_control:
+        experiment = "ToolGuard_hard_multistep_live_ab_v3_task_pool_hn_schema_consistent"
+        task_pool = ("HN attribution control: V3 drift-hardened 31-task pool with the "
+                     "consistent (integer) HN schema, clean+1 only; 186 cells, V3 budget anchor")
+    elif hn_schema == "consistent":
+        experiment = "ToolGuard_hard_multistep_live_ab_v4_task_pool_hn_consistent"
+        task_pool = ("V4: the V3 drift-hardened 31-task pool with the HN contract fixed "
+                     "(schema matches backend, 2026-11-25 review decision); ground truth "
+                     "built from the same live APIs before the eval")
+    else:
+        experiment = "ToolGuard_hard_multistep_live_ab_v3_task_pool_hn_drift_demo"
+        task_pool = ("V3 drift-hardened 31-task pool (targeted HN contract-drift demo); "
+                     "ground truth built from the same live APIs before the eval")
+    reproduce = _reproduce_commands(
+        output_artifact=output_artifact,
+        hn_schema=hn_schema,
+        calibration_source=calibration_source,
+        conditions=conditions,
+        repeats=repeats,
+        workers=fault.get("workers"),
+        task_ids=task_ids,
+        include_hard_tasks=include_hard_tasks,
+        fault_source=fault_source,
+        real_traces=real_traces,
+        rebuilt_from_records=rebuilt_from_records,
+    )
     return {
         "artifact_version": 2,
-        "experiment": ("ToolGuard_hard_multistep_live_ab_v4_task_pool_hn_consistent"
-                       if hn_schema == "consistent"
-                       else "ToolGuard_hard_multistep_live_ab_v3_task_pool_hn_drift_demo"),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "experiment": experiment,
+        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
         "protocol": {
-            "task_pool": ("V4: the V3 drift-hardened 31-task pool with the HN contract fixed "
-                          "(schema matches backend, 2026-11-25 review decision); ground truth "
-                          "built from the same live APIs before the eval"
-                          if hn_schema == "consistent" else
-                          "V3 drift-hardened 31-task pool (targeted HN contract-drift demo); "
-                          "ground truth built from the same live APIs before the eval"),
+            "task_pool": task_pool,
+            "task_ids": [task["id"] for task in tasks],
+            "hard_task_ids": hard_task_ids,
+            "include_hard_tasks": include_hard_tasks,
+            "output_artifact": _as_posix(output_artifact),
             "hn_schema": hn_schema,
             "hn_schema_note": ("consistent contract (main protocol): get_hn_item.story_id is an "
                                "integer in the agent-visible schema, matching the backend and the "
@@ -564,7 +628,7 @@ def build_artifact_summary(
             "calibration": {
                 "description": "one fault-free run per task measured the turn requirement that anchors "
                                "the budget sweep",
-                "source": calibration_source or "embedded",
+                "source": _as_posix(calibration_source) or "embedded",
                 "tasks": {task["id"]: calibration.get(task["id"], {"turns": task["min_turns"]})
                           for task in tasks},
             },
@@ -582,7 +646,7 @@ def build_artifact_summary(
                 "p_server_error": fault.get("p_server_error"),
                 "seed": fault.get("seed"),
                 "repeat_seed_rule": "fault seed = seed + repeat * 101",
-                **({"real_traces": real_traces,
+                **({"real_traces": _as_posix(real_traces),
                     "trace_provenance": "benchmarks/toolguard/real_traces/real_fault_traces.json "
                                         "(captured from real public API calls)"}
                    if fault_source == "real-trace" else {}),
@@ -605,12 +669,132 @@ def build_artifact_summary(
     }
 
 
+def _as_posix(value) -> str:
+    """Render a path for shell commands: forward slashes even when generated on Windows."""
+    return str(value).replace("\\", "/")
+
+
+def _reproduce_commands(
+    *,
+    output_artifact: str | None,
+    hn_schema: str,
+    calibration_source: str | None,
+    conditions: list[str],
+    repeats: dict[str, int],
+    workers: int | None,
+    task_ids: list[str] | None,
+    include_hard_tasks: bool,
+    fault_source: str,
+    real_traces: str | None,
+    rebuilt_from_records: bool,
+) -> list[str]:
+    """Artifact-specific reproduce commands (actual output path + protocol parameters)."""
+    output = _as_posix(output_artifact or DEFAULT_OUTPUT)
+    workers = workers or 2
+    budgets_spec = ",".join(conditions) or DEFAULT_BUDGETS
+    repeats_spec = ",".join(f"{condition}:{repeats.get(condition, 1)}"
+                            for condition in conditions) or DEFAULT_REPEATS
+    scope_flags: list[str] = []
+    if include_hard_tasks:
+        scope_flags.append("--include-hard-tasks")
+    if task_ids:
+        scope_flags.append("--task-ids " + ",".join(task_ids))
+    calibration = _as_posix(calibration_source) if calibration_source else None
+    commands: list[str] = []
+    # Re-measuring a reused V3 anchor would silently change the controlled-comparison input,
+    # so the historical calibration file is referenced but not regenerated.
+    if calibration and "hard_calibration_v3" not in calibration:
+        calibrate = ["python scripts/run_live_demo_hard_v2.py --mode calibrate",
+                     *scope_flags, f"--hn-schema {hn_schema}",
+                     f"--calibration {calibration}"]
+        commands.append(" ".join(calibrate))
+    live = ["python scripts/run_live_demo_hard_v2.py --mode eval"]
+    if fault_source == "real-trace":
+        live.extend(["--fault-source real-trace",
+                     f"--real-traces {_as_posix(real_traces or DEFAULT_REAL_TRACES)}"])
+    live.extend([*scope_flags,
+                 f"--budgets {budgets_spec}",
+                 f"--repeats {repeats_spec}",
+                 f"--hn-schema {hn_schema}",
+                 f"--workers {workers}"])
+    if calibration:
+        live.append(f"--calibration {calibration}")
+    live.append(f"--output {output}")
+    commands.append(" ".join(live))
+    if rebuilt_from_records:
+        commands.append(
+            "python scripts/run_live_demo_hard_v2.py --from-records "
+            f"--output {output}")
+    commands.append("python -m pytest tests/test_toolguard -q -p no:cacheprovider")
+    return commands
+
+
+
+def _metadata_from_checkpoint(checkpoint: dict, output: Path,
+                              args: argparse.Namespace) -> dict:
+    """Reconstruct the run metadata recorded in a checkpoint (for offline rebuilds).
+
+    All fields come from the checkpoint's own ``protocol`` block, so an offline rebuild can
+    regenerate artifact-specific reproduce commands (task subset, fault source, hard-task
+    flag, HN schema, calibration file) without calling any API.
+    """
+    protocol = checkpoint.get("protocol") or {}
+    tasks = checkpoint.get("tasks") or []
+    records = checkpoint.get("records") or []
+    conditions = list((protocol.get("budget_conditions") or {}).keys())
+    if not conditions:
+        conditions = sorted({record.get("condition") for record in records
+                             if record.get("condition")})
+    repeats = dict(protocol.get("repeats") or {})
+    if not repeats:
+        for condition in conditions:
+            rows = [record for record in records if record.get("condition") == condition]
+            arms = {record.get("arm") for record in rows}
+            repeats[condition] = max(1, len(rows) // max(len(tasks) * len(arms), 1))
+    calibration_block = protocol.get("calibration")
+    calibration_block = calibration_block if isinstance(calibration_block, dict) else {}
+    calibration = calibration_block.get("tasks") or {}
+    source = calibration_block.get("source")
+    if isinstance(source, str) and source in ("", "embedded"):
+        source = None
+    if source is None:
+        explicit = getattr(args, "calibration", DEFAULT_CALIBRATION)
+        if explicit and str(explicit) != DEFAULT_CALIBRATION:
+            source = str(explicit)
+    fault_injection = protocol.get("fault_injection") or {}
+    include_hard_tasks = any(task["id"].startswith("hard_") for task in tasks)
+    full_pool = 35 if include_hard_tasks else 31
+    task_ids = [task["id"] for task in tasks] if len(tasks) != full_pool else None
+    return {
+        "skipped": checkpoint.get("skipped") or [],
+        "conditions": conditions,
+        "repeats": repeats,
+        "calibration": calibration,
+        "wall_seconds": protocol.get("wall_seconds"),
+        "hn_schema": protocol.get("hn_schema") or "drifting",
+        "calibration_source": source,
+        "fault": {"attempts_to_fail": fault_injection.get("attempts_to_fail"),
+                  "p_timeout": fault_injection.get("p_timeout"),
+                  "p_rate_limit": fault_injection.get("p_rate_limit"),
+                  "p_server_error": fault_injection.get("p_server_error"),
+                  "seed": fault_injection.get("seed"),
+                  "workers": protocol.get("workers")},
+        "fault_source": fault_injection.get("source") or "synthetic",
+        "real_traces": fault_injection.get("real_traces"),
+        "output_artifact": str(output),
+        "task_ids": task_ids,
+        "include_hard_tasks": include_hard_tasks,
+        "generated_at": checkpoint.get("generated_at"),
+    }
+
+
 def run_from_records(args: argparse.Namespace) -> int:
-    """Rebuild the single-model V3 artifact from its committed checkpoint records.
+    """Rebuild the single-model artifact from its committed checkpoint records.
 
     No model/API calls: the aggregate is recomputed from the records, the failure-mode
     labels are recomputed from `answer` + `expected` with the fixed classifier, and the
-    reproduce block is rewritten for the V3 output path (2026-11-24 review P2-1/P2-7).
+    reproduce block is regenerated for this artifact's actual output path (2026-11-24 review
+    P2-1/P2-7; 2026-11-25: output path + protocol parameters are artifact-specific).
     """
     output = Path(args.output)
     checkpoint = json.loads(output.read_text(encoding="utf-8"))
@@ -632,29 +816,43 @@ def run_from_records(args: argparse.Namespace) -> int:
         if new != old:
             reclassified += 1
         record["failure_mode"] = new
-    protocol = checkpoint.get("protocol") or {}
-    conditions = list((protocol.get("budget_conditions") or {}).keys())
-    repeats = protocol.get("repeats") or {condition: 1 for condition in conditions}
-    calibration = (protocol.get("calibration") or {}).get("tasks") or {}
-    fault_injection = protocol.get("fault_injection") or {}
-    summary = build_artifact_summary(
-        records=records, tasks=tasks, skipped=checkpoint.get("skipped") or [],
-        conditions=conditions, repeats=repeats, calibration=calibration,
-        wall_seconds=protocol.get("wall_seconds"),
-        hn_schema=protocol.get("hn_schema") or "drifting",
-        calibration_source=(protocol.get("calibration") or {}).get("source"),
-        fault={"attempts_to_fail": fault_injection.get("attempts_to_fail"),
-               "p_timeout": fault_injection.get("p_timeout"),
-               "p_rate_limit": fault_injection.get("p_rate_limit"),
-               "p_server_error": fault_injection.get("p_server_error"),
-               "seed": fault_injection.get("seed"),
-               "workers": protocol.get("workers")},
-        fault_source=fault_injection.get("source") or "synthetic",
-        real_traces=fault_injection.get("real_traces"),
-        rebuilt_from_records=True)
+    metadata = _metadata_from_checkpoint(checkpoint, output, args)
+    summary = build_artifact_summary(records=records, tasks=tasks, **metadata,
+                                     rebuilt_from_records=True)
     write_json(output, summary)
     print(f"rebuilt {output} from {len(records)} records; failure-mode labels changed: "
           f"{reclassified}")
+    return 0
+
+
+def update_metadata_only(args: argparse.Namespace) -> int:
+    """Refresh only experiment/protocol/limitations/reproduce; data payload is copied verbatim.
+
+    Used for evidence artifacts (real-trace smoke / V5 pilot / historical artifacts) whose
+    reproduce block named the wrong output path: records/aggregate/tasks/key_findings are
+    copied from the checkpoint byte-for-byte, so no measured number can change.
+    """
+    output = Path(args.output)
+    checkpoint = json.loads(output.read_text(encoding="utf-8"))
+    tasks = checkpoint.get("tasks") or []
+    records = checkpoint.get("records") or []
+    if not records or not tasks:
+        print(f"ERROR: checkpoint {output} has no records/tasks", file=sys.stderr)
+        return 2
+    metadata = _metadata_from_checkpoint(checkpoint, output, args)
+    metadata["generated_at"] = checkpoint.get("generated_at", metadata["generated_at"])
+    rebuilt = bool((checkpoint.get("protocol") or {}).get("rebuilt_from_records"))
+    summary = build_artifact_summary(records=records, tasks=tasks, **metadata,
+                                     rebuilt_from_records=rebuilt)
+    for key in ("tasks", "skipped", "records", "aggregate", "key_findings", "model",
+                "generated_at"):
+        if key in checkpoint:
+            summary[key] = checkpoint[key]
+    write_json(output, summary)
+    changed = sorted(key for key in summary
+                     if key in checkpoint and checkpoint[key] != summary[key])
+    print(f"refreshed metadata for {output}; changed fields: {', '.join(changed)}")
+    print("records/aggregate/tasks/key_findings were left untouched")
     return 0
 
 
@@ -694,10 +892,16 @@ def main() -> int:
     parser.add_argument("--from-records", action="store_true",
                         help="rebuild the artifact at --output from its checkpoint records (no "
                              "live calls): recompute aggregate, reclassify failure modes and "
-                             "rewrite the reproduce block for the V3 output path")
+                             "regenerate artifact-specific reproduce commands")
+    parser.add_argument("--update-metadata", action="store_true",
+                        help="refresh ONLY experiment/protocol/limitations/reproduce of the "
+                             "artifact at --output from its checkpoint; records/aggregate/tasks "
+                             "are copied verbatim (no live calls)")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     args = parser.parse_args()
 
+    if args.update_metadata:
+        return update_metadata_only(args)
     if args.from_records:
         return run_from_records(args)
 

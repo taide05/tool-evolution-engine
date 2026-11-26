@@ -63,6 +63,27 @@ def test_invalid_format_is_rejected() -> None:
     assert validate_arguments({"at": "not a timestamp"}, date_time)
 
 
+def test_date_format_rejects_impossible_calendar_dates() -> None:
+    """Real calendar validation, not just digit shapes (2026-11-25 review finding)."""
+    schema = _schema({"release_date": {"type": "string", "format": "date"}})
+    assert validate_arguments({"release_date": "2024-13-40"}, schema)
+    assert validate_arguments({"release_date": "2024-02-30"}, schema)
+    assert validate_arguments({"release_date": "2024-00-10"}, schema)
+    assert validate_arguments({"release_date": "2024-02-29"}, schema) == []  # leap year
+    assert validate_arguments({"release_date": "2023-02-29"}, schema)  # not a leap year
+
+
+def test_time_and_datetime_formats_reject_impossible_values() -> None:
+    time_schema = _schema({"at": {"type": "string", "format": "time"}})
+    assert validate_arguments({"at": "99:99:99"}, time_schema)
+    assert validate_arguments({"at": "23:59:60"}, time_schema)
+    assert validate_arguments({"at": "23:59:59"}, time_schema) == []
+    date_time_schema = _schema({"at": {"type": "string", "format": "date-time"}})
+    assert validate_arguments({"at": "2024-13-40T10:00:00"}, date_time_schema)
+    assert validate_arguments({"at": "2024-02-30T10:00:00Z"}, date_time_schema)
+    assert validate_arguments({"at": "2024-02-29T23:59:59Z"}, date_time_schema) == []
+
+
 def test_unknown_format_is_not_invented_as_a_failure() -> None:
     """Only formats the schema actually declares are checked; unknown ones are annotations."""
     schema = _schema({"x": {"type": "string", "format": "some-future-format"}})

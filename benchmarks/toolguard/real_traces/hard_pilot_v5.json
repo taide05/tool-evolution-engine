@@ -1,10 +1,24 @@
 {
   "artifact_version": 2,
-  "experiment": "ToolGuard_hard_multistep_live_ab_v4_task_pool_hn_consistent",
+  "experiment": "ToolGuard_hard_multistep_live_ab_v5_hard_task_pilot",
   "generated_at": "2026-11-26T06:34:53.797814+00:00",
   "model": "deepseek-v4-flash",
   "protocol": {
-    "task_pool": "V4: the V3 drift-hardened 31-task pool with the HN contract fixed (schema matches backend, 2026-11-25 review decision); ground truth built from the same live APIs before the eval",
+    "task_pool": "V5 hard-task pilot (opt-in): 4 longer-chain hard tasks (hard_gdp_triple_gap, hard_weather_spread_three, hard_pypi_release_span, hard_hn_author_age_gap) appended to the V4 31-task pool; this artifact runs only those hard tasks. The default V4 31-task main protocol is unaffected.",
+    "task_ids": [
+      "hard_gdp_triple_gap",
+      "hard_weather_spread_three",
+      "hard_pypi_release_span",
+      "hard_hn_author_age_gap"
+    ],
+    "hard_task_ids": [
+      "hard_gdp_triple_gap",
+      "hard_weather_spread_three",
+      "hard_pypi_release_span",
+      "hard_hn_author_age_gap"
+    ],
+    "include_hard_tasks": true,
+    "output_artifact": "benchmarks/toolguard/real_traces/hard_pilot_v5.json",
     "hn_schema": "consistent",
     "hn_schema_note": "consistent contract (main protocol): get_hn_item.story_id is an integer in the agent-visible schema, matching the backend and the real HN API; the synthetic drift is not injected here. The drift-based repair capability is demonstrated separately in live_demo_hard_v3.json and its attribution control live_demo_hard_v3_hnconsistent.json",
     "rebuilt_from_records": false,
@@ -22,7 +36,7 @@
     "wall_seconds": 233.6,
     "calibration": {
       "description": "one fault-free run per task measured the turn requirement that anchors the budget sweep",
-      "source": ".scratch\\toolguard\\hard_calibration_v5.json",
+      "source": ".scratch/toolguard/hard_calibration_v5.json",
       "tasks": {
         "hard_gdp_triple_gap": {
           "turns": 3,
@@ -1454,11 +1468,12 @@
     "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has no live-mutable HN karma tasks.",
     "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
     "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
+    "V5 hard-task pilot (opt-in `--include-hard-tasks`): this artifact runs only the 4 longer-chain hard tasks appended to the V4 pool (hard_gdp_triple_gap, hard_weather_spread_three, hard_pypi_release_span, hard_hn_author_age_gap), not the V4 main 31-task protocol. The sample is a pilot (clean+1 x 3 repeats x 2 arms = 24 cells); it is a ceiling probe, not a statistical result. Its negative result is reported honestly: longer fault-driven chains do not break the guard ceiling because the guard absorbs the injected faults inside the agent turn.",
     "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item schema declares story_id as integer, matching the backend and the real Hacker News API, so the synthetic contract mismatch is no longer injected into this run. The drifting variant is kept only as the targeted contract-repair demonstration (live_demo_hard_v3.json) with its attribution control (live_demo_hard_v3_hnconsistent.json)."
   ],
   "reproduce": [
-    "python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4.json",
-    "python scripts/run_live_demo_hard_v2.py --hn-schema consistent --workers 2 --calibration .scratch\\toolguard\\hard_calibration_v5.json --output benchmarks/toolguard/live_demo_hard_v4.json",
+    "python scripts/run_live_demo_hard_v2.py --mode calibrate --include-hard-tasks --task-ids hard_gdp_triple_gap,hard_weather_spread_three,hard_pypi_release_span,hard_hn_author_age_gap --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v5.json",
+    "python scripts/run_live_demo_hard_v2.py --mode eval --include-hard-tasks --task-ids hard_gdp_triple_gap,hard_weather_spread_three,hard_pypi_release_span,hard_hn_author_age_gap --budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v5.json --output benchmarks/toolguard/real_traces/hard_pilot_v5.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]
 }

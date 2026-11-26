@@ -4,9 +4,45 @@
   "generated_at": "2026-11-25T03:39:01.844915+00:00",
   "model": "deepseek-v4-flash",
   "protocol": {
-    "task_pool": "V3 drift-hardened 31-task pool: HN account-creation year instead of live karma; ground truth built from the same live APIs before the eval",
+    "task_pool": "HN attribution control: V3 drift-hardened 31-task pool with the consistent (integer) HN schema, clean+1 only; 186 cells, V3 budget anchor",
+    "task_ids": [
+      "capital_weather_japan",
+      "capital_weather_norway",
+      "capital_weather_portugal",
+      "capital_weather_compare_france_germany",
+      "capital_weather_compare_norway_portugal",
+      "capital_population_canberra",
+      "capital_population_ottawa",
+      "capital_gdp_switzerland",
+      "capital_income_brazil",
+      "capital_region_argentina",
+      "population_compare_oslo_wellington",
+      "population_sum_australia_canada",
+      "pypi_release_date_httpx",
+      "pypi_newer_requests_flask",
+      "pypi_newer_numpy_pandas",
+      "hn_item_1_author_account_year",
+      "hn_item_8863_author_account_year",
+      "hn_recent_item_author_account_year",
+      "fx_eur_jpy_cross",
+      "fx_usd_cny_100",
+      "gdp_ratio_bern_canberra",
+      "population_total_three_capitals",
+      "temperature_gap_norway_portugal",
+      "population_compare_france_germany_region",
+      "release_vs_hn_item_date",
+      "fx_triangular_check",
+      "package_earliest_of_three",
+      "capital_weather_triple",
+      "capital_income_population_brazil",
+      "gdp_gap_bern_ottawa",
+      "weather_compare_australia_canada"
+    ],
+    "hard_task_ids": [],
+    "include_hard_tasks": false,
+    "output_artifact": "benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json",
     "hn_schema": "consistent",
-    "hn_schema_note": "consistent-control run: the agent-visible get_hn_item schema declares story_id as integer (matching the backend) instead of the deliberately mismatched released schema (string); everything else is identical to the main V3 run, so the difference isolates the schema-drift contribution",
+    "hn_schema_note": "consistent contract (main protocol): get_hn_item.story_id is an integer in the agent-visible schema, matching the backend and the real HN API; the synthetic drift is not injected here. The drift-based repair capability is demonstrated separately in live_demo_hard_v3.json and its attribution control live_demo_hard_v3_hnconsistent.json",
     "rebuilt_from_records": false,
     "arms": [
       "baseline",
@@ -22,6 +58,7 @@
     "wall_seconds": 657.5,
     "calibration": {
       "description": "one fault-free run per task measured the turn requirement that anchors the budget sweep",
+      "source": ".scratch/toolguard/hard_calibration_v3.json",
       "tasks": {
         "capital_weather_japan": {
           "turns": 4,
@@ -181,6 +218,7 @@
       }
     },
     "fault_injection": {
+      "source": "synthetic",
       "model": "deterministic transient fault epochs: the first N attempts of a faulted logical call fail (timeout / HTTP 429 / HTTP 5xx), then the real call runs",
       "attempts_to_fail": 2,
       "p_timeout": 0.2,
@@ -7758,12 +7796,12 @@
     "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has no live-mutable HN karma tasks.",
     "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
     "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
-    "HN consistent-schema control run: the get_hn_item schema is fixed to integer for both arms; this run exists only to measure the schema-drift contribution and is not an independent task-pool version."
+    "HN attribution control: the V3 31-task pool with the consistent integer get_hn_item.story_id schema and the V3 budget anchor, run only at clean+1 x 3 repeats x 2 arms (186 cells). It exists to attribute the V3->V4 difference to the HN contract fix; it is not the V4 headline protocol (the full 310-cell budget sweep is live_demo_hard_v4.json).",
+    "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item schema declares story_id as integer, matching the backend and the real Hacker News API, so the synthetic contract mismatch is no longer injected into this run. The drifting variant is kept only as the targeted contract-repair demonstration (live_demo_hard_v3.json) with its attribution control (live_demo_hard_v3_hnconsistent.json).",
+    "Budget calibration was reused from the V3 drift run (.scratch/toolguard/hard_calibration_v3.json) so that the HN schema is the only manipulated variable between the V3 and V4 artifacts: every task keeps the exact same fault-free turn requirement (and therefore the same clean+N budget) in both runs."
   ],
   "reproduce": [
-    "python scripts/run_live_demo_hard_v2.py --mode calibrate",
-    "python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v3.json",
-    "python scripts/run_live_demo_hard_v2.py --budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json --output benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json",
+    "python scripts/run_live_demo_hard_v2.py --mode eval --budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json --output benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]
 }

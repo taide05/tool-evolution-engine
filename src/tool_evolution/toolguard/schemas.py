@@ -89,11 +89,14 @@ def refine_schema_index(
        widening/narrowing (integer <-> number) is never performed.
     2. **Parameter back-fill**: when a function's declared parameter list is empty but its
        recorded successful calls consistently carry arguments, those argument names are
-       added as *optional* properties with their observed dominant scalar type.  Required
-       lists are never changed.
+       added as *optional* properties with their observed dominant scalar type.  The same
+       evidence bar as the type corrections applies: at least ``min_samples`` recorded
+       successful values must carry the parameter and at least ``agreement`` of them must
+       share one concrete scalar JSON type.  Required lists are never changed.
 
-    All corrections are counted (with up to 10 examples) and written into the metrics
-    artifact, so the schema change is visible evidence rather than a quiet moving target.
+    Both kinds of corrections are counted; every correction is recorded (type corrections
+    carry up to 10 examples, param back-fills are recorded in full) so the schema change is
+    visible evidence rather than a quiet moving target.
     """
     # observed[(function, param)] = {concrete_type: count}
     observed: dict[tuple[str, str], dict[str, int]] = {}
@@ -123,17 +126,22 @@ def refine_schema_index(
         required = schema.required
         if not properties and function in arg_presence:
             presence = arg_presence[function]
-            for name, count in sorted(presence.items()):
+            for name, _presence_count in sorted(presence.items()):
                 bucket = observed.get((function, name)) or {}
-                kind = _dominant_type(bucket, count, agreement)
+                total = sum(bucket.values())
+                kind = _dominant_type(bucket, total, agreement, min_samples)
                 if kind is None or kind not in ("string", "number", "integer", "boolean"):
                     continue
+                agreement_value = round(max(bucket.values()) / total, 3)
                 properties[name] = {
                     "type": kind,
-                    "description": "inferred from recorded successful calls (api_list declared an empty parameter list)",
+                    "description": (
+                        "inferred from recorded successful calls (api_list declared an empty "
+                        f"parameter list); {total} samples, {agreement_value:.0%} scalar type "
+                        "agreement"),
                 }
                 params_added.append({"function": function, "param": name, "observed_type": kind,
-                                     "observations": count})
+                                     "observations": total, "agreement": agreement_value})
         for name, prop in list(properties.items()):
             declared = prop.get("type")
             if declared not in ("number", "integer", "string", "boolean"):
@@ -167,14 +175,24 @@ def refine_schema_index(
         "type_corrections": len(type_corrections),
         "params_added": len(params_added),
         "type_correction_examples": type_corrections[:10],
-        "param_addition_examples": params_added[:10],
+        # Full back-fill list (not truncated): every added parameter is evidence that the
+        # released api_list declared an empty parameter list for that function.
+        "param_additions": params_added,
+        "param_addition_examples": params_added[:10],  # deprecated alias, do not rely on it
         "min_samples": min_samples,
         "agreement_threshold": agreement,
         "explanation": (
-            "The released api_list is the agent-visible spec; where it contradicts "
-            "recorded successful calls (>=3 samples, >=90% one scalar type) the index "
-            "declaration is corrected and every change is counted here. Required lists are "
-            "never changed; numeric widening/narrowing (integer<->number) is never applied."),
+            "The released api_list is the agent-visible spec; it is repaired only where "
+            "recorded successful calls prove it wrong, using the same evidence bar for both "
+            "kinds of change (>=3 recorded successful values, >=90% agreement on one concrete "
+            "scalar type). (1) Type corrections: a declared scalar type is replaced only when "
+            "the observed type is incompatible with it (number/integer declared vs observed "
+            "string, or string declared vs observed integer/number); numeric widening/narrowing "
+            "(integer<->number) is never applied. (2) Parameter back-fill: a function whose "
+            "declared parameter list is empty gets the recorded argument names added as "
+            "OPTIONAL properties with their observed dominant scalar type. Required lists are "
+            "never changed; every correction is recorded in this block (param_additions is "
+            "complete, not sampled)."),
     }
     return refined, stats
 
@@ -191,8 +209,9 @@ def _json_type(value) -> str | None:
     return None
 
 
-def _dominant_type(bucket: dict[str, int], total: int, agreement: float) -> str | None:
-    if not bucket or total < 1:
+def _dominant_type(bucket: dict[str, int], total: int, agreement: float,
+                   min_samples: int = 3) -> str | None:
+    if not bucket or total < min_samples:
         return None
     kind, count = max(bucket.items(), key=lambda item: item[1])
     if count / total < agreement:

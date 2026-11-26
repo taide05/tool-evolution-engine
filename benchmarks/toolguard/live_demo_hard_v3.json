@@ -1,12 +1,48 @@
 {
   "artifact_version": 2,
-  "experiment": "ToolGuard_hard_multistep_live_ab_v3_task_pool",
+  "experiment": "ToolGuard_hard_multistep_live_ab_v3_task_pool_hn_drift_demo",
   "generated_at": "2026-11-25T03:26:25.274327+00:00",
   "model": "deepseek-v4-flash",
   "protocol": {
-    "task_pool": "V3 drift-hardened 31-task pool: HN account-creation year instead of live karma; ground truth built from the same live APIs before the eval",
+    "task_pool": "V3 drift-hardened 31-task pool (targeted HN contract-drift demo); ground truth built from the same live APIs before the eval",
+    "task_ids": [
+      "capital_weather_japan",
+      "capital_weather_norway",
+      "capital_weather_portugal",
+      "capital_weather_compare_france_germany",
+      "capital_weather_compare_norway_portugal",
+      "capital_population_canberra",
+      "capital_population_ottawa",
+      "capital_gdp_switzerland",
+      "capital_income_brazil",
+      "capital_region_argentina",
+      "population_compare_oslo_wellington",
+      "population_sum_australia_canada",
+      "pypi_release_date_httpx",
+      "pypi_newer_requests_flask",
+      "pypi_newer_numpy_pandas",
+      "hn_item_1_author_account_year",
+      "hn_item_8863_author_account_year",
+      "hn_recent_item_author_account_year",
+      "fx_eur_jpy_cross",
+      "fx_usd_cny_100",
+      "gdp_ratio_bern_canberra",
+      "population_total_three_capitals",
+      "temperature_gap_norway_portugal",
+      "population_compare_france_germany_region",
+      "release_vs_hn_item_date",
+      "fx_triangular_check",
+      "package_earliest_of_three",
+      "capital_weather_triple",
+      "capital_income_population_brazil",
+      "gdp_gap_bern_ottawa",
+      "weather_compare_australia_canada"
+    ],
+    "hard_task_ids": [],
+    "include_hard_tasks": false,
+    "output_artifact": "benchmarks/toolguard/live_demo_hard_v3.json",
     "hn_schema": "drifting",
-    "hn_schema_note": "released schema as-is: get_hn_item declares story_id as string while the backend requires an integer (intentional contract bug)",
+    "hn_schema_note": "targeted demo only: get_hn_item declares story_id as string while the backend requires an integer (synthetic contract bug kept to demonstrate error-hint coercion repair)",
     "rebuilt_from_records": true,
     "arms": [
       "baseline",
@@ -26,6 +62,7 @@
     "wall_seconds": 1366.6,
     "calibration": {
       "description": "one fault-free run per task measured the turn requirement that anchors the budget sweep",
+      "source": ".scratch/toolguard/hard_calibration_v3.json",
       "tasks": {
         "capital_weather_japan": {
           "turns": 4,
@@ -185,6 +222,7 @@
       }
     },
     "fault_injection": {
+      "source": "synthetic",
       "model": "deterministic transient fault epochs: the first N attempts of a faulted logical call fail (timeout / HTTP 429 / HTTP 5xx), then the real call runs",
       "attempts_to_fail": 2,
       "p_timeout": 0.2,
@@ -12087,11 +12125,12 @@
     "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has no live-mutable HN karma tasks.",
     "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
     "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
-    "This artifact was rebuilt from the committed checkpoint records by `--from-records` (no new model calls); failure-mode labels were recomputed from answer+expected with the fixed metadata-aware classifier, and the reproduce commands point at the V3 output path (2026-11-24 review P2-1/P2-7)."
+    "Targeted contract-repair demo run: the agent-visible get_hn_item schema declares story_id as string while the backend requires an integer (synthetic drift, kept only for capability demonstration; it is not the main protocol after the 2026-11-25 review decision).",
+    "This artifact was rebuilt from the committed checkpoint records by `--from-records` (no new model calls); failure-mode labels were recomputed from answer+expected with the fixed metadata-aware classifier, and the reproduce commands point at this artifact's actual output path (benchmarks/toolguard/live_demo_hard_v3.json).",
+    "Budget calibration was reused from the V3 drift run (.scratch/toolguard/hard_calibration_v3.json) so that the HN schema is the only manipulated variable between the V3 and V4 artifacts: every task keeps the exact same fault-free turn requirement (and therefore the same clean+N budget) in both runs."
   ],
   "reproduce": [
-    "python scripts/run_live_demo_hard_v2.py --mode calibrate",
-    "python scripts/run_live_demo_hard_v2.py --workers 2 --output benchmarks/toolguard/live_demo_hard_v3.json",
+    "python scripts/run_live_demo_hard_v2.py --mode eval --budgets clean+1,clean+4,10 --repeats clean+1:3,clean+4:1,10:1 --hn-schema drifting --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json --output benchmarks/toolguard/live_demo_hard_v3.json",
     "python scripts/run_live_demo_hard_v2.py --from-records --output benchmarks/toolguard/live_demo_hard_v3.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]

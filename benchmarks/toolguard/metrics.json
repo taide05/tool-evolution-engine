@@ -48,7 +48,7 @@
         "refined": true,
         "observed_functions": 1451,
         "type_corrections": 4,
-        "params_added": 20,
+        "params_added": 7,
         "type_correction_examples": [
           {
             "function": "retrieve_data_for_instant_cameroon_news",
@@ -83,71 +83,111 @@
             "agreement": 1.0
           }
         ],
-        "param_addition_examples": [
-          {
-            "function": "get_user_orders_for_onboarding_project_v3",
-            "param": "user_id",
-            "observed_type": "string",
-            "observations": 1
-          },
+        "param_additions": [
           {
             "function": "get_trending_for_url_content_extractor",
             "param": "category",
             "observed_type": "string",
-            "observations": 9
+            "observations": 9,
+            "agreement": 1.0
           },
           {
             "function": "get_trending_for_url_content_extractor",
             "param": "region",
             "observed_type": "string",
-            "observations": 4
-          },
-          {
-            "function": "uuidv4_generator_for_uuid_generator",
-            "param": "name",
-            "observed_type": "string",
-            "observations": 2
-          },
-          {
-            "function": "uuidv4_generator_for_uuid_generator",
-            "param": "namespace",
-            "observed_type": "string",
-            "observations": 2
-          },
-          {
-            "function": "music_data_by_id_for_tiktok_solutions",
-            "param": "ID",
-            "observed_type": "string",
-            "observations": 1
+            "observations": 4,
+            "agreement": 1.0
           },
           {
             "function": "search_jokes_by_anime_name_for_anime_jokes",
             "param": "anime_name",
             "observed_type": "string",
-            "observations": 3
+            "observations": 3,
+            "agreement": 1.0
           },
           {
-            "function": "search_jokes_for_anime_jokes",
-            "param": "keyword",
+            "function": "get_messages_for_tmail",
+            "param": "authorization",
             "observed_type": "string",
-            "observations": 2
+            "observations": 5,
+            "agreement": 1.0
           },
           {
-            "function": "search_jokes_for_anime_jokes",
-            "param": "keywords",
+            "function": "get_countries_for_seventraderapi",
+            "param": "x_apisports_key",
             "observed_type": "string",
-            "observations": 2
+            "observations": 26,
+            "agreement": 1.0
           },
           {
-            "function": "unknown_for_reqres",
+            "function": "getwebsitesscreenshot_for_images_infos_api1",
+            "param": "fullpage",
+            "observed_type": "string",
+            "observations": 3,
+            "agreement": 1.0
+          },
+          {
+            "function": "getwebsitesscreenshot_for_images_infos_api1",
+            "param": "url",
+            "observed_type": "string",
+            "observations": 9,
+            "agreement": 1.0
+          }
+        ],
+        "param_addition_examples": [
+          {
+            "function": "get_trending_for_url_content_extractor",
             "param": "category",
             "observed_type": "string",
-            "observations": 1
+            "observations": 9,
+            "agreement": 1.0
+          },
+          {
+            "function": "get_trending_for_url_content_extractor",
+            "param": "region",
+            "observed_type": "string",
+            "observations": 4,
+            "agreement": 1.0
+          },
+          {
+            "function": "search_jokes_by_anime_name_for_anime_jokes",
+            "param": "anime_name",
+            "observed_type": "string",
+            "observations": 3,
+            "agreement": 1.0
+          },
+          {
+            "function": "get_messages_for_tmail",
+            "param": "authorization",
+            "observed_type": "string",
+            "observations": 5,
+            "agreement": 1.0
+          },
+          {
+            "function": "get_countries_for_seventraderapi",
+            "param": "x_apisports_key",
+            "observed_type": "string",
+            "observations": 26,
+            "agreement": 1.0
+          },
+          {
+            "function": "getwebsitesscreenshot_for_images_infos_api1",
+            "param": "fullpage",
+            "observed_type": "string",
+            "observations": 3,
+            "agreement": 1.0
+          },
+          {
+            "function": "getwebsitesscreenshot_for_images_infos_api1",
+            "param": "url",
+            "observed_type": "string",
+            "observations": 9,
+            "agreement": 1.0
           }
         ],
         "min_samples": 3,
         "agreement_threshold": 0.9,
-        "explanation": "The released api_list is the agent-visible spec; where it contradicts recorded successful calls (>=3 samples, >=90% one scalar type) the index declaration is corrected and every change is counted here. Required lists are never changed; numeric widening/narrowing (integer<->number) is never applied."
+        "explanation": "The released api_list is the agent-visible spec; it is repaired only where recorded successful calls prove it wrong, using the same evidence bar for both kinds of change (>=3 recorded successful values, >=90% agreement on one concrete scalar type). (1) Type corrections: a declared scalar type is replaced only when the observed type is incompatible with it (number/integer declared vs observed string, or string declared vs observed integer/number); numeric widening/narrowing (integer<->number) is never applied. (2) Parameter back-fill: a function whose declared parameter list is empty gets the recorded argument names added as OPTIONAL properties with their observed dominant scalar type. Required lists are never changed; every correction is recorded in this block (param_additions is complete, not sampled)."
       }
     }
   },
@@ -178,11 +218,66 @@
     },
     "schema_fidelity": {
       "type_corrections": 4,
-      "params_added": 20,
+      "params_added": 7,
       "observed_functions": 1451,
       "min_samples": 3,
       "agreement_threshold": 0.9,
-      "rules": "declared api_list scalar types are corrected only when >=3 recorded successful values agree >=90% on an incompatible scalar type; empty parameter lists are back-filled as optional params; required lists never change; integer<->number widening is never applied"
+      "param_additions": [
+        {
+          "function": "get_trending_for_url_content_extractor",
+          "param": "category",
+          "observed_type": "string",
+          "observations": 9,
+          "agreement": 1.0
+        },
+        {
+          "function": "get_trending_for_url_content_extractor",
+          "param": "region",
+          "observed_type": "string",
+          "observations": 4,
+          "agreement": 1.0
+        },
+        {
+          "function": "search_jokes_by_anime_name_for_anime_jokes",
+          "param": "anime_name",
+          "observed_type": "string",
+          "observations": 3,
+          "agreement": 1.0
+        },
+        {
+          "function": "get_messages_for_tmail",
+          "param": "authorization",
+          "observed_type": "string",
+          "observations": 5,
+          "agreement": 1.0
+        },
+        {
+          "function": "get_countries_for_seventraderapi",
+          "param": "x_apisports_key",
+          "observed_type": "string",
+          "observations": 26,
+          "agreement": 1.0
+        },
+        {
+          "function": "getwebsitesscreenshot_for_images_infos_api1",
+          "param": "fullpage",
+          "observed_type": "string",
+          "observations": 3,
+          "agreement": 1.0
+        },
+        {
+          "function": "getwebsitesscreenshot_for_images_infos_api1",
+          "param": "url",
+          "observed_type": "string",
+          "observations": 9,
+          "agreement": 1.0
+        }
+      ],
+      "rules": {
+        "type_correction": "declared api_list scalar types are corrected only when >=3 recorded successful values agree >=90% on an INCOMPATIBLE scalar type (number/integer declared vs observed string, or string declared vs observed integer/number); integer<->number widening/narrowing is never applied",
+        "param_backfill": "only for functions whose declared parameter list is empty: an argument name observed in recorded successful calls is added as an OPTIONAL property only when >=3 recorded successful values carry it and >=90% of those values share one concrete scalar JSON type; required lists are never changed",
+        "invariants": "every correction is counted and recorded with its evidence; param_additions is the complete back-fill list (not sampled); no manual edits to the index"
+      }
     }
   },
   "results": {
@@ -190,23 +285,23 @@
       "evaluated_calls": 30120,
       "evaluable_failures": 969,
       "proposed_repairs": 583,
-      "schema_passed": 539,
-      "schema_rejected_proposals": 205,
-      "schema_rejected_failures": 44,
-      "value_verified_repairs": 37,
+      "schema_passed": 519,
+      "schema_rejected_proposals": 231,
+      "schema_rejected_failures": 64,
+      "value_verified_repairs": 38,
       "coerced_repairs": 131,
-      "accepted_repairs": 576,
-      "repairable": 576,
-      "accepted_rate": 0.988,
-      "schema_valid_rate": 0.9245,
-      "value_verified_rate": 0.0635,
-      "repair_coverage_of_failures": 0.5944,
-      "value_verifiable": 279,
+      "accepted_repairs": 557,
+      "repairable": 557,
+      "accepted_rate": 0.9554,
+      "schema_valid_rate": 0.8902,
+      "value_verified_rate": 0.0652,
+      "repair_coverage_of_failures": 0.5748,
+      "value_verifiable": 276,
       "value_agreement": 127,
-      "value_agreement_rate": 0.4552,
+      "value_agreement_rate": 0.4601,
       "cache_verified_recovered": 48,
       "cache_verified_still_error": 0,
-      "cache_miss": 528,
+      "cache_miss": 509,
       "train_models_used": [
         "chatgpt",
         "gpt-3.5-turbo-1106",
@@ -217,18 +312,18 @@
       "chatgpt": {
         "test_failures": 295,
         "proposed_repairs": 170,
-        "schema_passed": 145,
-        "schema_rejected_proposals": 60,
+        "schema_passed": 139,
+        "schema_rejected_proposals": 66,
         "value_verified_repairs": 18,
         "coerced_repairs": 51,
-        "accepted_repairs": 163,
-        "repairable": 163,
-        "repair_coverage_of_failures": 0.5525,
-        "schema_valid_rate": 0.8529,
+        "accepted_repairs": 157,
+        "repairable": 157,
+        "repair_coverage_of_failures": 0.5322,
+        "schema_valid_rate": 0.8176,
         "value_verified_rate": 0.1059,
-        "accepted_rate": 0.9588,
+        "accepted_rate": 0.9235,
         "cache_verification": {
-          "cache_miss": 149,
+          "cache_miss": 143,
           "verified_recovered": 14
         },
         "train_models_used": [
@@ -239,18 +334,18 @@
       "gpt-3.5-turbo-1106": {
         "test_failures": 205,
         "proposed_repairs": 118,
-        "schema_passed": 112,
-        "schema_rejected_proposals": 43,
+        "schema_passed": 111,
+        "schema_rejected_proposals": 45,
         "value_verified_repairs": 6,
         "coerced_repairs": 25,
-        "accepted_repairs": 118,
-        "repairable": 118,
-        "repair_coverage_of_failures": 0.5756,
-        "schema_valid_rate": 0.9492,
+        "accepted_repairs": 117,
+        "repairable": 117,
+        "repair_coverage_of_failures": 0.5707,
+        "schema_valid_rate": 0.9407,
         "value_verified_rate": 0.0508,
-        "accepted_rate": 1.0,
+        "accepted_rate": 0.9915,
         "cache_verification": {
-          "cache_miss": 110,
+          "cache_miss": 109,
           "verified_recovered": 8
         },
         "train_models_used": [
@@ -261,18 +356,18 @@
       "gpt-4-0613": {
         "test_failures": 109,
         "proposed_repairs": 62,
-        "schema_passed": 62,
-        "schema_rejected_proposals": 17,
-        "value_verified_repairs": 0,
+        "schema_passed": 60,
+        "schema_rejected_proposals": 19,
+        "value_verified_repairs": 1,
         "coerced_repairs": 9,
-        "accepted_repairs": 62,
-        "repairable": 62,
-        "repair_coverage_of_failures": 0.5688,
-        "schema_valid_rate": 1.0,
-        "value_verified_rate": 0.0,
-        "accepted_rate": 1.0,
+        "accepted_repairs": 61,
+        "repairable": 61,
+        "repair_coverage_of_failures": 0.5596,
+        "schema_valid_rate": 0.9677,
+        "value_verified_rate": 0.0161,
+        "accepted_rate": 0.9839,
         "cache_verification": {
-          "cache_miss": 52,
+          "cache_miss": 51,
           "verified_recovered": 10
         },
         "train_models_used": [
@@ -284,18 +379,18 @@
       "gpt-4-turbo-preview": {
         "test_failures": 168,
         "proposed_repairs": 111,
-        "schema_passed": 98,
-        "schema_rejected_proposals": 49,
+        "schema_passed": 95,
+        "schema_rejected_proposals": 52,
         "value_verified_repairs": 13,
         "coerced_repairs": 25,
-        "accepted_repairs": 111,
-        "repairable": 111,
-        "repair_coverage_of_failures": 0.6607,
-        "schema_valid_rate": 0.8829,
+        "accepted_repairs": 108,
+        "repairable": 108,
+        "repair_coverage_of_failures": 0.6429,
+        "schema_valid_rate": 0.8559,
         "value_verified_rate": 0.1171,
-        "accepted_rate": 1.0,
+        "accepted_rate": 0.973,
         "cache_verification": {
-          "cache_miss": 106,
+          "cache_miss": 103,
           "verified_recovered": 5
         },
         "train_models_used": [
@@ -307,18 +402,18 @@
       "toolllama": {
         "test_failures": 192,
         "proposed_repairs": 122,
-        "schema_passed": 122,
-        "schema_rejected_proposals": 36,
+        "schema_passed": 114,
+        "schema_rejected_proposals": 49,
         "value_verified_repairs": 0,
         "coerced_repairs": 21,
-        "accepted_repairs": 122,
-        "repairable": 122,
-        "repair_coverage_of_failures": 0.6354,
-        "schema_valid_rate": 1.0,
+        "accepted_repairs": 114,
+        "repairable": 114,
+        "repair_coverage_of_failures": 0.5938,
+        "schema_valid_rate": 0.9344,
         "value_verified_rate": 0.0,
-        "accepted_rate": 1.0,
+        "accepted_rate": 0.9344,
         "cache_verification": {
-          "cache_miss": 111,
+          "cache_miss": 103,
           "verified_recovered": 11
         },
         "train_models_used": [
@@ -328,11 +423,11 @@
       }
     },
     "lomo_per_fold_coverage": {
-      "chatgpt": 0.5525,
-      "gpt-3.5-turbo-1106": 0.5756,
-      "gpt-4-0613": 0.5688,
-      "gpt-4-turbo-preview": 0.6607,
-      "toolllama": 0.6354
+      "chatgpt": 0.5322,
+      "gpt-3.5-turbo-1106": 0.5707,
+      "gpt-4-0613": 0.5596,
+      "gpt-4-turbo-preview": 0.6429,
+      "toolllama": 0.5938
     },
     "skipped_no_schema": 64,
     "skipped_no_schema_breakdown": {
@@ -351,23 +446,23 @@
       "evaluated_calls": 10088,
       "evaluable_failures": 277,
       "proposed_repairs": 173,
-      "schema_passed": 147,
-      "schema_rejected_proposals": 76,
-      "schema_rejected_failures": 26,
-      "value_verified_repairs": 26,
+      "schema_passed": 142,
+      "schema_rejected_proposals": 81,
+      "schema_rejected_failures": 31,
+      "value_verified_repairs": 30,
       "coerced_repairs": 24,
-      "accepted_repairs": 173,
-      "repairable": 173,
-      "accepted_rate": 1.0,
-      "schema_valid_rate": 0.8497,
-      "value_verified_rate": 0.1503,
-      "repair_coverage_of_failures": 0.6245,
+      "accepted_repairs": 172,
+      "repairable": 172,
+      "accepted_rate": 0.9942,
+      "schema_valid_rate": 0.8208,
+      "value_verified_rate": 0.1734,
+      "repair_coverage_of_failures": 0.6209,
       "value_verifiable": 148,
       "value_agreement": 79,
       "value_agreement_rate": 0.5338,
       "cache_verified_recovered": 15,
       "cache_verified_still_error": 0,
-      "cache_miss": 158,
+      "cache_miss": 157,
       "train_models_used": [
         "chatgpt",
         "gpt-3.5-turbo-1106",
@@ -376,9 +471,9 @@
       "test_calls": 10088,
       "test_failures": 277,
       "skipped_no_schema": 11,
-      "repair_coverage_of_calls": 0.0171,
+      "repair_coverage_of_calls": 0.017,
       "cache_verification": {
-        "cache_miss": 158,
+        "cache_miss": 157,
         "verified_recovered": 15
       },
       "per_rule_category": {
@@ -394,13 +489,13 @@
           "cache_miss": 10
         },
         "memory_replay_successful_call": {
-          "repairs": 95,
-          "schema_valid": 69,
+          "repairs": 94,
+          "schema_valid": 64,
           "value_verifiable": 85,
           "value_agreement": 67,
           "cache_verified_recovered": 15,
-          "cache_miss": 80,
-          "value_verified": 26
+          "cache_miss": 79,
+          "value_verified": 30
         },
         "fill_required_from_schema": {
           "repairs": 10,
@@ -426,7 +521,7 @@
       "rule_categories": {
         "rule_schema_default": 46,
         "rule_memory_param_fill": 10,
-        "rule_memory_replay_successful_call": 95,
+        "rule_memory_replay_successful_call": 94,
         "rule_fill_required_from_schema": 10,
         "rule_text_extract": 12
       }
@@ -494,46 +589,46 @@
         "evaluated_calls": 30120,
         "evaluable_failures": 969,
         "proposed_repairs": 604,
-        "schema_passed": 556,
-        "schema_rejected_proposals": 334,
-        "schema_rejected_failures": 48,
-        "value_verified_repairs": 41,
+        "schema_passed": 533,
+        "schema_rejected_proposals": 363,
+        "schema_rejected_failures": 71,
+        "value_verified_repairs": 45,
         "coerced_repairs": 127,
-        "accepted_repairs": 597,
-        "repairable": 597,
-        "accepted_rate": 0.9884,
-        "schema_valid_rate": 0.9205,
-        "value_verified_rate": 0.0679,
-        "repair_coverage_of_failures": 0.6161,
-        "value_verifiable": 289,
+        "accepted_repairs": 578,
+        "repairable": 578,
+        "accepted_rate": 0.957,
+        "schema_valid_rate": 0.8825,
+        "value_verified_rate": 0.0745,
+        "repair_coverage_of_failures": 0.5965,
+        "value_verifiable": 286,
         "value_agreement": 135,
-        "value_agreement_rate": 0.4671,
+        "value_agreement_rate": 0.472,
         "cache_verified_recovered": 49,
         "cache_verified_still_error": 0,
-        "cache_miss": 548,
+        "cache_miss": 529,
         "train_models_used": null
       },
       "per_fold_coverage": {
-        "chatgpt": 0.5763,
-        "gpt-3.5-turbo-1106": 0.6244,
-        "gpt-4-0613": 0.5688,
-        "gpt-4-turbo-preview": 0.6845,
-        "toolllama": 0.6354
+        "chatgpt": 0.5559,
+        "gpt-3.5-turbo-1106": 0.6195,
+        "gpt-4-0613": 0.5596,
+        "gpt-4-turbo-preview": 0.6667,
+        "toolllama": 0.5938
       }
     }
   },
   "key_findings": [
     "Offline replay over 30120 evaluated calls from 7636 parsed trajectories: 1033 recorded failures, of which 969 target an indexed tool with parseable arguments (64 skipped_no_schema: 30 raw arguments, 34 tool not in schemas).",
-    "Evidence funnel (LOMO): 583 proposed repairs; 539 pass the declared structural schema (92.5%; 131 of them after deterministic type coercion), 44 proposals are schema-rejected for their failure; 37 schema-invalid proposals are admitted only because they are exact recorded successful invocations of the same task/function. Accepted repairs = 539 + 37 = 576/969 (59.4% coverage).",
-    "Cross-task generalisation (cross_group): 57/76 evaluable failures repaired (75.0%); decomposition: 57 schema-valid (type-coerced schema defaults) + 0 value-verified learned text-extraction repairs (the upstream api_list declares those date parameters as number, while both the extractor and the recorded successful calls use ISO date strings).",
-    "Learned text-extractor repairs: cross_model 12 accepted (all value-verified), cross_group 27 accepted (all value-verified, value agreement 27/27); value agreement with a recorded successful call is reported per category and is a strict lower bound on verified repairs.",
+    "Evidence funnel (LOMO): 583 proposed repairs; 519 pass the declared structural schema (89.0%; 131 of them after deterministic type coercion), 64 proposals are schema-rejected for their failure; 38 schema-invalid proposals are admitted only because they are exact recorded successful invocations of the same task/function. Accepted repairs = 519 + 38 = 557/969 (57.5% coverage).",
+    "Cross-task generalisation (cross_group): 57/76 evaluable failures repaired (75.0%); decomposition: 57 schema-valid + 0 value-verified. The 27 learned text-extraction repairs now pass the declared schema directly (27 schema-valid) because the schema index repairs the date parameters that the upstream api_list declared as number using the recorded successful ISO-string calls as evidence.",
+    "Learned text-extractor repairs: cross_model 12 accepted (12 schema-valid after the schema-index repair; value agreement 12/12), cross_group 27 accepted (27 schema-valid; value agreement 27/27); value agreement with a recorded successful call is reported per category and is a strict lower bound on verified repairs.",
     "Cache verification found 0 regressions: every verified cache replay returned a recorded successful response, while cache misses stay unverified (not failures).",
     "LOMO protocol: leave-one-out inside the fixed three-model training universe (chatgpt, gpt-3.5-turbo-1106, toolllama); the gpt-4 families are test-only, so these numbers are NOT a true five-family leave-one-model-out. The true-LOMO sensitivity run is reported separately."
   ],
   "limitations": [
     "Offline replay only: no live API/tool execution in this artifact.",
     "Two evidence tiers are reported, never mixed into one rate: (1) schema-valid (full structural JSON-Schema validation of the declared schema: type/required/extra/enum/format/range, with deterministic type coercion attempted first and counted in coerced_repairs); (2) value-verified (schema-invalid proposals admitted only when they are an exact recorded successful invocation of the same task/function). schema_valid_rate = schema_passed / proposed; it is NOT 100% by construction.",
-    "The declared agent-visible schema (upstream StableToolBench api_list) has fidelity limits; the index is now repaired where recorded successful calls prove it wrong (4 scalar type corrections, 20 back-filled parameters; every change counted in dataset.schema_index and protocol.schema_fidelity). Remaining upstream defects without enough recorded evidence are still reported as schema-rejected proposals / value-verified repairs, not silently waived.",
+    "The declared agent-visible schema (upstream StableToolBench api_list) has fidelity limits; the index is now repaired where recorded successful calls prove it wrong (4 scalar type corrections, 7 back-filled parameters; every change counted in dataset.schema_index and protocol.schema_fidelity). Remaining upstream defects without enough recorded evidence are still reported as schema-rejected proposals / value-verified repairs, not silently waived.",
     "64 failures are excluded as skipped_no_schema (see results.skipped_no_schema_explanation); they remain in dataset.real_failures.",
     "The released response cache covers reference-solution inputs only; repaired calls that miss the cache cannot be verified (cache_miss in each protocol); cache misses are not failures.",
     "Value agreement is only checkable when some model solved the same task instance; it is a strict lower bound on verified repairs.",

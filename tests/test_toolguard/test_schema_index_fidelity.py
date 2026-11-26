@@ -86,6 +86,47 @@ def test_empty_parameter_list_is_back_filled_as_optional() -> None:
     assert stats["params_added"] == 2
 
 
+def test_single_successful_sample_does_not_back_fill_parameters() -> None:
+    """One recorded success is not enough evidence for a schema change (min_samples=3)."""
+    schema = _schema({}, required=())
+    refined, stats = refine_schema_index({"f": schema}, [_call("f", {"user_id": "u1"})])
+    assert refined["f"].properties == {}
+    assert stats["params_added"] == 0
+    assert stats["param_additions"] == []
+
+
+def test_three_consistent_successful_samples_back_fill_parameters() -> None:
+    schema = _schema({}, required=())
+    calls = [_call("f", {"user_id": value}) for value in ("u1", "u2", "u3")]
+    refined, stats = refine_schema_index({"f": schema}, calls)
+    assert refined["f"].properties["user_id"]["type"] == "string"
+    assert stats["params_added"] == 1
+    addition = stats["param_additions"][0]
+    assert addition == {"function": "f", "param": "user_id", "observed_type": "string",
+                        "observations": 3, "agreement": 1.0}
+    # the full list is recorded, not just the first ten examples
+    assert stats["param_additions"] == stats["param_addition_examples"]
+
+
+def test_error_response_fields_are_not_back_filled() -> None:
+    """A recorded "successful" call whose arguments are an API error envelope is not evidence.
+
+    ``getsponsorships_for_diablo4_smartable`` was called once with
+    ``{"error": "Function not available", "response": ""}``; with min_samples=3 those
+    pseudo-parameters must not become part of the schema.
+    """
+    function = "getsponsorships_for_diablo4_smartable"
+    schema = _schema({}, required=())
+    calls = [
+        _call(function, {"error": "Function not available", "response": ""}),
+        _call(function, {"error": "Function not available"}),
+    ]
+    refined, stats = refine_schema_index({function: schema}, calls)
+    assert refined[function].properties == {}
+    assert stats["params_added"] == 0
+
+
+
 def test_failed_calls_are_not_evidence() -> None:
     schema = _schema({"start_date": {"type": "number"}})
     calls = [_call("f", {"start_date": "2022-06-01"}, ok=False) for _ in range(5)]

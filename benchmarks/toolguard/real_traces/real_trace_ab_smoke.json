@@ -1,10 +1,21 @@
 {
   "artifact_version": 2,
-  "experiment": "ToolGuard_hard_multistep_live_ab_v4_task_pool_hn_consistent",
+  "experiment": "ToolGuard_hard_multistep_live_ab_real_trace_fault_source_smoke",
   "generated_at": "2026-11-26T03:18:13.614657+00:00",
   "model": "deepseek-v4-flash",
   "protocol": {
-    "task_pool": "V4: the V3 drift-hardened 31-task pool with the HN contract fixed (schema matches backend, 2026-11-25 review decision); ground truth built from the same live APIs before the eval",
+    "task_pool": "6-task subset of the V4 drift-hardened 31-task pool used as a real-trace fault-source robustness check (not the V4 main protocol); the captured real API errors are replayed on selected logical calls and the wrapper is identical for both arms",
+    "task_ids": [
+      "capital_weather_japan",
+      "population_sum_australia_canada",
+      "pypi_release_date_httpx",
+      "hn_item_8863_author_account_year",
+      "fx_usd_cny_100",
+      "gdp_ratio_bern_canberra"
+    ],
+    "hard_task_ids": [],
+    "include_hard_tasks": false,
+    "output_artifact": "benchmarks/toolguard/real_traces/real_trace_ab_smoke.json",
     "hn_schema": "consistent",
     "hn_schema_note": "consistent contract (main protocol): get_hn_item.story_id is an integer in the agent-visible schema, matching the backend and the real HN API; the synthetic drift is not injected here. The drift-based repair capability is demonstrated separately in live_demo_hard_v3.json and its attribution control live_demo_hard_v3_hnconsistent.json",
     "rebuilt_from_records": false,
@@ -22,7 +33,7 @@
     "wall_seconds": 100.2,
     "calibration": {
       "description": "one fault-free run per task measured the turn requirement that anchors the budget sweep",
-      "source": ".scratch\\toolguard\\hard_calibration_v4.json",
+      "source": ".scratch/toolguard/hard_calibration_v4.json",
       "tasks": {
         "capital_weather_japan": {
           "turns": 4,
@@ -723,11 +734,12 @@
     "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
     "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
     "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item schema declares story_id as integer, matching the backend and the real Hacker News API, so the synthetic contract mismatch is no longer injected into this run. The drifting variant is kept only as the targeted contract-repair demonstration (live_demo_hard_v3.json) with its attribution control (live_demo_hard_v3_hnconsistent.json).",
-    "Fault source `real-trace`: selected logical calls replay a genuine error captured from the real public APIs (see benchmarks/toolguard/real_traces/) before reaching the backend. This is a robustness check using real error text, not the headline synthetic-fault protocol; the injected trace id/count is recorded per cell in fault_kinds/real-trace stats and the wrapper is identical for both arms."
+    "Fault source `real-trace`: selected logical calls replay a genuine error captured from the real public APIs (see benchmarks/toolguard/real_traces/) before reaching the backend. This is a robustness check using real error text, not the headline synthetic-fault protocol; the injected trace id/count is recorded per cell in fault_kinds/real-trace stats and the wrapper is identical for both arms.",
+    "Task subset: this artifact covers 6 of the V4 31-task pool (12 cells), not the V4 headline protocol. It exists as a targeted smoke/robustness check (real-trace fault source); the paired baseline-vs-guard causality for the main claims stays with live_demo_hard_v4.json."
   ],
   "reproduce": [
-    "python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4.json",
-    "python scripts/run_live_demo_hard_v2.py --hn-schema consistent --workers 2 --calibration .scratch\\toolguard\\hard_calibration_v4.json --output benchmarks/toolguard/live_demo_hard_v4.json",
+    "python scripts/run_live_demo_hard_v2.py --mode calibrate --task-ids capital_weather_japan,population_sum_australia_canada,pypi_release_date_httpx,hn_item_8863_author_account_year,fx_usd_cny_100,gdp_ratio_bern_canberra --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4.json",
+    "python scripts/run_live_demo_hard_v2.py --mode eval --fault-source real-trace --real-traces benchmarks/toolguard/real_traces/real_fault_traces.json --task-ids capital_weather_japan,population_sum_australia_canada,pypi_release_date_httpx,hn_item_8863_author_account_year,fx_usd_cny_100,gdp_ratio_bern_canberra --budgets clean+1 --repeats clean+1:1 --hn-schema consistent --workers 1 --calibration .scratch/toolguard/hard_calibration_v4.json --output benchmarks/toolguard/real_traces/real_trace_ab_smoke.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]
 }
