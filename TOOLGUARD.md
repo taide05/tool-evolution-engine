@@ -155,7 +155,7 @@ V2 的 MCP 验证从“同一中间件在 MCP 上也能重试”升级为**部�
 - 结论：修正预算不对称后，guard 相对 baseline 的优势仍然成立（clean+1 **+59.4pp**，V2 口径 +65.6pp；差距主要是 baseline 在 fx 任务上获得了更多预算），且 guard 在两种锚点下都是 100%。
 
 - 传输无关性验证：`ToolGuard` 本体一行未改，新增的是 `MCPBridge`（含重连）/`MCPMultiBackend`（多 server 路由 + 未注册别名）adapter；
-- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **116 passed**（全仓 403 passed，另有 1 failed + 20 errors 为与本仓库无关的 Windows 临时目录 ACL 环境错误）。
+- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **128 passed**（全仓 **437 passed**，0 failed/0 error；此前记录的 Windows 临时目录 ACL 环境错误在当前完全权限运行下未再出现）。
 
 artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_demo_v2.json)（历史协议），V3 [`benchmarks/toolguard/mcp_demo_v3.json`](benchmarks/toolguard/mcp_demo_v3.json)（当前主口径；`experiment=ToolGuard_mcp_multiserver_live_ab_v3_baseline_anchor`、`protocol.budget_anchor=baseline`；本轮用 `--from-records` 从 checkpoint 重建生成元数据，records/aggregate 未变）。
 
@@ -276,6 +276,7 @@ V4 的一个已知局限是 **ceiling effect**：三个模型在紧预算 clean+
 | `live_demo_multimodel_v3.json` | 多模型 V3（历史，HN drift 能力演示）：3 模型 / 558 格 / 漂移加固 GT；本轮用 `--from-records` 重建，重算 failure_mode、补 `tasks_per_model`、修 reproduce，**数字未变** | `dcd5f20` 产物，本轮未重跑 | `--hn-schema drifting` + `--from-records` 重建；旧运行见 commit `dcd5f20` |
 | `live_demo_multimodel_v4.json` | 多模型 **V4（当前主口径）**：V3 任务池 + HN 契约修正（consistent）；558 格，clean+1 baseline 39/62 / 40/62 / 43/62 vs guard 62/62 | 本轮（重跑） | `--mode eval --hn-schema consistent --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --output benchmarks/toolguard/live_demo_multimodel_v4.json`（复用 V3 per-model 锚点） |
 | `live_demo_hard_v3_hnconsistent.json` | HN schema drift **归因对照**（促成 V4 修复）：31 任务 / clean+1 / 3 repeats / 186 格；baseline 51/93→61/93，HN 子集 2/12→12/12 | 本轮（重跑） | `--budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json` |
+| `real_traces/*.json`（证据数据，非 contract artifact） | 真实线上错误 trace（16 条）+ repair-layer 在线验证（4/4 可推导契约错误恢复，12 条语义错误诚实失败）+ real-trace A/B smoke（12 格）+ V5 hard-task pilot（24 格，ceiling 负结果） | 本轮 | `collect_real_fault_traces.py`、`run_real_fault_repair.py`、`run_live_demo_hard_v2.py --fault-source real-trace`、`run_live_demo_hard_v2.py --include-hard-tasks`（见快速开始） |
 
 一致性由 `python scripts/validate_toolguard_artifacts.py`（以及 `tests/test_toolguard/test_artifact_contracts.py`）检查：artifact 的 aggregate 中 **success/rate/Wilson/turns/tokens/tool_errors/p 等所有派生字段**都必须能从逐条 records 重算（`src/tool_evolution/toolguard/artifact_metrics.py`），`metrics.json` 的比率与 schema 漏斗由同一模块复算；必须有 limitations/reproduce、复现脚本必须存在、多模型 `tasks_per_model` 快照必须与每条记录的 `expected` 一致。篡改上述任一字段都会被 `tests/test_toolguard/test_artifact_tamper.py` 的负例抓住。比较类 artifact（含 V3 多模型，产生于关系验证器之前）用新验证器离线重判 **756 条记录，success 变化 0**（`python scripts/rescore_toolguard_verifier.py`，只读、不改 artifact）。
 
@@ -343,6 +344,24 @@ python scripts/validate_toolguard_artifacts.py
 python scripts/toolguard_evidence_summary.py
 # 用关系验证器离线重判已提交 artifact 的比较类答案（只读，不改 artifact）
 python scripts/rescore_toolguard_verifier.py
+
+# 真实线上故障 trace（只打免费公开 API，无 LLM/无付费）：采集 + repair-layer 在线验证
+python scripts/collect_real_fault_traces.py
+python scripts/run_real_fault_repair.py
+
+# real-trace 作为 A/B 故障源（鲁棒性检查；非 headline 协议）
+python scripts/run_live_demo_hard_v2.py --fault-source real-trace --budgets clean+1 --repeats clean+1:1 \
+  --calibration .scratch/toolguard/hard_calibration_v4.json \
+  --output benchmarks/toolguard/real_traces/real_trace_ab_smoke.json
+
+# V5 更难任务 pilot（opt-in；默认 V4 pool 不变）
+python scripts/run_live_demo_hard_v2.py --mode calibrate --include-hard-tasks \
+  --task-ids hard_gdp_triple_gap,hard_weather_spread_three,hard_pypi_release_span,hard_hn_author_age_gap \
+  --calibration .scratch/toolguard/hard_calibration_v5.json
+python scripts/run_live_demo_hard_v2.py --include-hard-tasks \
+  --task-ids hard_gdp_triple_gap,hard_weather_spread_three,hard_pypi_release_span,hard_hn_author_age_gap \
+  --budgets clean+1 --repeats clean+1:3 --calibration .scratch/toolguard/hard_calibration_v5.json \
+  --workers 2 --output benchmarks/toolguard/real_traces/hard_pilot_v5.json
 
 python -m pytest tests/test_toolguard -q -p no:cacheprovider
 ```

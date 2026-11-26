@@ -14,10 +14,10 @@
 ## 0. 30 秒核验路径（不需要 API key、不联网）
 
 ```bash
-python -m pytest tests/test_toolguard -q -p no:cacheprovider   # 期望：116 passed
+python -m pytest tests/test_toolguard -q -p no:cacheprovider   # 期望：128 passed（全仓 437 passed）
 python scripts/validate_toolguard_artifacts.py                # 期望：13 artifacts, all consistent
 python scripts/toolguard_evidence_summary.py                  # 所有派生数字从 records 重算
-python scripts/rescore_toolguard_verifier.py                  # 新关系验证器离线重判已提交答案
+python scripts/rescore_toolguard_verifier.py                  # 期望：756 条比较记录，611→611，0 变化
 ```
 
 这四条命令的输出就是本文/TOOLGUARD 中所有数字的**机器可复核版本**。
@@ -38,11 +38,12 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 
 ## 1. 审阅范围与不在范围
 
-**交付内容**（`feat/toolguard` 分支；16 个功能 commit + 本轮证据链修复/HN 修正 commit）：
+**交付内容**（`feat/toolguard` 分支；16 个功能 commit + 本轮修复 commit `3e35e47..ea6a038`，已 push）：
 
 1. **ToolGuard 中间件**：离线（30,120 次记录调用）→ live 端到端（真实公开 API + 真实 LLM agent）→ 真实 MCP（双 stdio server、进程崩溃重连、catalog drift）→ 多模型复制（3 模型）。核心代码在 `src/tool_evolution/toolguard/`。
-2. **实验与证据**：4 轮 live 实验、13 个 artifact、逐格记录 + 逐条修复事件 + 局限声明、Wilson CI / 配对 McNemar；离线修复评测带完整 schema 漏斗与定量协议说明。
-3. **证据链修复（本轮）**：records 重算 + 篡改负例、完整 schema 校验、关系型比较 verifier、确定性 metrics 生成器、LOMO 协议如实化、P1/P2 口径修正；单模型 HN 契约修正并重跑 V4 主口径。
+2. **实验与证据**：4 轮 live 实验、13 个 contract artifact、逐格记录 + 逐条修复事件 + 局限声明、Wilson CI / 配对 McNemar；离线修复评测带完整 schema 漏斗与定量协议说明。
+3. **证据链修复（本轮）**：records 重算 + 篡改负例、完整 schema 校验、关系型比较 verifier、确定性 metrics 生成器、LOMO 协议如实化、P1/P2 口径修正；单/多模型 HN 契约修正并重跑 V4 主口径；schema 索引保真度修复（4 类型 + 20 参数）；真实线上故障 trace 证据 + real-trace 故障源；V5 hard-task ceiling pilot（负结果）。
+4. **额外证据数据（不是第 14 个 contract artifact）**：`benchmarks/toolguard/real_traces/` 下 4 个 JSON（真实 trace、repair 结果、real-trace A/B smoke、V5 hard pilot），由 `collect_real_fault_traces.py` / `run_real_fault_repair.py` / live runner 生成，有测试固定内容。
 
 **明确不在本次范围**：
 
@@ -66,9 +67,12 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `src/tool_evolution/toolguard/verify.py` | 程序化验证：关系断言、否定词、million 等单位、版本比较 | 反向答案是否判失败（见 `tests/test_toolguard/test_relation_verifier.py`） |
 | `scripts/toolguard_evidence_summary.py` | 审阅者核验路径：records 重算输出 | 是否打印 records 值而非 artifact aggregate 值 |
 | `scripts/build_metrics_artifact.py` | 离线 `metrics.json` 的确定性生成器 | 文档命令能否重建 artifact |
-| `scripts/rescore_toolguard_verifier.py` | 用新 verifier 只读重判已提交答案 | success 变化清单 |
-| `tests/test_toolguard/` | 116 个测试 | 规则/命名/guard/backend/MCP/故障 epoch/统计/契约/篡改负例/schema 负例/关系验证器/HN schema 模式 |
-| `benchmarks/toolguard/*.json` | 13 个 artifact（含单/多模型 V4 主口径、HN 归因对照、V3 drift 演示与 MCP v3） | 见 §3 证据地图与 TOOLGUARD 的“产物与复现溯源”表 |
+| `scripts/rescore_toolguard_verifier.py` | 用新 verifier 只读重判已提交答案 | success 变化清单（756 条，0 变化） |
+| `scripts/collect_real_fault_traces.py` / `run_real_fault_repair.py` | 真实线上错误 trace 采集 + repair-layer 在线验证 | 16 条真实错误、4/4 可推导契约错误恢复、12 条语义错误诚实失败 |
+| `src/tool_evolution/toolguard/{schemas,live}.py` | schema 索引保真度修正 + `RealTraceFaultBackend` 故障源 | 修正是否有证据/留痕；real-trace 注入是否确定性、两臂一致 |
+| `tests/test_toolguard/` | 128 个测试 | 规则/命名/guard/backend/MCP/故障 epoch/统计/契约/篡改负例/schema 负例/关系验证器/HN schema 模式/schema 索引保真度/real-trace |
+| `benchmarks/toolguard/*.json` | 13 个 contract artifact（单/多模型 V4 主口径、HN 归因对照、V3 drift 演示、MCP v3） | 见 §3 证据地图与 TOOLGUARD 的“产物与复现溯源”表 |
+| `benchmarks/toolguard/real_traces/*.json` | 真实 trace / repair / A/B smoke / V5 hard pilot（证据数据，非 contract artifact） | 对应脚本重跑可复现；测试固定关键结论 |
 
 ---
 
@@ -162,7 +166,21 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `8c76d4c` | 收口：V3 单模型 artifact（310 格）+ README/TOOLGUARD 溯源与一致性修订 |
 | `3e35e47` | REVIEW.md 审阅指引 + evidence summary 脚本 |
 
-### 本轮未提交的证据链修复（工作区；等待作者确认后再 commit）
+### 本轮修复 commit（`3e35e47..ea6a038`，已 push 到 `origin/feat/toolguard`）
+
+| commit | 内容 |
+|---|---|
+| `824e9e3` | 证据链修复：records 重算 + 契约/篡改负例；严格 schema 校验 + 两层证据；关系 verifier + 离线重判；确定性 metrics 生成；HN 对照/MCP 分开校准 artifact |
+| `828096a` | 单模型 HN 契约修正（V4 310 格重跑） |
+| `8c36541` | rescore 计数文档刷新 |
+| `eee2c41` | 多模型 HN 契约修正（V4 558 格重跑） |
+| `403b95d` | schema 索引保真度修复（4 类型 + 20 参数，离线指标重算） |
+| `eeaa4e4` | 真实线上故障 trace 采集 + repair-layer 在线验证 |
+| `3cb677a` | integral-float→integer coercion（真实 trace 暴露的缺口） |
+| `af97244` | real-trace 故障源接入 A/B + 12 格 smoke |
+| `ea6a038` | V5 hard-task ceiling pilot（opt-in，负结果） |
+
+### 本轮变更文件汇总
 
 | 文件 | 改动 |
 |---|---|
@@ -197,20 +215,22 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `benchmarks/toolguard/{live_demo_hard_v3,live_demo_multimodel_v3}.json` | `--from-records` 免费重建：重算 failure_mode、恢复 `tasks_per_model`、修 reproduce；**数字未变** |
 | `scripts/parse_toolbench_trajectories.py` | 统计 unparseable observation 数 |
 | `scripts/download_toolguard_data.py` | 修正下一步命令的 baselines 路径 |
-| `tests/test_toolguard/`（+5 个文件） | 篡改负例、schema 负例、关系验证器负例、失败模式分类负例、coercion/value-verified/HN schema 模式负例；测试数 55 → 116 |
-| `TOOLGUARD.md` / `REVIEW.md` | 数字与口径按上述修正（离线主表、LOMO 标注、382/782、HN 占比与单/多模型 V4 修正、50→116、四层→三层、待重跑项等） |
+| `tests/test_toolguard/`（+8 个文件） | 篡改负例、schema 负例、关系验证器负例、失败模式分类负例、coercion/value-verified/HN schema 模式负例、schema 索引保真度、real-trace 证据/后端；测试数 55 → 128 |
+| `TOOLGUARD.md` / `REVIEW.md` | 数字与口径按上述修正（离线主表、LOMO 标注、382/782、HN 占比与单/多模型 V4 修正、schema 保真度、real-trace、V5 pilot、四层→三层等） |
 
 ---
 
 ## 7. 审阅 checklist（可勾选）
 
-- [ ] `pytest tests/test_toolguard` **116 passed**；`validate_toolguard_artifacts.py` 13 artifacts 全过
+- [ ] `pytest tests/test_toolguard` **128 passed**（全仓 437 passed）；`validate_toolguard_artifacts.py` 13 artifacts 全过；`rescore_toolguard_verifier.py` 756 条 0 变化
 - [ ] 篡改 tokens/rate/turns/tool_errors/Wilson/p 后 validator 必须报错（`test_artifact_tamper.py`）
 - [ ] `toolguard_evidence_summary.py` 输出与 TOOLGUARD.md 主数字一致；live 段确为 records 重算
 - [ ] 真实线上故障 trace：`collect_real_fault_traces.py` + `run_real_fault_repair.py` 重跑后 16 条真实错误中 4 条可推导契约错误恢复并在线验证，其余 12 条不可语义修复（`test_real_fault_traces.py`）
 - [ ] `metrics.json` 可由 `build_metrics_artifact.py` 从评测输出重建；`proposed = schema_passed + schema_rejected_failures` 且 `accepted = schema_passed + value_verified_repairs` 自洽
 - [ ] HN 契约：`LiveHardBackend()` 默认广告 integer `story_id`，仅 `hn_schema="drifting"` 才注入 string 漂移（`test_live_hard_backend_hn_schema_modes`）；V4 artifact `protocol.hn_schema=consistent`、`protocol.calibration.source` 指向 V3 锚点
-- [ ] `schema_valid_rate` 确实 < 100%（LOMO 81.0% / cross-model 71.1% / cross-group 52.6%）；被拒提议、coercion、value-verified 分别计数
+- [ ] `schema_valid_rate` 在修复后的口径下为 LOMO 92.5% / cross-model 85.0% / cross-group 100%（cross-group 是因为唯一被证伪的日期类型已按证据修正，不是构造性 100%）；被拒提议、coercion、value-verified 分别计数
+- [ ] schema 索引保真度修正有证据/留痕（`dataset.schema_index.fidelity_repair`：4 处类型修正 + 20 个回填，≥3 样本/≥90% 一致，不改 required，不做 integer↔number 拓宽）
+- [ ] V5 hard pilot 负结果与 ceiling 含义在文档中如实记录（baseline 10/12 vs guard 12/12；单纯加长链不破 ceiling）
 - [ ] coercion 修复与 value-verified 层有负例/正例测试（不可转换值不得被硬转；未逐字命中真实成功调用不得计入）
 - [ ] LOMO 协议字段如实说明“固定三模型训练、gpt-4 只做测试”，且敏感性数字在 artifact 内
 - [ ] `schema_check.py` 对字符串冒充 integer / enum 越界 / format 非法 / range 越界都判失败（`test_schema_validation.py`）
@@ -231,5 +251,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 - `.env`（DeepSeek/百炼 key）**永不提交**、`.env.example` 只有占位符；审阅无需 key；
 - `docs/`、`STATUS.md` 是作者本地笔记（gitignored），不随仓库分发；
 - 本会话与上一轮所有 API 消耗由作者承担；审阅者不必复跑；
-- 本轮修复已 commit 并 push 到 `origin/feat/toolguard`；不修改旧 TEE 的 25 条历史指标；
+- 本轮修复已 commit 并 push 到 `origin/feat/toolguard`（最新 `ea6a038`）；不修改旧 TEE 的 25 条历史指标；
+- **给审阅 AI 的建议顺序**：先跑 §0 四条命令（全部离线、无需 key）→ 读 TOOLGUARD 的「结果（离线）」「第二轮 V4」「真实线上故障 trace」「V5 hard pilot」→ 用 §3 证据地图抽查 3–5 个 claim → 读 §5 的“不能声称”清单并逐条压测 → 最后对照 §7 checklist 报告 findings；
+- 证据数据（`benchmarks/toolguard/real_traces/`）不是 contract artifact，但都有生成脚本与测试固定，审阅时可离线重跑 `collect_real_fault_traces.py` + `run_real_fault_repair.py`（只打免费公开 API）；
 - 若审阅者发现“文档数字与 artifact 不一致”，优先修复文档并记录 finding，而不是改 artifact。
