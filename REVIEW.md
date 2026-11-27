@@ -14,7 +14,7 @@
 ## 0. 30 秒核验路径（不需要 API key、不联网）
 
 ```bash
-python -m pytest tests/test_toolguard -q -p no:cacheprovider   # 期望：145 passed（全仓 454 passed）
+python -m pytest tests/test_toolguard -q -p no:cacheprovider   # 期望：153 passed（全仓 462 passed）
 python scripts/validate_toolguard_artifacts.py                # 期望：13 artifacts, all consistent
 python scripts/toolguard_evidence_summary.py                  # 所有派生数字从 records 重算
 python scripts/rescore_toolguard_verifier.py                  # 期望：756 条比较记录，611→611，0 变化
@@ -70,7 +70,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `scripts/rescore_toolguard_verifier.py` | 用新 verifier 只读重判已提交答案 | success 变化清单（756 条，0 变化） |
 | `scripts/collect_real_fault_traces.py` / `run_real_fault_repair.py` | 真实线上错误 trace 采集 + repair-layer 在线验证 | 16 条真实错误、4/4 可推导契约错误恢复、12 条语义错误诚实失败 |
 | `src/tool_evolution/toolguard/{schemas,live}.py`、`scripts/run_*_live.py` | schema 索引保真度修正 + `RealTraceFaultBackend` 故障源 + artifact-specific reproduce 生成 / 离线元数据重建 | 修正是否有证据/留痕（4 类型 + 7 参数，≥3 样本/≥90% 一致）；real-trace 注入是否确定性、两臂一致；reproduce 是否只写本 artifact |
-| `tests/test_toolguard/` | 145 个测试 | 规则/命名/guard/backend/MCP/故障 epoch/统计/契约/reproduce 元数据（含多模型 calibration provenance）/篡改负例/schema 负例/关系验证器/HN schema 模式/schema 索引保真度/real-trace |
+| `tests/test_toolguard/` | 153 个测试 | 规则/命名/guard/backend/MCP/故障 epoch/统计/契约/reproduce 元数据（含多模型 calibration provenance）/篡改负例/schema 负例/关系验证器/HN schema 模式/schema 索引保真度/real-trace |
 | `benchmarks/toolguard/*.json` | 13 个 contract artifact（单/多模型 V4 主口径、HN 归因对照、V3 drift 演示、MCP v3） | 见 §3 证据地图与 TOOLGUARD 的“产物与复现溯源”表 |
 | `benchmarks/toolguard/real_traces/*.json` | 真实 trace / repair / A/B smoke / V5 hard pilot（证据数据，非 contract artifact） | 对应脚本重跑可复现；测试固定关键结论 |
 
@@ -224,14 +224,14 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `benchmarks/toolguard/real_traces/{real_trace_ab_smoke,hard_pilot_v5}.json`、`live_demo_hard_v3_hnconsistent.json` | `--update-metadata` 只改 experiment/protocol/limitations/reproduce（real-trace 故障源、hard tasks/task ids、HN 归因对照标注、artifact-specific 输出路径；real-trace/V5 limitations 按类型替换通用旧句）；**records/aggregate 对 HEAD 逐字节相同** |
 | `scripts/parse_toolbench_trajectories.py` | 统计 unparseable observation 数 |
 | `scripts/download_toolguard_data.py` | 修正下一步命令的 baselines 路径 |
-| `tests/test_toolguard/`（+9 个文件） | 篡改负例、schema 负例、关系验证器负例、失败模式分类负例、coercion/value-verified/HN schema 模式负例、schema 索引保真度（含回填 min_samples/≥90% 与 below_min_samples 负例）、real-trace 证据/后端、reproduce 元数据（证据 artifact 关键 flags 与 --output 自身路径、多模型 calibration provenance/from-records/update-metadata 保留）、artifact contract 负例（reproduce 指向别的 artifact / calibration task 不匹配）；测试数 55 → 145 |
+| `tests/test_toolguard/`（+9 个文件） | 篡改负例、schema 负例、关系验证器负例、失败模式分类负例、coercion/value-verified/HN schema 模式负例、schema 索引保真度（含回填 min_samples/≥90% 与 below_min_samples 负例）、real-trace 证据/后端、reproduce 元数据（证据 artifact 关键 flags 与 --output 自身路径、多模型 calibration provenance/from-records/update-metadata 保留）、artifact contract 负例（reproduce 指向别的 artifact / calibration task 不匹配）；测试数 55 → 153 |
 | `TOOLGUARD.md` / `REVIEW.md` | 数字与口径按上述修正（离线主表 557/519/38/64、LOMO 59.7%、schema 89.0%/82.1%、schema 保真度 4+7、reproduce 契约、format 日历校验、本地 commit/push 真实状态等） |
 
 ---
 
 ## 7. 审阅 checklist（可勾选）
 
-- [ ] `pytest tests/test_toolguard` **145 passed**（全仓 454 passed）；`validate_toolguard_artifacts.py` 13 artifacts 全过；`rescore_toolguard_verifier.py` 756 条 0 变化
+- [ ] `pytest tests/test_toolguard` **153 passed**（全仓 462 passed）；`validate_toolguard_artifacts.py` 13 artifacts 全过；`rescore_toolguard_verifier.py` 756 条 0 变化
 - [ ] 篡改 tokens/rate/turns/tool_errors/Wilson/p 后 validator 必须报错（`test_artifact_tamper.py`）
 - [ ] `toolguard_evidence_summary.py` 输出与 TOOLGUARD.md 主数字一致；live 段确为 records 重算
 - [ ] 真实线上故障 trace：`collect_real_fault_traces.py` + `run_real_fault_repair.py` 重跑后 16 条真实错误中 4 条可推导契约错误恢复并在线验证，其余 12 条不可语义修复（`test_real_fault_traces.py`）

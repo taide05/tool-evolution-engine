@@ -155,7 +155,7 @@ V2 的 MCP 验证从“同一中间件在 MCP 上也能重试”升级为**部�
 - 结论：修正预算不对称后，guard 相对 baseline 的优势仍然成立（clean+1 **+59.4pp**，V2 口径 +65.6pp；差距主要是 baseline 在 fx 任务上获得了更多预算），且 guard 在两种锚点下都是 100%。
 
 - 传输无关性验证：`ToolGuard` 本体一行未改，新增的是 `MCPBridge`（含重连）/`MCPMultiBackend`（多 server 路由 + 未注册别名）adapter；
-- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **145 passed**（全仓 **454 passed**，0 failed/0 error；此前记录的 Windows 临时目录 ACL 环境错误在当前完全权限运行下未再出现）。
+- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **153 passed**（全仓 **462 passed**，0 failed/0 error；此前记录的 Windows 临时目录 ACL 环境错误在当前完全权限运行下未再出现）。
 
 artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_demo_v2.json)（历史协议），V3 [`benchmarks/toolguard/mcp_demo_v3.json`](benchmarks/toolguard/mcp_demo_v3.json)（当前主口径；`experiment=ToolGuard_mcp_multiserver_live_ab_v3_baseline_anchor`、`protocol.budget_anchor=baseline`；本轮用 `--from-records` 从 checkpoint 重建生成元数据，records/aggregate 未变）。
 
