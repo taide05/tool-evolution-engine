@@ -304,7 +304,9 @@ python scripts/run_live_demo.py --max-turns 4 --p-timeout 0.35 --p-rate-limit 0.
 
 # 单模型预算扫描（V4 当前主口径：31 任务 + HN 契约修正；约 25 分钟，2 worker）
 # 预算锚点复用 V3 的 calibration（同一逐任务 fault-free 轮数，schema 是唯一变量）。
-# 若要做一次全新校准，也可先跑：python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4.json
+# 若要做一次全新校准，也可先跑：python scripts/run_live_demo_hard_v2.py --mode calibrate --hn-schema consistent --calibration .scratch/toolguard/hard_calibration_v4_fresh.json
+# 注意：.scratch/toolguard/hard_calibration_v4.json 是 real-trace smoke 的 probe 校准输入（calibration.source），
+# 不要覆盖它；optional fresh V4 校准写 *_fresh.json（如 hard_calibration_v4_fresh.json）。
 python scripts/run_live_demo_hard_v2.py --hn-schema consistent --workers 2 \
   --calibration .scratch/toolguard/hard_calibration_v3.json \
   --output benchmarks/toolguard/live_demo_hard_v4.json

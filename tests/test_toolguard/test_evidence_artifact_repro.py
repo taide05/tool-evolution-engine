@@ -67,6 +67,16 @@ def _temp_artifact_copy(name: str) -> Path:
     return target
 
 
+def _write_temp_calibration(artifact: Path, *, marker: str | None = None) -> Path:
+    """Write a calibration payload next to the artifact copy, optionally with a marker model."""
+    payload = json.loads(json.dumps(_load(artifact)["calibration"]))
+    if marker:
+        payload.setdefault("models", {})[marker] = {"tier": "marker", "model": marker, "tasks": {}}
+    target = artifact.parent / ("calibration_marker.json" if marker else "calibration_copy.json")
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return target
+
+
 def test_real_trace_smoke_metadata_is_artifact_specific() -> None:
     data = _load(EVIDENCE / "real_trace_ab_smoke.json")
     commands = data["reproduce"]
@@ -204,15 +214,24 @@ def test_multimodel_v3_reproduce_does_not_overwrite_shared_calibration() -> None
 def test_multimodel_from_records_preserves_calibration_provenance() -> None:
     copy = _temp_artifact_copy("live_demo_multimodel_v4.json")
     try:
+        origin = _load(BENCHMARKS / "live_demo_multimodel_v4.json")
         result = _run_multimodel_runner("--from-records", "--output", str(copy))
         assert result.returncode == 0, result.stderr
         rebuilt = _load(copy)
         calibration = rebuilt["protocol"]["calibration"]
         assert calibration["mode"] == "reused"
         assert calibration["reused_from"] == "V3"
+        assert calibration["required_input"] is True
         assert calibration["reproduce_regenerates_calibration"] is False
         assert "--mode calibrate" not in " ".join(rebuilt["reproduce"])
-        assert rebuilt["calibration"].get("provenance", {}).get("mode") == "reused"
+        # checkpoint-first: the calibration models and the top-level provenance mirror are
+        # restored from the checkpoint, not re-derived from an external file name
+        assert rebuilt["calibration"]["models"] == origin["calibration"]["models"]
+        top = rebuilt["calibration"]["provenance"]
+        assert top["mode"] == "reused"
+        assert top["reused_from"] == "V3"
+        assert top["required_input"] is True
+        assert top["reproduce_regenerates_calibration"] is False
     finally:
         shutil.rmtree(copy.parent, ignore_errors=True)
 
@@ -235,3 +254,100 @@ def test_multimodel_update_metadata_preserves_calibration_provenance() -> None:
                     json.dumps(refreshed[key], sort_keys=True), f"{name}: {key} changed"
         finally:
             shutil.rmtree(copy.parent, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# --from-records is hermetic: calibration is restored checkpoint-first
+# ---------------------------------------------------------------------------
+def test_from_records_restores_embedded_calibration_when_external_missing() -> None:
+    """A rebuild without a usable external calibration uses the checkpoint's own payload."""
+    copy = _temp_artifact_copy("live_demo_multimodel_v4.json")
+    try:
+        origin = _load(copy)
+        missing = copy.parent / "does-not-exist-calibration.json"
+        result = _run_multimodel_runner("--from-records", "--output", str(copy),
+                                       "--calibration", str(missing))
+        assert result.returncode == 0, result.stderr
+        rebuilt = _load(copy)
+        assert rebuilt["calibration"]["models"] == origin["calibration"]["models"]
+        assert rebuilt["protocol"]["calibration"]["mode"] == "reused"
+        assert rebuilt["protocol"]["calibration"]["reused_from"] == "V3"
+    finally:
+        shutil.rmtree(copy.parent, ignore_errors=True)
+
+
+def test_from_records_accepts_matching_external_calibration() -> None:
+    """An external calibration identical to the embedded one is accepted; models stay fixed."""
+    copy = _temp_artifact_copy("live_demo_multimodel_v3.json")
+    try:
+        origin = _load(copy)
+        matching = _write_temp_calibration(copy)
+        result = _run_multimodel_runner("--from-records", "--output", str(copy),
+                                       "--calibration", str(matching))
+        assert result.returncode == 0, result.stderr
+        rebuilt = _load(copy)
+        assert rebuilt["calibration"]["models"] == origin["calibration"]["models"]
+        assert rebuilt["protocol"]["calibration"]["mode"] == "fresh"
+        assert rebuilt["calibration"]["provenance"]["mode"] == "fresh"
+    finally:
+        shutil.rmtree(copy.parent, ignore_errors=True)
+
+
+def test_from_records_refuses_different_external_calibration_without_writing() -> None:
+    """A different external calibration cannot be relabelled as this artifact's rebuild."""
+    copy = _temp_artifact_copy("live_demo_multimodel_v4.json")
+    try:
+        before_text = copy.read_text(encoding="utf-8")
+        marker = _write_temp_calibration(copy, marker="probe-marker-model")
+        result = _run_multimodel_runner("--from-records", "--output", str(copy),
+                                       "--calibration", str(marker))
+        assert result.returncode != 0
+        stderr = result.stderr
+        assert "--from-records" in stderr
+        assert "from its own checkpoint" in stderr
+        assert "Refusing to substitute different calibration evidence" in stderr
+        assert "--from-records defaults to rebuilding from the checkpoint" in stderr
+        assert "instead of presenting it as this artifact's rebuild" in stderr
+        # the output artifact was NOT rewritten with the mismatched calibration
+        assert copy.read_text(encoding="utf-8") == before_text
+        assert "probe-marker-model" not in _load(copy)["calibration"]["models"]
+    finally:
+        shutil.rmtree(copy.parent, ignore_errors=True)
+
+
+def test_from_records_fails_loudly_when_no_calibration_available() -> None:
+    """No embedded calibration and no external file: return 2, never write {"models": {}}."""
+    copy = _temp_artifact_copy("live_demo_multimodel_v4.json")
+    try:
+        data = _load(copy)
+        del data["calibration"]
+        copy.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        before_text = copy.read_text(encoding="utf-8")
+        missing = copy.parent / "missing-calibration.json"
+        result = _run_multimodel_runner("--from-records", "--output", str(copy),
+                                       "--calibration", str(missing))
+        assert result.returncode == 2
+        assert "no per-model calibration available" in result.stderr
+        # unchanged: no silent {"models": {}} rewrite of the artifact
+        assert copy.read_text(encoding="utf-8") == before_text
+    finally:
+        shutil.rmtree(copy.parent, ignore_errors=True)
+
+
+def test_update_metadata_keeps_checkpoint_calibration_models() -> None:
+    """--update-metadata copies the checkpoint calibration payload verbatim, ignoring files."""
+    copy = _temp_artifact_copy("live_demo_multimodel_v4.json")
+    try:
+        origin = _load(copy)
+        marker = _write_temp_calibration(copy, marker="probe-marker-model")
+        result = _run_multimodel_runner("--update-metadata", "--output", str(copy),
+                                       "--calibration", str(marker))
+        assert result.returncode == 0, result.stderr
+        refreshed = _load(copy)
+        assert refreshed["calibration"]["models"] == origin["calibration"]["models"]
+        assert "probe-marker-model" not in refreshed["calibration"]["models"]
+        for key in ("records", "aggregate"):
+            assert json.dumps(origin[key], sort_keys=True) == \
+                json.dumps(refreshed[key], sort_keys=True), f"{key} changed"
+    finally:
+        shutil.rmtree(copy.parent, ignore_errors=True)

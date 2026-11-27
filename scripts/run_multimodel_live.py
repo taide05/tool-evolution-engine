@@ -773,14 +773,51 @@ def _inherit_hn_schema(checkpoint: dict, args: argparse.Namespace) -> None:
     args.hn_schema = protocol.get("hn_schema") or "drifting"
 
 
-def _checkpoint_calibration(checkpoint: dict, args: argparse.Namespace) -> dict:
-    path = Path(getattr(args, "calibration", "") or "")
-    if path.is_file():
-        return json.loads(path.read_text(encoding="utf-8"))
+def _checkpoint_calibration(checkpoint: dict, args: argparse.Namespace) -> dict | None:
+    """Calibration for an offline rebuild; the checkpoint's embedded payload is authoritative.
+
+    ``--from-records`` reconstructs an artifact from its own committed checkpoint, so the
+    per-model calibration embedded in the checkpoint wins over an external ``--calibration``
+    file: silently swapping in a different calibration would present different calibration
+    evidence as if it were this artifact's own.  Only an explicitly passed external file is
+    consulted; a differing one is refused.  An external file is used solely when the checkpoint
+    predates the embedded calibration payload.  When neither is available the rebuild fails
+    loudly (``None``) instead of continuing with an empty ``{"models": {}}`` payload that would
+    make the eval/aggregate path fail later.
+    """
+    output = getattr(args, "output", "checkpoint")
     payload = checkpoint.get("calibration")
-    if isinstance(payload, dict) and payload.get("models"):
+    checkpoint_models = payload.get("models") if isinstance(payload, dict) else None
+    path = Path(str(getattr(args, "calibration", "") or ""))
+    external = None
+    if path.is_file():
+        try:
+            external = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: --calibration {path} is not valid JSON ({exc}); a --from-records "
+                  "rebuild needs the per-model calibration embedded in the checkpoint",
+                  file=sys.stderr)
+            return None
+    external_models = external.get("models") if isinstance(external, dict) else None
+    if checkpoint_models:
+        if external is not None and external_models != checkpoint_models:
+            print(f"ERROR: --from-records rebuilds {output} from its own checkpoint, whose "
+                  f"embedded per-model calibration differs from --calibration {path}. Refusing "
+                  "to substitute different calibration evidence. --from-records defaults to "
+                  "rebuilding from the checkpoint; if you really need a different calibration, "
+                  "use the explicit eval/calibration command with its own --output path instead "
+                  "of presenting it as this artifact's rebuild.", file=sys.stderr)
+            return None
         return payload
-    return {"models": {}}
+    if external_models:
+        print(f"WARNING: {output} checkpoint embeds no calibration payload; falling back to "
+              f"external --calibration {path} for the offline rebuild", file=sys.stderr)
+        return external
+    print(f"ERROR: no per-model calibration available for {output}: the checkpoint embeds no "
+          "calibration.models and no usable --calibration file was given. A checkpoint written "
+          "by the multimodel runner embeds its calibration; rebuild from such a checkpoint or "
+          "pass --calibration explicitly.", file=sys.stderr)
+    return None
 
 
 def _checkpoint_calibration_source(checkpoint: dict, args: argparse.Namespace) -> str | None:
@@ -830,6 +867,12 @@ def run_from_checkpoint(specs: list[dict], args: argparse.Namespace) -> int:
     public APIs) is skipped entirely, the aggregate is recomputed from the records, the
     failure-mode labels are recomputed from ``answer`` + ``expected`` with the fixed
     classifier, and the reproduce block is regenerated for this artifact's actual path.
+
+    The per-model calibration is checkpoint-first as well: the calibration embedded in the
+    checkpoint is authoritative.  An external ``--calibration`` file is only used when the
+    checkpoint embeds no calibration payload; a file that differs from the embedded one is
+    refused (see ``_checkpoint_calibration``), so a rebuild cannot silently swap in different
+    calibration evidence.
     """
     output = Path(args.output)
     checkpoint = _load_checkpoint(output)
@@ -840,10 +883,12 @@ def run_from_checkpoint(specs: list[dict], args: argparse.Namespace) -> int:
     skipped = checkpoint.get("skipped") or []
     conditions, repeats = _checkpoint_conditions(checkpoint)
     calibration_payload = _checkpoint_calibration(checkpoint, args)
+    if calibration_payload is None:
+        return 2
     calibrations = calibration_payload.get("models") or {}
     if not calibrations:
-        print(f"ERROR: no per-model calibration available for {output}; pass --calibration "
-              "or use a checkpoint that embeds the calibration payload", file=sys.stderr)
+        print(f"ERROR: no per-model calibration available for {output}; the checkpoint embeds "
+              "no calibration.models and no usable --calibration file was given", file=sys.stderr)
         return 2
     print(f"loaded {len(records)} records / {len(tasks)} tasks from checkpoint {output}")
     missing_models = sorted({spec["key"] for spec in specs} - {row["model_key"] for row in records})
@@ -935,7 +980,9 @@ def main() -> int:
     parser.add_argument("--mode", choices=("calibrate", "eval"), default="eval")
     parser.add_argument("--from-records", action="store_true",
                         help="rebuild the final artifact from the checkpoint records already at --output "
-                             "(offline: no live task construction / no API calls)")
+                             "(offline: no live task construction / no API calls; per-model "
+                             "calibration is restored from the checkpoint, and a differing "
+                             "--calibration file is refused)")
     parser.add_argument("--update-metadata", action="store_true",
                         help="refresh ONLY experiment/protocol/limitations/reproduce of the "
                              "artifact at --output from its checkpoint; records/aggregate/tasks/"
@@ -944,7 +991,11 @@ def main() -> int:
     parser.add_argument("--budgets", default=DEFAULT_BUDGETS)
     parser.add_argument("--repeats", default=DEFAULT_REPEATS)
     parser.add_argument("--workers", type=int, default=2)
-    parser.add_argument("--calibration", default=DEFAULT_CALIBRATION)
+    parser.add_argument("--calibration", default=None,
+                        help="per-model calibration anchor for --mode eval/calibrate "
+                             f"(default: {DEFAULT_CALIBRATION}); for --from-records/"
+                             "--update-metadata only an explicitly passed file is consulted, and "
+                             "it must match the calibration embedded in the checkpoint")
     parser.add_argument("--clean-max-turns", type=int, default=14)
     parser.add_argument("--p-timeout", type=float, default=0.20)
     parser.add_argument("--p-rate-limit", type=float, default=0.10)
@@ -974,6 +1025,12 @@ def main() -> int:
     if args.calibration_reused_from and args.calibration_mode != "reused" \
             and not (args.from_records or args.update_metadata):
         parser.error("--calibration-reused-from only applies with --calibration-mode reused")
+    # --calibration is the explicit anchor for eval/calibrate (defaulted lazily here so the
+    # help text can describe it without making the file appear "explicitly passed").  The
+    # offline rebuild paths instead treat the calibration embedded in the checkpoint as
+    # authoritative; they consult --calibration only when it was really passed on the CLI.
+    if not (args.from_records or args.update_metadata) and not args.calibration:
+        args.calibration = DEFAULT_CALIBRATION
     specs = model_specs()
 
     if args.from_records or args.update_metadata:
