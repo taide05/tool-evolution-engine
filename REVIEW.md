@@ -2,9 +2,9 @@
 
 > **给外部审阅者（AI 或人）**：这份文档告诉你交付了什么、证据在哪里、如何**不依赖作者自述**地核对这些数字、以及哪些结论**不能**采信。若只读三份文件：本文件 → [TOOLGUARD.md](TOOLGUARD.md)（设计与结果）→ `benchmarks/toolguard/*.json`（逐格证据）。
 >
-> **2026-11-24 证据链修复轮 + 2026-11-25 HN 契约修正（单/多模型 V4）+ 2026-11-25 审阅 finding 收口轮（本地 commit，未 push）**：针对外部审阅的 3 个 P0 + P1/P2，本轮只修证据链、不加功能：证据汇总从 records 重算全部派生字段并加篡改负例、完整 JSON Schema 校验 + schema 漏斗、比较类 verifier 改为关系断言 + 离线重判、离线 metrics 改为确定性生成 + LOMO 协议如实标注、P2 文档/复现修复；随后按评审决定修正 HN schema 契约并重跑出**单/多模型 V4 主口径**，另做 schema 索引保真度修复与真实线上故障 trace 证据（见 §3/§5）；最后按审阅 findings 修正 schema 参数回填证据门槛（≥3 成功样本/≥90% 一致）、reproduce 元数据 artifact-specific、format 真实日历校验与文档口径；并修正多模型 calibration provenance（V4 复用 V3 锚点、reproduce 不重新校准、显式 mode/reused_from、from-records/update-metadata 保留 provenance），**离线指标按新代码重算，未重跑任何付费 live**。
+> **2026-11-24 证据链修复轮 + 2026-11-25 HN 契约修正（单/多模型 V4）+ 2026-11-25 审阅 finding 收口轮（commit 与 push 状态见下方分支说明）**：针对外部审阅的 3 个 P0 + P1/P2，本轮只修证据链、不加功能：证据汇总从 records 重算全部派生字段并加篡改负例、完整 JSON Schema 校验 + schema 漏斗、比较类 verifier 改为关系断言 + 离线重判、离线 metrics 改为确定性生成 + LOMO 协议如实标注、P2 文档/复现修复；随后按评审决定修正 HN schema 契约并重跑出**单/多模型 V4 主口径**，另做 schema 索引保真度修复与真实线上故障 trace 证据（见 §3/§5）；最后按审阅 findings 修正 schema 参数回填证据门槛（≥3 成功样本/≥90% 一致）、reproduce 元数据 artifact-specific、format 真实日历校验与文档口径；并修正多模型 calibration provenance（V4 复用 V3 锚点、reproduce 不重新校准、显式 mode/reused_from、from-records/update-metadata 保留 provenance），**离线指标按新代码重算，未重跑任何付费 live**。
 
-- 分支：`feat/toolguard`（基线 `opt/tee-tools` @ `7fd644c`）；本轮修复**均为本地 commit，尚未 push**：远端 `origin/feat/toolguard` 停在 **`aef8fd3`**，本地领先（以 `git log --oneline origin/feat/toolguard..HEAD` 为准；最后一次成功 push 是 `aef8fd3`，之后仅 docs/修复 commit）
+- 分支：`feat/toolguard`（基线 `opt/tee-tools` @ `7fd644c`）；`aef8fd3` 及之前的 commit 已 push 到 `origin/feat/toolguard`；`aef8fd3..HEAD` 的修复 commit 是否已同步，以 `git log --oneline origin/feat/toolguard..HEAD` 为准（输出为空即已同步）
 - 工作区状态：干净；本文件描述的是“本轮修复 commit”这一审阅状态（之前的 `3e35e47` 是被审阅的交付基线）
 - 审阅包内容：`REVIEW.md`（本文）+ `TOOLGUARD.md`（正式结果文档）+ 13 个 JSON artifact + 代码/测试 + `benchmarks/toolguard/real_traces/` 证据 JSON
 - 作者：AI coding agent（单次会话），所以本文档按“可被反驳”的方式写：每个结论都给了可执行核验方式
@@ -29,7 +29,7 @@ python scripts/rescore_toolguard_verifier.py                  # 期望：756 条
 想看“本轮修复改了什么”：
 
 ```bash
-git log --oneline -3         # 本轮修复 commit（本地 commit；远端停在 aef8fd3，见文件头）
+git log --oneline -3         # 本轮修复 commit（push 状态见文件头；以 git log --oneline origin/feat/toolguard..HEAD 为准）
 git show --stat HEAD         # 最近一次修复的内容
 git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 ```
@@ -38,7 +38,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 
 ## 1. 审阅范围与不在范围
 
-**交付内容**（`feat/toolguard` 分支；16 个功能 commit + `3e35e47..HEAD` 的修复 commit，**全部本地 commit，远端停在 `aef8fd3`**）：
+**交付内容**（`feat/toolguard` 分支；16 个功能 commit + `3e35e47..HEAD` 的修复 commit；`aef8fd3` 及之前已 push，`aef8fd3..HEAD` 的同步状态以 `git log --oneline origin/feat/toolguard..HEAD` 为准）：
 
 1. **ToolGuard 中间件**：离线（30,120 次记录调用）→ live 端到端（真实公开 API + 真实 LLM agent）→ 真实 MCP（双 stdio server、进程崩溃重连、catalog drift）→ 多模型复制（3 模型）。核心代码在 `src/tool_evolution/toolguard/`。
 2. **实验与证据**：4 轮 live 实验、13 个 contract artifact、逐格记录 + 逐条修复事件 + 局限声明、Wilson CI / 配对 McNemar；离线修复评测带完整 schema 漏斗与定量协议说明。
@@ -139,7 +139,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 11. **MCP V2 任务池是 V2 时代**（16 任务子集），与 V3 单模型/多模型数字不同源。
 12. **解析器**把 20 条无法解析的 observation 当成功（0.07%）；30,120 是记录调用/重试次数，不是独立任务数。
 13. **免费公开 API 非生产级**：GitHub 限流已从任务集移除；API 漂移可能影响复跑。
-14. **本轮修复 commit 目前只在本地（无 CI、未 push）**：远端 `origin/feat/toolguard` 停在 `aef8fd3`，本地领先若干 commit（以 `git log --oneline origin/feat/toolguard..HEAD` 为准）；V4 是修正后的主口径，但 live 数字仍有 LLM 采样随机性（单模型复跑 ±2 格级波动，非 HN 子集在对照实验与 V4 完整重跑间出现 2 格差异是正常的）；审阅者复跑允许 ±1–2 格差异，但不能出现方向性反转。
+14. **无 CI；本轮修复 commit 的 push 状态以命令为准**：`aef8fd3` 及之前已 push；`aef8fd3..HEAD` 的修复 commit 是否已同步，以 `git log --oneline origin/feat/toolguard..HEAD` 为准（输出为空即已同步）；V4 是修正后的主口径，但 live 数字仍有 LLM 采样随机性（单模型复跑 ±2 格级波动，非 HN 子集在对照实验与 V4 完整重跑间出现 2 格差异是正常的）；审阅者复跑允许 ±1–2 格差异，但不能出现方向性反转。
 
 ---
 
@@ -167,7 +167,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `8c76d4c` | 收口：V3 单模型 artifact（310 格）+ README/TOOLGUARD 溯源与一致性修订 |
 | `3e35e47` | REVIEW.md 审阅指引 + evidence summary 脚本 |
 
-### 本轮修复 commit（`3e35e47..HEAD`，本地 commit；远端停在 `aef8fd3`）
+### 本轮修复 commit（`3e35e47..HEAD`；push 状态以 `git log --oneline origin/feat/toolguard..HEAD` 为准）
 
 | commit | 内容 |
 |---|---|
@@ -184,7 +184,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | 本轮审阅 finding 修复 commit | schema 参数回填执行 ≥3 样本/≥90% 一致门槛（回填 20→7）、reproduce 元数据 artifact-specific（含 4 个证据/历史 artifact 的离线元数据重建）、artifact 契约新增 --output 自身路径与 calibration task 集合校验、format（date/date-time/time）真实日历校验、文档口径与 push 状态修正 |
 | 本轮 calibration/reproduce 残留修复 commit | 多模型 reproduce 不再重新校准（V4 只 eval+from-records）；显式 `protocol.calibration.mode`/`reused_from`/`required_input`/`reproduce_regenerates_calibration`/`fresh_calibration`；from-records/update-metadata 保留 provenance（不按文件名推断）；V3/V4 fresh 校准各自写 `*_fresh.json`；real-trace/V5 limitations 按 artifact 类型替换通用旧句（不再出现 deterministic injection / V3 task-pool）；`test_error_response_fields_are_not_back_filled` 正名为样本门槛测试；文档 quick start/checklist/handoff 同步 |
 
-> 最新 commit 以 `git log -1` 为准；本文件与 TOOLGUARD 的修订随本轮 commit 一起提交（本地 commit，尚未 push）。
+> 最新 commit 以 `git log -1` 为准；本文件与 TOOLGUARD 的修订随本轮 commit 一起提交；`aef8fd3` 及之前已 push，`aef8fd3..HEAD` 的同步状态以 `git log --oneline origin/feat/toolguard..HEAD` 为准。
 
 ### 本轮变更文件汇总
 
@@ -262,7 +262,7 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 - `.env`（DeepSeek/百炼 key）**永不提交**、`.env.example` 只有占位符；审阅无需 key；
 - `docs/`、`STATUS.md` 是作者本地笔记（gitignored），不随仓库分发；
 - 本会话与上一轮所有 API 消耗由作者承担；审阅者不必复跑；
-- 本轮修复 commit **均为本地 commit，尚未 push** 到 `origin/feat/toolguard`（远端停在 `aef8fd3`；最新 commit 以 `git log -1` 为准）；不修改旧 TEE 的 25 条历史指标；
+- `aef8fd3` 及之前已 push 到 `origin/feat/toolguard`；`aef8fd3..HEAD` 的修复 commit 是否已同步，以 `git log --oneline origin/feat/toolguard..HEAD` 为准（输出为空即已同步；最新 commit 以 `git log -1` 为准）；不修改旧 TEE 的 25 条历史指标；
 - **给审阅 AI 的建议顺序**：先跑 §0 四条命令（全部离线、无需 key）→ 读 TOOLGUARD 的「结果（离线）」「第二轮 V4」「真实线上故障 trace」「V5 hard pilot」→ 用 §3 证据地图抽查 3–5 个 claim → 读 §5 的“不能声称”清单并逐条压测 → 最后对照 §7 checklist 报告 findings；
 - 证据数据（`benchmarks/toolguard/real_traces/`）不是 contract artifact，但都有生成脚本与测试固定，审阅时可离线重跑 `collect_real_fault_traces.py` + `run_real_fault_repair.py`（只打免费公开 API）；
 - 若审阅者发现“文档数字与 artifact 不一致”，优先修复文档并记录 finding，而不是改 artifact。
