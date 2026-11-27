@@ -95,7 +95,15 @@
     },
     "calibration": {
       "source": ".scratch/toolguard/multimodel_calibration.json",
-      "description": "per-model fault-free calibration reused from the V3 run so that the HN schema is the only manipulated variable between the V3 and V4 artifacts"
+      "mode": "reused",
+      "reused_from": "V3",
+      "required_input": true,
+      "reproduce_regenerates_calibration": false,
+      "description": "per-model fault-free calibration reused from V3; the reproduce commands use it as a read-only input and never regenerate it, so the HN schema is the only manipulated variable between the V3 and V4 artifacts",
+      "fresh_calibration": {
+        "command": "python scripts/run_multimodel_live.py --mode calibrate --hn-schema consistent --workers 2 --calibration .scratch/toolguard/multimodel_calibration_v4_fresh.json",
+        "note": "fresh calibration, not the exact V3/V4 artifact reproduction: it re-measures the per-model fault-free turn budget and must not overwrite the shared read-only anchor; the artifact itself is reproduced by the eval/from-records commands"
+      }
     },
     "verification": "programmatic; ground truth computed from the same live APIs before the runs",
     "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift (weather/FX); every record carries the `expected` snapshot it was verified against"
@@ -1280,6 +1288,13 @@
           "estimated_cost_usd": 0.2322
         }
       }
+    },
+    "provenance": {
+      "mode": "reused",
+      "reused_from": "V3",
+      "required_input": true,
+      "reproduce_regenerates_calibration": false,
+      "note": "see protocol.calibration for the full provenance and fresh-calibration command"
     }
   },
   "tasks": [
@@ -30326,7 +30341,7 @@
   "limitations": [
     "Multi-model axis is replication: each model's baseline-vs-guard comparison is paired; no formal between-model hypothesis test (3 models only).",
     "Transient faults are deterministic injections, not observed production failures; the budget conditions are controlled stress conditions (clean+1 / clean+4).",
-    "One calibration run per task per model anchors the budget; repeat seeds vary the fault surface, not model sampling (temperature 0 where the provider supports it).",
+    "Budget calibration provenance: reused from the V3 run as a read-only per-model input; the reproduce commands (eval / from-records) never regenerate it and a fresh calibration is a separate explicit action (protocol.calibration.fresh_calibration), so the HN schema is the only manipulated variable between the V3 and V4 artifacts.",
     "Cheap and strong tiers are both Qwen-family models served by Alibaba Model Studio; the measured fault-free placement does not show the expensive flagship outperforming the mid-tier model on this tool-task set (see capability_placement).",
     "Live-mutable ground truth: the HN top-story author's karma and current weather can change between task construction and a run; a few guard failures are ground-truth drift or answer formatting (failure_mode/answer in the records), not middleware failures.",
     "V3 task-set change: the three HN karma tasks were replaced by immutable account-creation-year tasks (same two-tool chain). HN karma is live-mutable: during the V2 multi-model run one active author's karma changed 112 -> 161 within an hour, which made that task's ground truth noise. The V2 multi-model artifact (commit fb13a1f) still contains the karma tasks.",
@@ -30336,8 +30351,8 @@
     "HN contract: this is the V4 run with the consistent integer get_hn_item.story_id schema (2026-11-25 review decision); the V3 drift artifact is kept as the contract-repair capability demo. Per-model budget calibration is reused from the V3 run so the HN schema is the only manipulated variable."
   ],
   "reproduce": [
-    "python scripts/run_multimodel_live.py --mode calibrate --hn-schema consistent --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json",
-    "python scripts/run_multimodel_live.py --mode eval --hn-schema consistent --budgets clean+1,clean+4 --repeats clean+1:2,clean+4:1 --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --output benchmarks/toolguard/live_demo_multimodel_v4.json",
+    "python scripts/run_multimodel_live.py --mode eval --hn-schema consistent --budgets clean+1,clean+4 --repeats clean+1:2,clean+4:1 --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --calibration-mode reused --calibration-reused-from V3 --output benchmarks/toolguard/live_demo_multimodel_v4.json",
+    "python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v4.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"
   ]
 }

@@ -1461,14 +1461,13 @@
     "clean+1: turns/cell baseline 6.917 -> guard 3.0, tokens baseline 156291 -> guard 61195, agent-visible tool errors 59 -> 0"
   ],
   "limitations": [
+    "V5 hard-task pilot (opt-in `--include-hard-tasks`): this artifact runs only the 4 longer-chain hard tasks appended to the V4 pool (hard_gdp_triple_gap, hard_weather_spread_three, hard_pypi_release_span, hard_hn_author_age_gap), not the V4 main 31-task protocol; it is a separate opt-in pilot artifact. The sample is a pilot (clean+1 x 3 repeats x 2 arms = 24 cells) and a ceiling probe, not a statistical result. Its negative result is reported honestly: longer fault-driven chains do not break the guard ceiling because the guard absorbs the injected faults inside the agent turn.",
     "Deterministic transient-fault injection (first *attempts_to_fail* attempts of a faulted logical call fail), not observed production failures; the injection rate and epoch length are experimental parameters, not measured values.",
     "Single model (deepseek-v4-flash) by decision; repeat seeds vary the injected fault surface only, they do not re-sample model behaviour.",
     "The budget sweep uses per-task budgets calibrated from one fault-free run per task; the calibrated turn requirement is itself a point estimate (no repeat of calibration).",
-    "Task-pool provenance: V1 artifact = 20 tasks (commit 02ac71a), V2 artifact = 32 tasks (commit 43c4e89), V3 artifact = 31 tasks with drift-hardened ground truth (HN karma replaced by immutable account-creation year, commit 8ad347e). This runner now produces the V3 task-pool artifact; older artifacts are reproduced from their commits.",
     "Ground truth is built once before the whole eval (single model, ~30 min run); weather/FX are live values and drift slightly, absorbed by the verifier tolerances. The V3 pool has no live-mutable HN karma tasks.",
     "Failure-mode classification ('format_miss' vs 'no_expected_value') is a heuristic over the expected scalars, not an LLM judgement.",
     "Free public APIs are not production grade; API drift can affect reruns, and the GitHub API is excluded because of the key-free rate limit.",
-    "V5 hard-task pilot (opt-in `--include-hard-tasks`): this artifact runs only the 4 longer-chain hard tasks appended to the V4 pool (hard_gdp_triple_gap, hard_weather_spread_three, hard_pypi_release_span, hard_hn_author_age_gap), not the V4 main 31-task protocol. The sample is a pilot (clean+1 x 3 repeats x 2 arms = 24 cells); it is a ceiling probe, not a statistical result. Its negative result is reported honestly: longer fault-driven chains do not break the guard ceiling because the guard absorbs the injected faults inside the agent turn.",
     "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item schema declares story_id as integer, matching the backend and the real Hacker News API, so the synthetic contract mismatch is no longer injected into this run. The drifting variant is kept only as the targeted contract-repair demonstration (live_demo_hard_v3.json) with its attribution control (live_demo_hard_v3_hnconsistent.json)."
   ],
   "reproduce": [

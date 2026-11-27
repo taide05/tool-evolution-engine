@@ -62,7 +62,93 @@ ARMS = ("baseline", "guard")
 DEFAULT_BUDGETS = "clean+1,clean+4"
 DEFAULT_REPEATS = "clean+1:2,clean+4:1"
 DEFAULT_OUTPUT = ".scratch/toolguard/live_demo_multimodel.json"
+# Shared read-only budget anchor of the committed V3/V4 artifacts.  It must never be
+# rewritten by a reproduction step: a fresh calibration is an explicit, separate action that
+# writes to its own *_fresh.json path (see _fresh_calibration_path).
 DEFAULT_CALIBRATION = ".scratch/toolguard/multimodel_calibration.json"
+FRESH_CALIBRATION_DIR = ".scratch/toolguard"
+CALIBRATION_MODES = ("fresh", "reused")
+
+
+def _posix(value) -> str:
+    """Render a path for shell commands: forward slashes even when generated on Windows."""
+    return str(value).replace("\\", "/")
+
+
+def _fresh_calibration_path(output: Path) -> str:
+    """Separate, explicitly-fresh calibration path derived from the artifact label.
+
+    The committed artifacts share ``multimodel_calibration.json`` as a read-only input, so a
+    fresh re-measurement must never default to that path.
+    """
+    label = Path(output).stem.removeprefix("live_demo_multimodel_") or "fresh"
+    return f".scratch/toolguard/multimodel_calibration_{label}_fresh.json"
+
+
+def calibration_write_error(path, overwrite: bool) -> str | None:
+    """Refuse to silently overwrite an existing calibration file (read-only artifact input)."""
+    target = Path(str(path))
+    if target.exists() and not overwrite:
+        return (f"refusing to overwrite existing calibration {target}: the V3/V4 artifacts use "
+                "the per-model calibration as a read-only budget input. Pass "
+                "--overwrite-calibration to replace it explicitly, or write a fresh "
+                "calibration to a separate path (e.g. "
+                f"{FRESH_CALIBRATION_DIR}\\multimodel_calibration_fresh.json).")
+    return None
+
+
+def _calibration_provenance(source: str | None, mode: str, reused_from: str | None,
+                            hn_schema: str, output: Path, workers: int | None) -> dict:
+    """Explicit calibration provenance (never inferred from the file name)."""
+    mode = mode or "checkpoint"
+    if mode == "reused":
+        description = (
+            f"per-model fault-free calibration reused from {reused_from}; the reproduce "
+            "commands use it as a read-only input and never regenerate it, so the HN schema is "
+            "the only manipulated variable between the V3 and V4 artifacts")
+    elif mode == "fresh":
+        description = (
+            "per-model fault-free calibration measured once for this run (fresh). The reproduce "
+            "commands use the recorded calibration as a read-only input and do not regenerate "
+            "it; a fresh calibration is a separate explicit action (see fresh_calibration)")
+    else:
+        description = (
+            "per-model calibration payload restored from the checkpoint; calibration provenance "
+            "is recorded in mode/reused_from and is not re-derived from the file name")
+    fresh_path = _fresh_calibration_path(output)
+    return {
+        "source": _posix(source) if source else "embedded in the artifact calibration payload",
+        "mode": mode,
+        "reused_from": reused_from if mode == "reused" else None,
+        "required_input": True,
+        "reproduce_regenerates_calibration": False,
+        "description": description,
+        "fresh_calibration": {
+            "command": " ".join([
+                "python scripts/run_multimodel_live.py --mode calibrate",
+                f"--hn-schema {hn_schema}",
+                f"--workers {workers or 2}",
+                f"--calibration {fresh_path}"]),
+            "note": ("fresh calibration, not the exact V3/V4 artifact reproduction: it "
+                     "re-measures the per-model fault-free turn budget and must not overwrite "
+                     f"the shared read-only anchor; the artifact itself is reproduced by the "
+                     "eval/from-records commands"),
+        },
+    }
+
+
+def _calibration_payload_with_provenance(payload: dict | None, provenance: dict) -> dict:
+    """Attach provenance metadata to the top-level calibration payload (models untouched)."""
+    updated = dict(payload or {})
+    updated["provenance"] = {
+        "mode": provenance.get("mode"),
+        "reused_from": provenance.get("reused_from"),
+        "required_input": provenance.get("required_input"),
+        "reproduce_regenerates_calibration": provenance.get(
+            "reproduce_regenerates_calibration"),
+        "note": "see protocol.calibration for the full provenance and fresh-calibration command",
+    }
+    return updated
 
 
 def model_specs() -> list[dict]:
@@ -126,6 +212,11 @@ def estimate_cost(usage: dict, spec: dict) -> float:
 # calibration
 # ---------------------------------------------------------------------------
 def run_calibration(tasks: list[dict], specs: list[dict], args: argparse.Namespace) -> int:
+    write_error = calibration_write_error(args.calibration,
+                                          getattr(args, "overwrite_calibration", False))
+    if write_error:
+        print(f"ERROR: {write_error}", file=sys.stderr)
+        return 2
     calibration: dict[str, dict] = {}
     for spec in specs:
         client = make_client(spec, args.clean_max_turns)
@@ -178,13 +269,20 @@ def run_calibration(tasks: list[dict], specs: list[dict], args: argparse.Namespa
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "protocol": "one fault-free run per task per model (baseline, no middleware); the per-model "
                     "turn count anchors the budget sweep and doubles as capability placement evidence",
+        "provenance": {
+            "mode": "fresh",
+            "hn_schema": getattr(args, "hn_schema", "consistent"),
+            "generated_for": ("explicit --mode calibrate run (fresh calibration; not an artifact "
+                              "reproduction)"),
+        },
         "models": calibration,
     }
     path = Path(args.calibration)
     write_json(path, payload)
     failed = {key: row["placement"]["success"] for key, row in calibration.items()}
     print(f"\ncalibration placement: {failed}")
-    print(f"wrote {path}")
+    print(f"wrote fresh calibration {path} (not an artifact reproduction; the committed "
+          "artifacts take their calibration as a read-only input)")
     if any(row["placement"]["success_rate"] < 0.75 for row in calibration.values()):
         print("WARNING: at least one model solved <75% of tasks fault-free; check tool-calling quality")
     return 0
@@ -306,8 +404,15 @@ def run_eval(tasks: list[dict], skipped: list[str], specs: list[dict], condition
              repeats: dict[str, int], args: argparse.Namespace) -> int:
     calibration_path = Path(args.calibration)
     if not calibration_path.exists():
-        print(f"ERROR: calibration file missing at {calibration_path}; run --mode calibrate first",
-              file=sys.stderr)
+        print(
+            f"ERROR: calibration file missing at {calibration_path}. The per-model budget "
+            "anchor is a REQUIRED input; --mode eval never calibrates automatically.\n"
+            "  * reproduce the committed artifacts offline: --from-records --output <artifact>\n"
+            "  * or create a fresh calibration explicitly (this is NOT the exact artifact "
+            "reproduction):\n"
+            "      python scripts/run_multimodel_live.py --mode calibrate "
+            f"--calibration {_fresh_calibration_path(Path(args.output))}",
+            file=sys.stderr)
         return 2
     calibration_payload = json.loads(calibration_path.read_text(encoding="utf-8"))
     calibrations = calibration_payload.get("models", {})
@@ -374,24 +479,25 @@ def run_eval(tasks: list[dict], skipped: list[str], specs: list[dict], condition
             client.close()
     wall_seconds = round(time.perf_counter() - started, 1)
     return finalize(all_records, specs, calibrations, calibration_payload, tasks, skipped,
-                    args, conditions, repeats, wall_seconds, output, tasks_per_model)
-
-
-def _posix(value) -> str:
-    """Render a path for shell commands: forward slashes even when generated on Windows."""
-    return str(value).replace("\\", "/")
+                    args, conditions, repeats, wall_seconds, output, tasks_per_model,
+                    calibration_mode=getattr(args, "calibration_mode", None) or "fresh",
+                    calibration_reused_from=getattr(args, "calibration_reused_from", None))
 
 
 def _artifact_metadata(*, specs: list[dict], tasks: list[dict], args: argparse.Namespace,
                        conditions: list[str], repeats: dict[str, int],
                        wall_seconds: float | None, output: Path,
                        calibration_source: str | None,
+                       calibration_provenance: dict,
                        finalised_from_checkpoint: bool) -> dict:
     """Metadata block (experiment/generated_at/protocol/limitations/reproduce).
 
     Every reproduce command is generated from the arguments that produced *this* artifact
-    (actual output path, HN schema, budgets, repeats, workers, calibration file), so
-    replaying it can never silently overwrite the V4 headline artifact from a v3 rebuild.
+    (actual output path, HN schema, budgets, repeats, workers, calibration input).  The
+    calibration anchor is a **required read-only input**: the reproduce commands only replay
+    the eval / rebuild the artifact from its checkpoint, they never regenerate the calibration
+    (a fresh calibration is a separate explicit action recorded in
+    ``protocol.calibration.fresh_calibration``).
     """
     output_path = _posix(output)
     workers = getattr(args, "workers", None)
@@ -400,13 +506,8 @@ def _artifact_metadata(*, specs: list[dict], tasks: list[dict], args: argparse.N
     repeats_spec = ",".join(f"{condition}:{repeats.get(condition, 1)}"
                             for condition in conditions) or DEFAULT_REPEATS
     calibration = _posix(calibration_source) if calibration_source else None
+    provenance = calibration_provenance
     reproduce: list[str] = []
-    if calibration:
-        reproduce.append(" ".join([
-            "python scripts/run_multimodel_live.py --mode calibrate",
-            f"--hn-schema {hn_schema}",
-            f"--workers {workers or 2}",
-            f"--calibration {calibration}"]))
     eval_command = ["python scripts/run_multimodel_live.py --mode eval",
                     f"--hn-schema {hn_schema}",
                     f"--budgets {budgets_spec}",
@@ -414,11 +515,16 @@ def _artifact_metadata(*, specs: list[dict], tasks: list[dict], args: argparse.N
                     f"--workers {workers or 2}"]
     if calibration:
         eval_command.append(f"--calibration {calibration}")
+    if provenance.get("mode") == "reused" and provenance.get("reused_from"):
+        eval_command.extend(["--calibration-mode reused",
+                             f"--calibration-reused-from {provenance['reused_from']}"])
     eval_command.append(f"--output {output_path}")
     reproduce.append(" ".join(eval_command))
-    if finalised_from_checkpoint:
-        reproduce.append("python scripts/run_multimodel_live.py --from-records "
-                         f"--output {output_path}")
+    # An offline rebuild from the committed checkpoint records is always a valid
+    # (zero-API-cost) reproduction path for this artifact, whether or not it was finalised
+    # from a checkpoint in the first place.
+    reproduce.append("python scripts/run_multimodel_live.py --from-records "
+                     f"--output {output_path}")
     reproduce.append("python -m pytest tests/test_toolguard -q -p no:cacheprovider")
     protocol = {
         "models": [{"tier": spec["tier"], "key": spec["key"], "label": spec["label"],
@@ -461,27 +567,41 @@ def _artifact_metadata(*, specs: list[dict], tasks: list[dict], args: argparse.N
             "p_server_error": getattr(args, "p_server_error", 0.08),
             "seed": getattr(args, "seed", 7),
         },
-        "calibration": {
-            "source": calibration or "embedded in the artifact calibration payload",
-            "description": (
-                "per-model fault-free calibration reused from the V3 run so that the HN "
-                "schema is the only manipulated variable between the V3 and V4 artifacts"
-                if not finalised_from_checkpoint and calibration
-                and "multimodel_calibration" in calibration else
-                "per-model fault-free calibration payload stored at the top level"),
-        },
+        "calibration": provenance,
         "verification": "programmatic; ground truth computed from the same live APIs before the runs",
         "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift "
                                 "(weather/FX); every record carries the `expected` snapshot it was "
                                 "verified against",
     }
+    calibration_limitation = (
+        f"Budget calibration provenance: reused from the {provenance['reused_from']} run as a "
+        "read-only per-model input; the reproduce commands (eval / from-records) never "
+        "regenerate it and a fresh calibration is a separate explicit action "
+        "(protocol.calibration.fresh_calibration), so the HN schema is the only manipulated "
+        "variable between the V3 and V4 artifacts."
+        if provenance.get("mode") == "reused" else
+        "Budget calibration provenance: per-model fault-free calibration stored in this "
+        "artifact is a required read-only input; the reproduce commands (eval / from-records) "
+        "take it as-is and never regenerate it. A fresh calibration is a separate explicit "
+        "action (protocol.calibration.fresh_calibration), not an artifact reproduction.")
+    hn_contract_limitation = (
+        ("HN contract: this is the V4 run with the consistent integer get_hn_item.story_id "
+         "schema (2026-11-25 review decision); the V3 drift artifact is kept as the contract-"
+         "repair capability demo. Per-model budget calibration is reused from the V3 run so "
+         "the HN schema is the only manipulated variable."
+         if provenance.get("mode") == "reused" else
+         "HN contract: the agent-visible get_hn_item.story_id schema is the consistent integer "
+         "form (2026-11-25 review decision); the historical V3 drift artifact is kept as the "
+         "contract-repair capability demo.")
+        if hn_schema == "consistent" else
+        "HN contract drift mode: get_hn_item advertises story_id as string while the backend "
+        "requires an integer (historical V3 protocol).")
     limitations = [
         "Multi-model axis is replication: each model's baseline-vs-guard comparison is paired; "
         "no formal between-model hypothesis test (3 models only).",
         "Transient faults are deterministic injections, not observed production failures; the "
         "budget conditions are controlled stress conditions (clean+1 / clean+4).",
-        "One calibration run per task per model anchors the budget; repeat seeds vary the fault "
-        "surface, not model sampling (temperature 0 where the provider supports it).",
+        calibration_limitation,
         "Cheap and strong tiers are both Qwen-family models served by Alibaba Model Studio; the "
         "measured fault-free placement does not show the expensive flagship outperforming the "
         "mid-tier model on this tool-task set (see capability_placement).",
@@ -497,13 +617,7 @@ def _artifact_metadata(*, specs: list[dict], tasks: list[dict], args: argparse.N
         "truth, so drifting values in the metadata may differ slightly.",
         "Prices are the published list prices at run time and are used only for the cost estimate.",
         "Free public APIs are not production grade; API drift can affect reruns.",
-        ("HN contract: this is the V4 run with the consistent integer get_hn_item.story_id "
-         "schema (2026-11-25 review decision); the V3 drift artifact is kept as the contract-"
-         "repair capability demo. Per-model budget calibration is reused from the V3 run so "
-         "the HN schema is the only manipulated variable."
-         if hn_schema == "consistent" else
-         "HN contract drift mode: get_hn_item advertises story_id as string while the backend "
-         "requires an integer (historical V3 protocol)."),
+        hn_contract_limitation,
     ]
     return {
         "experiment": "ToolGuard_multimodel_live_ab",
@@ -519,7 +633,9 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
              conditions: list[str], repeats: dict[str, int], wall_seconds: float | None,
              output: Path, tasks_per_model: dict[str, list[dict]] | None = None,
              calibration_source: str | None = None,
-             finalised_from_checkpoint: bool | None = None) -> int:
+             finalised_from_checkpoint: bool | None = None,
+             calibration_mode: str | None = None,
+             calibration_reused_from: str | None = None) -> int:
     """Aggregate records (fresh run or rebuilt from a checkpoint) and write the artifact."""
     aggregates: dict[str, dict] = {}
     for spec in specs:
@@ -556,17 +672,25 @@ def finalize(records: list[dict], specs: list[dict], calibrations: dict, calibra
                           or (str(args.calibration) if getattr(args, "calibration", None) else None))
     finalised = (bool(getattr(args, "from_records", False))
                  if finalised_from_checkpoint is None else finalised_from_checkpoint)
+    mode = calibration_mode or getattr(args, "calibration_mode", None) or "fresh"
+    reused_from = (calibration_reused_from if calibration_reused_from is not None
+                   else getattr(args, "calibration_reused_from", None))
+    provenance = _calibration_provenance(
+        source=calibration_source, mode=mode, reused_from=reused_from,
+        hn_schema=getattr(args, "hn_schema", "consistent"), output=output,
+        workers=getattr(args, "workers", None))
     metadata = _artifact_metadata(
         specs=specs, tasks=tasks, args=args, conditions=conditions, repeats=repeats,
         wall_seconds=wall_seconds, output=output,
         calibration_source=calibration_source,
+        calibration_provenance=provenance,
         finalised_from_checkpoint=finalised)
     summary = {
         "artifact_version": 1,
         "experiment": metadata["experiment"],
         "generated_at": metadata["generated_at"],
         "protocol": metadata["protocol"],
-        "calibration": calibration_payload,
+        "calibration": _calibration_payload_with_provenance(calibration_payload, provenance),
         "tasks": [{key: value for key, value in task.items() if key != "verifier"} for task in tasks],
         "tasks_per_model": {
             key: [{field: value for field, value in task.items() if field != "verifier"}
@@ -670,6 +794,35 @@ def _checkpoint_calibration_source(checkpoint: dict, args: argparse.Namespace) -
     return source
 
 
+def _checkpoint_calibration_provenance(
+        checkpoint: dict, args: argparse.Namespace) -> tuple[str, str | None] | None:
+    """Recover explicit calibration provenance from the checkpoint, never from file names.
+
+    A recorded ``protocol.calibration.mode`` always wins (so ``--from-records`` /
+    ``--update-metadata`` preserve the artifact's provenance).  Only when the checkpoint
+    predates the provenance fields are the explicit CLI flags used; without them the mode is
+    recorded as ``checkpoint`` rather than guessed from the calibration path.
+    """
+    protocol = checkpoint.get("protocol") or {}
+    block = protocol.get("calibration")
+    block = block if isinstance(block, dict) else {}
+    mode = block.get("mode")
+    reused_from = block.get("reused_from")
+    if mode not in CALIBRATION_MODES + ("checkpoint",):
+        cli_mode = getattr(args, "calibration_mode", None)
+        mode = cli_mode or "checkpoint"
+    if mode == "reused":
+        reused_from = reused_from or getattr(args, "calibration_reused_from", None)
+        if not reused_from:
+            print("ERROR: checkpoint records calibration mode 'reused' without a reused_from "
+                  "label; pass --calibration-reused-from (no file-name inference is performed)",
+                  file=sys.stderr)
+            return None
+    else:
+        reused_from = None
+    return mode, reused_from
+
+
 def run_from_checkpoint(specs: list[dict], args: argparse.Namespace) -> int:
     """Rebuild the artifact from its committed checkpoint records (offline, no API calls).
 
@@ -722,8 +875,15 @@ def run_from_checkpoint(specs: list[dict], args: argparse.Namespace) -> int:
               "current task metadata for those models.", file=sys.stderr)
     protocol = checkpoint.get("protocol") or {}
     args.workers = protocol.get("workers") or getattr(args, "workers", 2)
+    provenance = _checkpoint_calibration_provenance(checkpoint, args)
+    if provenance is None:
+        return 2
     return finalize(records, specs, calibrations, calibration_payload, tasks, skipped,
-                    args, conditions, repeats, None, output, tasks_per_model)
+                    args, conditions, repeats, None, output, tasks_per_model,
+                    calibration_source=_checkpoint_calibration_source(checkpoint, args),
+                    finalised_from_checkpoint=True,
+                    calibration_mode=provenance[0],
+                    calibration_reused_from=provenance[1])
 
 
 def update_metadata_only(specs: list[dict], args: argparse.Namespace) -> int:
@@ -740,19 +900,33 @@ def update_metadata_only(specs: list[dict], args: argparse.Namespace) -> int:
     protocol = checkpoint.get("protocol") or {}
     conditions, repeats = _checkpoint_conditions(checkpoint)
     args.workers = protocol.get("workers") or getattr(args, "workers", 2)
+    provenance_mode = _checkpoint_calibration_provenance(checkpoint, args)
+    if provenance_mode is None:
+        return 2
+    calibration_source = _checkpoint_calibration_source(checkpoint, args)
+    provenance = _calibration_provenance(
+        source=calibration_source, mode=provenance_mode[0],
+        reused_from=provenance_mode[1], hn_schema=getattr(args, "hn_schema", "consistent"),
+        output=output, workers=args.workers)
     metadata = _artifact_metadata(
         specs=specs, tasks=checkpoint["tasks"], args=args, conditions=conditions,
         repeats=repeats, wall_seconds=protocol.get("wall_seconds"), output=output,
-        calibration_source=_checkpoint_calibration_source(checkpoint, args),
+        calibration_source=calibration_source,
+        calibration_provenance=provenance,
         finalised_from_checkpoint=bool(protocol.get("finalised_from_checkpoint")))
     # keep the recorded generation time; only metadata content is refreshed
     metadata["generated_at"] = checkpoint.get("generated_at", metadata["generated_at"])
     payload = dict(checkpoint)
     payload.update(metadata)
+    # refresh only the provenance block of the top-level calibration payload (models untouched)
+    payload["calibration"] = _calibration_payload_with_provenance(
+        checkpoint.get("calibration"), provenance)
     write_json(output, payload)
     changed = sorted(key for key in metadata if checkpoint.get(key) != metadata[key])
     print(f"refreshed metadata for {output}; changed fields: {', '.join(changed)}")
-    print("records/aggregate/tasks/calibration payload/tasks_per_model were left untouched")
+    print(f"calibration provenance: mode={provenance['mode']} "
+          f"reused_from={provenance['reused_from']}")
+    print("records/aggregate/tasks/tasks_per_model and calibration model payload were left untouched")
     return 0
 
 
@@ -781,9 +955,25 @@ def main() -> int:
                         help="consistent (default): get_hn_item.story_id integer in the "
                              "agent-visible schema; drifting: legacy mismatched schema kept only "
                              "for rebuilding the historical drift artifact")
+    parser.add_argument("--calibration-mode", choices=CALIBRATION_MODES, default=None,
+                        help="explicit provenance of the calibration anchor: 'fresh' (measured "
+                             "for this run) or 'reused' (imported from another artifact, requires "
+                             "--calibration-reused-from). Never inferred from the file name; "
+                             "--mode eval never recalibrates")
+    parser.add_argument("--calibration-reused-from", default=None,
+                        help="artifact label the calibration was reused from (required when "
+                             "--calibration-mode reused, e.g. V3)")
+    parser.add_argument("--overwrite-calibration", action="store_true",
+                        help="explicitly allow --mode calibrate to overwrite an existing "
+                             "calibration file (the shared V3/V4 anchor is a read-only input)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     args = parser.parse_args()
+    if args.calibration_mode == "reused" and not args.calibration_reused_from:
+        parser.error("--calibration-mode reused requires --calibration-reused-from")
+    if args.calibration_reused_from and args.calibration_mode != "reused" \
+            and not (args.from_records or args.update_metadata):
+        parser.error("--calibration-reused-from only applies with --calibration-mode reused")
     specs = model_specs()
 
     if args.from_records or args.update_metadata:

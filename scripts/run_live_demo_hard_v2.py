@@ -494,7 +494,40 @@ def build_artifact_summary(
         hn_schema == "consistent" and not include_hard_tasks and not task_ids
         and conditions == ["clean+1"] and repeats.get("clean+1") == 3
         and fault_source == "synthetic")
-    limitations = list(V2_LIMITATIONS)
+    special_scope = fault_source == "real-trace" or include_hard_tasks
+    # Replace (not append to) the generic V2 limitations for artifact types whose protocol
+    # they misdescribe: a real-trace smoke artifact is NOT synthetic-fault injection, and a
+    # 6-task subset / 4-task hard pilot is NOT "the V3 task-pool artifact".
+    limitations: list[str] = []
+    scope_limitations: list[str] = []
+    if fault_source == "real-trace":
+        subset = (f"{len(task_ids)}-task subset ({len(records)} cells) of the V4 31-task pool"
+                  if task_ids else f"{len(tasks)}-task pool")
+        scope_limitations.append(
+            f"Fault source `real-trace` ({subset}): selected logical calls replay a genuine "
+            "error captured from the real public APIs before the backend call; this artifact "
+            "contains NO synthetic transient-fault injection. The injected trace id/count is "
+            "recorded per cell and the wrapper is identical for both arms. This is a "
+            "robustness smoke check, not the V4 headline protocol and not a statistical A/B "
+            "result; the paired baseline-vs-guard causality for the main claims stays with "
+            "live_demo_hard_v4.json.")
+    if include_hard_tasks:
+        scope_limitations.append(
+            f"V5 hard-task pilot (opt-in `--include-hard-tasks`): this artifact runs only the "
+            f"{len(hard_task_ids)} longer-chain hard tasks appended to the V4 pool "
+            f"({', '.join(hard_task_ids)}), not the V4 main 31-task protocol; it is a separate "
+            f"opt-in pilot artifact. The sample is a pilot (clean+1 x 3 repeats x 2 arms = "
+            f"{len(records)} cells) and a ceiling probe, not a statistical result. Its "
+            "negative result is reported honestly: longer fault-driven chains do not break the "
+            "guard ceiling because the guard absorbs the injected faults inside the agent "
+            "turn.")
+    for item in V2_LIMITATIONS:
+        if fault_source == "real-trace" and item.startswith("Deterministic transient-fault"):
+            continue  # replaced by the real-trace scope limitation
+        if special_scope and item.startswith("Task-pool provenance:"):
+            continue  # replaced by the artifact-specific scope limitation
+        limitations.append(item)
+    limitations = scope_limitations + limitations
     if attribution_control:
         limitations.append(
             "HN attribution control: the V3 31-task pool with the consistent integer "
@@ -502,15 +535,6 @@ def build_artifact_summary(
             "repeats x 2 arms (186 cells). It exists to attribute the V3->V4 difference to the "
             "HN contract fix; it is not the V4 headline protocol (the full 310-cell budget "
             "sweep is live_demo_hard_v4.json).")
-    if include_hard_tasks:
-        limitations.append(
-            f"V5 hard-task pilot (opt-in `--include-hard-tasks`): this artifact runs only the "
-            f"{len(hard_task_ids)} longer-chain hard tasks appended to the V4 pool "
-            f"({', '.join(hard_task_ids)}), not the V4 main 31-task protocol. The sample is a "
-            "pilot (clean+1 x 3 repeats x 2 arms = "
-            f"{len(records)} cells); it is a ceiling probe, not a statistical result. Its "
-            "negative result is reported honestly: longer fault-driven chains do not break the "
-            "guard ceiling because the guard absorbs the injected faults inside the agent turn.")
     if hn_schema == "consistent":
         limitations.append(
             "Main protocol after the 2026-11-25 review decision: the agent-visible get_hn_item "
@@ -525,19 +549,6 @@ def build_artifact_summary(
             "story_id as string while the backend requires an integer (synthetic drift, kept "
             "only for capability demonstration; it is not the main protocol after the "
             "2026-11-25 review decision).")
-    if fault_source == "real-trace":
-        limitations.append(
-            "Fault source `real-trace`: selected logical calls replay a genuine error captured "
-            "from the real public APIs (see benchmarks/toolguard/real_traces/) before reaching "
-            "the backend. This is a robustness check using real error text, not the headline "
-            "synthetic-fault protocol; the injected trace id/count is recorded per cell in "
-            "fault_kinds/real-trace stats and the wrapper is identical for both arms.")
-    if task_ids and not include_hard_tasks:
-        limitations.append(
-            f"Task subset: this artifact covers {len(task_ids)} of the V4 31-task pool "
-            f"({len(records)} cells), not the V4 headline protocol. It exists as a targeted "
-            "smoke/robustness check (real-trace fault source); the paired baseline-vs-guard "
-            "causality for the main claims stays with live_demo_hard_v4.json.")
     if rebuilt_from_records:
         limitations.append(
             "This artifact was rebuilt from the committed checkpoint records by "

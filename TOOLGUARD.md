@@ -155,7 +155,7 @@ V2 的 MCP 验证从“同一中间件在 MCP 上也能重试”升级为**部�
 - 结论：修正预算不对称后，guard 相对 baseline 的优势仍然成立（clean+1 **+59.4pp**，V2 口径 +65.6pp；差距主要是 baseline 在 fx 任务上获得了更多预算），且 guard 在两种锚点下都是 100%。
 
 - 传输无关性验证：`ToolGuard` 本体一行未改，新增的是 `MCPBridge`（含重连）/`MCPMultiBackend`（多 server 路由 + 未注册别名）adapter；
-- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **141 passed**（全仓 **450 passed**，0 failed/0 error；此前记录的 Windows 临时目录 ACL 环境错误在当前完全权限运行下未再出现）。
+- 测试：MCP SDK 内存 transport 集成测试覆盖 schema 转换、`isError`→taxonomy、参数修复、transient 重试、双 server 路由、catalog drift 解析；toolguard 测试 **145 passed**（全仓 **454 passed**，0 failed/0 error；此前记录的 Windows 临时目录 ACL 环境错误在当前完全权限运行下未再出现）。
 
 artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp_demo_v2.json)（历史协议），V3 [`benchmarks/toolguard/mcp_demo_v3.json`](benchmarks/toolguard/mcp_demo_v3.json)（当前主口径；`experiment=ToolGuard_mcp_multiserver_live_ab_v3_baseline_anchor`、`protocol.budget_anchor=baseline`；本轮用 `--from-records` 从 checkpoint 重建生成元数据，records/aggregate 未变）。
 
@@ -163,7 +163,7 @@ artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp
 
 ### 第四轮：多模型复制（3 个模型 × 同一协议，回应“单模型”质疑）
 
-单模型结果最大的风险是“只在 DeepSeek 上成立”。第四轮在**完全相同的任务池、故障 seed、预算语义**下跑 3 个模型（`scripts/run_multimodel_live.py`）：每个模型先做 31 次无故障 calibration 定位能力档，再跑 186 个评测格（31 任务 × 2 臂 × clean+1 两 repeat + clean+4）。**V4 多模型 = V3 任务池 + HN 契约修正**：各模型的 budget 锚点复用 V3 calibration（逐任务 fault-free 轮数相同），因此 V3→V4 只改 HN schema。V3 ground-truth 加固（不可变 HN 任务 + 每模型块前重建 GT）保持不变。
+单模型结果最大的风险是“只在 DeepSeek 上成立”。第四轮在**完全相同的任务池、故障 seed、预算语义**下跑 3 个模型（`scripts/run_multimodel_live.py`）：每个模型先做 31 次无故障 calibration 定位能力档，再跑 186 个评测格（31 任务 × 2 臂 × clean+1 两 repeat + clean+4）。**V4 多模型 = V3 任务池 + HN 契约修正**：各模型的 budget 锚点复用 V3 calibration（逐任务 fault-free 轮数相同，`protocol.calibration.mode="reused"`、`reused_from="V3"`），因此 V3→V4 只改 HN schema；**复现命令只做 eval 与 from-records，不重新校准**（calibration 是只读输入，见下表与快速开始）。V3 ground-truth 加固（不可变 HN 任务 + 每模型块前重建 GT）保持不变。
 
 | 档位（按价格） | 模型 | provider | 官方价格 $/M（入/出） | 无故障 placement |
 |---|---|---|---|---|
@@ -187,9 +187,9 @@ artifact：V2 [`benchmarks/toolguard/mcp_demo_v2.json`](benchmarks/toolguard/mcp
 - 运行量：V4 三模型 558 格，wall **4,172s（~70min）**，成本 **$2.00**（复用 V3 per-model calibration，无额外校准花费）；注入瞬态 epoch baseline 627 / guard 642，guard 轮内恢复 **321 次**，agent 可见工具错误 clean+1 **133/136/134 → 0**、clean+4 78/73/74 → 0；
 - **V3 历史对照（HN drift，非主口径）**：clean+1 baseline 28/62 (45.2%) / 32/62 (51.6%) / 34/62 (54.8%)，guard 57/62 (91.9%) / 62/62 / 62/62；clean+4 baseline 25/31 / 30/31 / 28/31，guard 全 31/31；成本 $2.08 + calibration $0.30 ≈ $2.38。artifact：[`benchmarks/toolguard/live_demo_multimodel_v3.json`](benchmarks/toolguard/live_demo_multimodel_v3.json)。
 
-artifact：[`benchmarks/toolguard/live_demo_multimodel_v4.json`](benchmarks/toolguard/live_demo_multimodel_v4.json)（558 格逐条记录、三模型 placement/Wilson CI/成本、逐条修复事件、`tasks_per_model` 与每条记录的 `expected` 快照、`protocol.hn_schema=consistent`、`protocol.calibration.source` 指向复用锚点）。V2 版 artifact（`live_demo_multimodel.json`，含 karma 任务）保留为演进记录。
+artifact：[`benchmarks/toolguard/live_demo_multimodel_v4.json`](benchmarks/toolguard/live_demo_multimodel_v4.json)（558 格逐条记录、三模型 placement/Wilson CI/成本、逐条修复事件、`tasks_per_model` 与每条记录的 `expected` 快照、`protocol.hn_schema=consistent`、`protocol.calibration.mode="reused"`/`reused_from="V3"` 指向复用锚点、`protocol.calibration.fresh_calibration` 给出“fresh calibration, not the exact artifact reproduction”的单独命令）。V2 版 artifact（`live_demo_multimodel.json`，含 karma 任务）保留为演进记录。
 
-**这一轮的局限**：3 个模型是复制而非模型间假设检验；cheap/strong 同属 Qwen 家族；每个模型只做 1 次 calibration（V4 复用 V3 锚点，属受控对照）；故障仍是确定性注入；紧预算 guard 已 100%，存在 ceiling effect（进一步提升空间只能靠更难的题）。
+**这一轮的局限**：3 个模型是复制而非模型间假设检验；cheap/strong 同属 Qwen 家族；每个模型只做 1 次 calibration（V4 复用 V3 锚点，属受控对照；reproduce 只做 eval/from-records，不重新校准）；故障仍是确定性注入；紧预算 guard 已 100%，存在 ceiling effect（进一步提升空间只能靠更难的题）。
 
 ### 真实线上故障 trace（2026-11-25 新增）
 
@@ -273,12 +273,12 @@ V4 的一个已知局限是 **ceiling effect**：三个模型在紧预算 clean+
 | `mcp_demo_v2.json` | MCP V2：双 server / 崩溃重连 / catalog drift / 16 任务（历史协议） | `a1f8b23` | checkout `a1f8b23` |
 | `mcp_demo_v3.json` | MCP V3：baseline/guard **分开校准**、以 baseline fault-free 轮数做预算锚点 | 本轮（重跑） | `--mode calibrate`（两臂分开测）+ `--budget-anchor baseline --workers 2` |
 | `live_demo_multimodel.json` | 多模型 V2：3 模型 / 576 格（含直播 karma 任务） | `fb13a1f` | checkout `fb13a1f` |
-| `live_demo_multimodel_v3.json` | 多模型 V3（历史，HN drift 能力演示）：3 模型 / 558 格 / 漂移加固 GT；本轮用 `--from-records` 重建，重算 failure_mode、补 `tasks_per_model`、修 reproduce（含 `--hn-schema drifting` 与真实输出路径），**数字未变** | `dcd5f20` 产物，本轮未重跑 | `--hn-schema drifting` + `--from-records` 重建；旧运行见 commit `dcd5f20` |
-| `live_demo_multimodel_v4.json` | 多模型 **V4（当前主口径）**：V3 任务池 + HN 契约修正（consistent）；558 格，clean+1 baseline 39/62 / 40/62 / 43/62 vs guard 62/62 | 本轮（重跑） | `--mode eval --hn-schema consistent --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --output benchmarks/toolguard/live_demo_multimodel_v4.json`（复用 V3 per-model 锚点） |
+| `live_demo_multimodel_v3.json` | 多模型 V3（历史，HN drift 能力演示）：3 模型 / 558 格 / 漂移加固 GT；本轮用 `--from-records` 重建，重算 failure_mode、补 `tasks_per_model`、修 reproduce（含 `--hn-schema drifting` 与真实输出路径），**数字未变**；calibration provenance=`fresh`（该 anchor 为 V3 本次运行测量，后由 V4 复用），reproduce 不重新校准 | `dcd5f20` 产物，本轮未重跑 | `--mode eval --hn-schema drifting --calibration .scratch/toolguard/multimodel_calibration.json --output benchmarks/toolguard/live_demo_multimodel_v3.json` + `--from-records`；旧运行见 commit `dcd5f20` |
+| `live_demo_multimodel_v4.json` | 多模型 **V4（当前主口径）**：V3 任务池 + HN 契约修正（consistent）；558 格，clean+1 baseline 39/62 / 40/62 / 43/62 vs guard 62/62 | 本轮（重跑） | `--mode eval --hn-schema consistent --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --calibration-mode reused --calibration-reused-from V3 --output benchmarks/toolguard/live_demo_multimodel_v4.json`（复用 V3 per-model 锚点；**不重新校准**，fresh 校准用 `protocol.calibration.fresh_calibration` 的单独命令写到 `*_v4_fresh.json`） |
 | `live_demo_hard_v3_hnconsistent.json` | HN schema drift **归因对照**（促成 V4 修复）：31 任务 / clean+1 / 3 repeats / 186 格；baseline 51/93→61/93，HN 子集 2/12→12/12 | 本轮（重跑） | `--budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json` |
 | `real_traces/*.json`（证据数据，非 contract artifact） | 真实线上错误 trace（16 条）+ repair-layer 在线验证（4/4 可推导契约错误恢复，12 条语义错误诚实失败）+ real-trace A/B smoke（12 格，6-task 子集，非 V4 主口径）+ V5 hard-task pilot（24 格，ceiling 负结果）。reproduce 为 artifact-specific（`--fault-source real-trace` / `--include-hard-tasks` + 4 个 task id / 实际输出路径），可用 `--update-metadata` 离线重建元数据（records/aggregate 不变） | 本轮 | `collect_real_fault_traces.py`、`run_real_fault_repair.py`、`run_live_demo_hard_v2.py --fault-source real-trace`、`run_live_demo_hard_v2.py --include-hard-tasks`（见快速开始） |
 
-一致性由 `python scripts/validate_toolguard_artifacts.py`（以及 `tests/test_toolguard/test_artifact_contracts.py`）检查：artifact 的 aggregate 中 **success/rate/Wilson/turns/tokens/tool_errors/p 等所有派生字段**都必须能从逐条 records 重算（`src/tool_evolution/toolguard/artifact_metrics.py`），`metrics.json` 的比率与 schema 漏斗由同一模块复算；必须有 limitations/reproduce、复现脚本必须存在、**reproduce 中写 `--output` 的命令若指向 `benchmarks/toolguard/` 必须指向该 artifact 自身**、每套 calibration 的 task-id 集合（顶层 `calibration.tasks`、多模型 `calibration.models[*].tasks`、单模型 `protocol.calibration.tasks`）必须与 artifact 任务池一致、多模型 `tasks_per_model` 快照必须与每条记录的 `expected` 一致。历史/证据 artifact 的元数据可用 `--from-records` / `--update-metadata` **离线**重建（不调用 API，数据块逐字节不变，见 `tests/test_toolguard/test_evidence_artifact_repro.py`）。篡改上述任一字段都会被 `tests/test_toolguard/test_artifact_tamper.py` 的负例抓住。比较类 artifact（含 V3 多模型，产生于关系验证器之前）用新验证器离线重判 **756 条记录，success 变化 0**（`python scripts/rescore_toolguard_verifier.py`，只读、不改 artifact）。
+一致性由 `python scripts/validate_toolguard_artifacts.py`（以及 `tests/test_toolguard/test_artifact_contracts.py`）检查：artifact 的 aggregate 中 **success/rate/Wilson/turns/tokens/tool_errors/p 等所有派生字段**都必须能从逐条 records 重算（`src/tool_evolution/toolguard/artifact_metrics.py`），`metrics.json` 的比率与 schema 漏斗由同一模块复算；必须有 limitations/reproduce、复现脚本必须存在、**reproduce 中写 `--output` 的命令若指向 `benchmarks/toolguard/` 必须指向该 artifact 自身**、每套 calibration 的 task-id 集合（顶层 `calibration.tasks`、多模型 `calibration.models[*].tasks`、单模型 `protocol.calibration.tasks`）必须与 artifact 任务池一致、多模型 `tasks_per_model` 快照必须与每条记录的 `expected` 一致。多模型 artifact 的 calibration 是**只读输入**：`protocol.calibration.mode`（`fresh`/`reused`）/`reused_from`/`required_input`/`reproduce_regenerates_calibration=false`/`fresh_calibration` 显式记录 provenance，reproduce 不包含 `--mode calibrate`；`--from-records` / `--update-metadata` 从 checkpoint 保留这些字段（不按文件名推断）。历史/证据 artifact 的元数据可用 `--from-records` / `--update-metadata` **离线**重建（不调用 API，数据块逐字节不变，见 `tests/test_toolguard/test_evidence_artifact_repro.py`）。篡改上述任一字段都会被 `tests/test_toolguard/test_artifact_tamper.py` 的负例抓住。比较类 artifact（含 V3 多模型，产生于关系验证器之前）用新验证器离线重判 **756 条记录，success 变化 0**（`python scripts/rescore_toolguard_verifier.py`，只读、不改 artifact）。
 
 ## 快速开始
 
@@ -335,12 +335,23 @@ python scripts/run_live_demo_hard_v2.py --update-metadata --output benchmarks/to
 
 # 多模型复制：需要 TOOLEVO_QWEN_API_KEY（qwen3.8-flash + qwen4-max）与 TOOLEVO_DEEPSEEK_API_KEY
 python scripts/check_providers.py --smoke        # 先验证 key / 工具调用 / model id（不打印 key）
-python scripts/run_multimodel_live.py --mode calibrate
+# 复现 V4 主口径 artifact（当前主口径）：eval + 从 checkpoint 重建；calibration 是只读输入，不重新校准
 python scripts/run_multimodel_live.py --mode eval --hn-schema consistent --workers 2 \
   --calibration .scratch/toolguard/multimodel_calibration.json \
+  --calibration-mode reused --calibration-reused-from V3 \
   --output benchmarks/toolguard/live_demo_multimodel_v4.json
 python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v4.json  # 从 checkpoint 重建 artifact（离线）
-python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json  # V3 历史 artifact，reproduce 含 --hn-schema drifting
+# V3 历史 artifact（HN drift 能力演示）：eval + from-records；同样不覆盖共享 calibration
+python scripts/run_multimodel_live.py --mode eval --hn-schema drifting --workers 2 \
+  --calibration .scratch/toolguard/multimodel_calibration.json \
+  --output benchmarks/toolguard/live_demo_multimodel_v3.json
+python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json
+# 若确实要一次全新校准（fresh calibration, not the exact artifact reproduction）：
+# 显式写到 *_fresh.json，绝不覆盖 V3/V4 共享的只读 anchor
+python scripts/run_multimodel_live.py --mode calibrate --hn-schema consistent \
+  --calibration .scratch/toolguard/multimodel_calibration_v4_fresh.json
+python scripts/run_multimodel_live.py --mode calibrate --hn-schema drifting \
+  --calibration .scratch/toolguard/multimodel_calibration_v3_fresh.json
 
 # artifact 一致性（aggregate ↔ records、reproduce/limitations 完整）
 python scripts/validate_toolguard_artifacts.py

@@ -95,7 +95,15 @@
     },
     "calibration": {
       "source": ".scratch/toolguard/multimodel_calibration.json",
-      "description": "per-model fault-free calibration payload stored at the top level"
+      "mode": "fresh",
+      "reused_from": null,
+      "required_input": true,
+      "reproduce_regenerates_calibration": false,
+      "description": "per-model fault-free calibration measured once for this run (fresh). The reproduce commands use the recorded calibration as a read-only input and do not regenerate it; a fresh calibration is a separate explicit action (see fresh_calibration)",
+      "fresh_calibration": {
+        "command": "python scripts/run_multimodel_live.py --mode calibrate --hn-schema drifting --workers 2 --calibration .scratch/toolguard/multimodel_calibration_v3_fresh.json",
+        "note": "fresh calibration, not the exact V3/V4 artifact reproduction: it re-measures the per-model fault-free turn budget and must not overwrite the shared read-only anchor; the artifact itself is reproduced by the eval/from-records commands"
+      }
     },
     "verification": "programmatic; ground truth computed from the same live APIs before the runs",
     "ground_truth_refresh": "rebuilt immediately before each model's block to bound live drift (weather/FX); every record carries the `expected` snapshot it was verified against"
@@ -1280,6 +1288,13 @@
           "estimated_cost_usd": 0.2322
         }
       }
+    },
+    "provenance": {
+      "mode": "fresh",
+      "reused_from": null,
+      "required_input": true,
+      "reproduce_regenerates_calibration": false,
+      "note": "see protocol.calibration for the full provenance and fresh-calibration command"
     }
   },
   "tasks": [
@@ -29342,7 +29357,7 @@
   "limitations": [
     "Multi-model axis is replication: each model's baseline-vs-guard comparison is paired; no formal between-model hypothesis test (3 models only).",
     "Transient faults are deterministic injections, not observed production failures; the budget conditions are controlled stress conditions (clean+1 / clean+4).",
-    "One calibration run per task per model anchors the budget; repeat seeds vary the fault surface, not model sampling (temperature 0 where the provider supports it).",
+    "Budget calibration provenance: per-model fault-free calibration stored in this artifact is a required read-only input; the reproduce commands (eval / from-records) take it as-is and never regenerate it. A fresh calibration is a separate explicit action (protocol.calibration.fresh_calibration), not an artifact reproduction.",
     "Cheap and strong tiers are both Qwen-family models served by Alibaba Model Studio; the measured fault-free placement does not show the expensive flagship outperforming the mid-tier model on this tool-task set (see capability_placement).",
     "Live-mutable ground truth: the HN top-story author's karma and current weather can change between task construction and a run; a few guard failures are ground-truth drift or answer formatting (failure_mode/answer in the records), not middleware failures.",
     "V3 task-set change: the three HN karma tasks were replaced by immutable account-creation-year tasks (same two-tool chain). HN karma is live-mutable: during the V2 multi-model run one active author's karma changed 112 -> 161 within an hour, which made that task's ground truth noise. The V2 multi-model artifact (commit fb13a1f) still contains the karma tasks.",
@@ -29352,7 +29367,6 @@
     "HN contract drift mode: get_hn_item advertises story_id as string while the backend requires an integer (historical V3 protocol)."
   ],
   "reproduce": [
-    "python scripts/run_multimodel_live.py --mode calibrate --hn-schema drifting --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json",
     "python scripts/run_multimodel_live.py --mode eval --hn-schema drifting --budgets clean+1,clean+4 --repeats clean+1:2,clean+4:1 --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --output benchmarks/toolguard/live_demo_multimodel_v3.json",
     "python scripts/run_multimodel_live.py --from-records --output benchmarks/toolguard/live_demo_multimodel_v3.json",
     "python -m pytest tests/test_toolguard -q -p no:cacheprovider"

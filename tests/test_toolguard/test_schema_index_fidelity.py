@@ -108,12 +108,15 @@ def test_three_consistent_successful_samples_back_fill_parameters() -> None:
     assert stats["param_additions"] == stats["param_addition_examples"]
 
 
-def test_error_response_fields_are_not_back_filled() -> None:
-    """A recorded "successful" call whose arguments are an API error envelope is not evidence.
+def test_below_min_samples_does_not_back_fill() -> None:
+    """Fewer than ``min_samples`` recorded successful values never change the schema.
 
-    ``getsponsorships_for_diablo4_smartable`` was called once with
-    ``{"error": "Function not available", "response": ""}``; with min_samples=3 those
-    pseudo-parameters must not become part of the schema.
+    This test validates the *sample-count threshold*, not an "error-envelope filter": the
+    real one-call example is ``getsponsorships_for_diablo4_smartable`` called with
+    ``{"error": "Function not available", "response": ""}``; with only one successful sample
+    (any argument names, including these pseudo-parameters) nothing is back-filled.  There is
+    no explicit error-envelope filtering in ``refine_schema_index``; three consistent
+    observations of the same argument shape would still be back-filled.
     """
     function = "getsponsorships_for_diablo4_smartable"
     schema = _schema({}, required=())
@@ -124,7 +127,6 @@ def test_error_response_fields_are_not_back_filled() -> None:
     refined, stats = refine_schema_index({function: schema}, calls)
     assert refined[function].properties == {}
     assert stats["params_added"] == 0
-
 
 
 def test_failed_calls_are_not_evidence() -> None:
