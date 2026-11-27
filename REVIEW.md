@@ -183,7 +183,8 @@ git show -- scripts/ src/tool_evolution/toolguard/ tests/test_toolguard/
 | `aef8fd3` | 收口：测试/artifact 计数、commit 范围、证据数据区分、审阅顺序与 checklist 最终对齐 |
 | 本轮审阅 finding 修复 commit | schema 参数回填执行 ≥3 样本/≥90% 一致门槛（回填 20→7）、reproduce 元数据 artifact-specific（含 4 个证据/历史 artifact 的离线元数据重建）、artifact 契约新增 --output 自身路径与 calibration task 集合校验、format（date/date-time/time）真实日历校验、文档口径与 push 状态修正 |
 | 本轮 calibration/reproduce 残留修复 commit | 多模型 reproduce 不再重新校准（V4 只 eval+from-records）；显式 `protocol.calibration.mode`/`reused_from`/`required_input`/`reproduce_regenerates_calibration`/`fresh_calibration`；from-records/update-metadata 保留 provenance（不按文件名推断）；V3/V4 fresh 校准各自写 `*_fresh.json`；real-trace/V5 limitations 按 artifact 类型替换通用旧句（不再出现 deterministic injection / V3 task-pool）；`test_error_response_fields_are_not_back_filled` 正名为样本门槛测试；文档 quick start/checklist/handoff 同步 |
-| 最新 commit | 本文件的最终收口修订（审阅时以 `git log -1` 为准） |
+
+> 最新 commit 以 `git log -1` 为准；本文件与 TOOLGUARD 的修订随本轮 commit 一起提交（本地 commit，尚未 push）。
 
 ### 本轮变更文件汇总
 
