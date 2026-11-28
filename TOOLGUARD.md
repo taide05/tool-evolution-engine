@@ -122,10 +122,10 @@ V3 主口径故意让 `get_hn_item` 的 agent-visible schema 声明 `story_id: s
 | 运行 | baseline clean+1 | 其中 HN 子集 | 非 HN 子集 | guard clean+1 |
 |---|---|---|---|---|
 | V3（schema 故意不一致） | 51/93（54.8%） | **2/12** | 49/81（60.5%） | 93/93（HN 12/12，非 HN 81/81） |
-| 一致 schema 对照（186 格） | **61/93（65.6%）** | **12/12** | 49/81（60.5%，与 V3 逐格相同） | 93/93（HN 12/12，非 HN 81/81） |
+| 一致 schema 对照（186 格） | **61/93（65.6%）** | **12/12** | 49/81（60.5%，与 V3 聚合相同；6 格双向波动、净 0） | 93/93（HN 12/12，非 HN 81/81） |
 | **V4 主口径（完整 310 格，重新独立跑）** | **59/93（63.4%）** | **12/12** | 47/81（58.0%） | 93/93 |
 
-- **因果归因**：对照实验的非 HN 子集与 V3 **逐格相同**、HN 子集 2/12→12/12 ⇒ 10 格差异完全来自 HN 契约缺陷；V4 完整重跑中非 HN 有 ±2 格独立波动（LLM 采样导致调用序列变化），因此 headline 用 V4 的 59/93；
+- **因果归因**：对照实验的 HN 子集 2/12→12/12（+10），非 HN 聚合保持 49/81（6 个重复格为独立 LLM 采样的双向波动、净 0）⇒ +10 的净差异来自 HN 契约缺陷；V4 完整重跑中非 HN 有 ±2 格独立波动（LLM 采样导致调用序列变化），因此 headline 用 V4 的 59/93；
 - 成本：对照 **$0.18 / 658s / 186 格**；V4 完整重跑 **$0.31 / 1278s / 310 格**（DeepSeek 价格）。artifact：[`benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json`](benchmarks/toolguard/live_demo_hard_v3_hnconsistent.json)；
 - 多模型 **V4 已做同样的契约修正**（不是“仍是 V3 时代 drift schema”）：`live_demo_multimodel_v4.json` 三个模型都使用一致 integer `story_id` schema，HN 子集 baseline clean+1 **1/8→8/8**（三个模型）；V3 多模型 artifact 仅保留为 drift 能力演示（见第四轮）。
 
@@ -276,7 +276,7 @@ V4 的一个已知局限是 **ceiling effect**：三个模型在紧预算 clean+
 | `live_demo_multimodel_v3.json` | 多模型 V3（历史，HN drift 能力演示）：3 模型 / 558 格 / 漂移加固 GT；本轮用 `--from-records` 重建，重算 failure_mode、补 `tasks_per_model`、修 reproduce（含 `--hn-schema drifting` 与真实输出路径），**数字未变**；calibration provenance=`fresh`（该 anchor 为 V3 本次运行测量，后由 V4 复用），reproduce 不重新校准 | `dcd5f20` 产物，本轮未重跑 | `--mode eval --hn-schema drifting --calibration .scratch/toolguard/multimodel_calibration.json --output benchmarks/toolguard/live_demo_multimodel_v3.json` + `--from-records`；旧运行见 commit `dcd5f20` |
 | `live_demo_multimodel_v4.json` | 多模型 **V4（当前主口径）**：V3 任务池 + HN 契约修正（consistent）；558 格，clean+1 baseline 39/62 / 40/62 / 43/62 vs guard 62/62 | 本轮（重跑） | `--mode eval --hn-schema consistent --workers 2 --calibration .scratch/toolguard/multimodel_calibration.json --calibration-mode reused --calibration-reused-from V3 --output benchmarks/toolguard/live_demo_multimodel_v4.json`（复用 V3 per-model 锚点；**不重新校准**，fresh 校准用 `protocol.calibration.fresh_calibration` 的单独命令写到 `*_v4_fresh.json`） |
 | `live_demo_hard_v3_hnconsistent.json` | HN schema drift **归因对照**（促成 V4 修复）：31 任务 / clean+1 / 3 repeats / 186 格；baseline 51/93→61/93，HN 子集 2/12→12/12 | 本轮（重跑） | `--budgets clean+1 --repeats clean+1:3 --hn-schema consistent --workers 2 --calibration .scratch/toolguard/hard_calibration_v3.json` |
-| `real_traces/*.json`（证据数据，非 contract artifact） | 真实线上错误 trace（16 条）+ repair-layer 在线验证（4/4 可推导契约错误恢复，12 条语义错误诚实失败）+ real-trace A/B smoke（12 格，6-task 子集，非 V4 主口径）+ V5 hard-task pilot（24 格，ceiling 负结果）。reproduce 为 artifact-specific（`--fault-source real-trace` / `--include-hard-tasks` + 4 个 task id / 实际输出路径），可用 `--update-metadata` 离线重建元数据（records/aggregate 不变） | 本轮 | `collect_real_fault_traces.py`、`run_real_fault_repair.py`、`run_live_demo_hard_v2.py --fault-source real-trace`、`run_live_demo_hard_v2.py --include-hard-tasks`（见快速开始） |
+| `real_traces/*.json`（证据数据，非 contract artifact） | 真实线上错误 trace（16 条）+ repair-layer 在线验证（4/4 可推导契约错误恢复，12 条语义错误诚实失败）+ real-trace A/B smoke（12 格，6-task 子集，非 V4 主口径）+ V5 hard-task pilot（24 格，ceiling 负结果）。reproduce 为 artifact-specific（`--fault-source real-trace` 的 6-task 子集 / `--include-hard-tasks` + 4 个 hard task id / 实际输出路径），可用 `--update-metadata` 离线重建元数据（records/aggregate 不变） | 本轮 | `collect_real_fault_traces.py`、`run_real_fault_repair.py`、`run_live_demo_hard_v2.py --fault-source real-trace`、`run_live_demo_hard_v2.py --include-hard-tasks`（见快速开始） |
 
 一致性由 `python scripts/validate_toolguard_artifacts.py`（以及 `tests/test_toolguard/test_artifact_contracts.py`）检查：artifact 的 aggregate 中 **success/rate/Wilson/turns/tokens/tool_errors/p 等所有派生字段**都必须能从逐条 records 重算（`src/tool_evolution/toolguard/artifact_metrics.py`），`metrics.json` 的比率与 schema 漏斗由同一模块复算；必须有 limitations/reproduce、复现脚本必须存在、**reproduce 中写 `--output` 的命令若指向 `benchmarks/toolguard/` 必须指向该 artifact 自身**、每套 calibration 的 task-id 集合（顶层 `calibration.tasks`、多模型 `calibration.models[*].tasks`、单模型 `protocol.calibration.tasks`）必须与 artifact 任务池一致、多模型 `tasks_per_model` 快照必须与每条记录的 `expected` 一致。多模型 artifact 的 calibration 是**只读输入**：`protocol.calibration.mode`（`fresh`/`reused`）/`reused_from`/`required_input`/`reproduce_regenerates_calibration=false`/`fresh_calibration` 显式记录 provenance，reproduce 不包含 `--mode calibrate`；`--from-records` / `--update-metadata` 从 checkpoint 保留这些字段（不按文件名推断）。历史/证据 artifact 的元数据可用 `--from-records` / `--update-metadata` **离线**重建（不调用 API，数据块逐字节不变，见 `tests/test_toolguard/test_evidence_artifact_repro.py`）。篡改上述任一字段都会被 `tests/test_toolguard/test_artifact_tamper.py` 的负例抓住。比较类 artifact（含 V3 多模型，产生于关系验证器之前）用新验证器离线重判 **756 条记录，success 变化 0**（`python scripts/rescore_toolguard_verifier.py`，只读、不改 artifact）。
 
@@ -367,7 +367,10 @@ python scripts/collect_real_fault_traces.py
 python scripts/run_real_fault_repair.py
 
 # real-trace 作为 A/B 故障源（鲁棒性检查；非 headline 协议）
-python scripts/run_live_demo_hard_v2.py --fault-source real-trace --budgets clean+1 --repeats clean+1:1 \
+# 6-task 子集 + artifact-specific 复现（完整命令含 probe 校准，见 real_trace_ab_smoke.json 的 reproduce 字段）
+python scripts/run_live_demo_hard_v2.py --fault-source real-trace \
+  --task-ids capital_weather_japan,population_sum_australia_canada,pypi_release_date_httpx,hn_item_8863_author_account_year,fx_usd_cny_100,gdp_ratio_bern_canberra \
+  --budgets clean+1 --repeats clean+1:1 --hn-schema consistent --workers 1 \
   --calibration .scratch/toolguard/hard_calibration_v4.json \
   --output benchmarks/toolguard/real_traces/real_trace_ab_smoke.json
 
