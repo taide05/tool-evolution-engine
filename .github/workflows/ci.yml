@@ -1,0 +1,61 @@
+name: CI
+
+# Offline-only CI.
+#
+# This workflow intentionally runs only tests that need neither network access nor an
+# LLM/API key. The live/MCP/real-API benchmark runners (scripts/run_live_demo*.py,
+# scripts/run_mcp_demo*.py, scripts/run_multimodel_live.py, scripts/run_real_fault_repair.py,
+# ...) are scripts, not pytest tests, so they are simply never invoked here. Every HTTP
+# call in the test suite goes through an injected mock/ASGI transport, and the MCP tests
+# use the in-memory transport or a local stdio subprocess; no test reads benchmark data
+# that is downloaded outside the repository (downloaded data lives in the gitignored
+# .scratch/ tree, which the tests create themselves when needed).
+#
+# Nothing here writes to the committed benchmark artifacts under benchmarks/toolguard/;
+# the tests only read them (the artifact-contract/tamper tests copy to .scratch/).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    name: offline unit tests (no network, no API keys)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Full offline test suite
+        run: python -m pytest tests -q -p no:cacheprovider
+
+      - name: ToolGuard offline subset
+        run: python -m pytest tests/test_toolguard -q -p no:cacheprovider
