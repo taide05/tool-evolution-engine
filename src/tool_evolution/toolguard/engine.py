@@ -21,6 +21,47 @@ from .schema_check import validate_arguments
 
 _PARAM_LEVEL_KINDS = {"missing_required", "invalid_value", "unexpected_kwarg", "other"}
 
+# A1.8.3 replay safety: a tool name that starts with a state-mutating verb is treated as
+# side-effectful even if a caller puts it into the replay allowlist.  The StableToolBench
+# function names follow ``<verb>_..._for_<tool>``, so the first token is the API endpoint's
+# verb; read-only endpoints start with get/search/list/find/... .  This is a conservative
+# name-based guard (defence in depth), not a substitute for a curated allowlist: the
+# allowlist itself defaults to empty and only read-only tools belong in it.
+_REPLAY_SIDE_EFFECT_PREFIXES = frozenset({
+    "add", "book", "buy", "cancel", "charge", "close", "create", "delete", "execute",
+    "grant", "insert", "modify", "move", "open", "order", "patch", "pay", "place",
+    "post", "publish", "purchase", "put", "refund", "register", "remove", "rename",
+    "reserve", "restart", "revoke", "run", "save", "send", "set", "share", "start",
+    "stop", "submit", "subscribe", "transfer", "unsubscribe", "update", "upload", "write",
+})
+
+
+def is_side_effect_tool(tool_name: str) -> bool:
+    """Conservative read-only classifier used by replay safety (True = mutating name)."""
+    first_token = (tool_name or "").lower().split("_")[0]
+    return first_token in _REPLAY_SIDE_EFFECT_PREFIXES
+
+
+def replay_tool_allowed(tool_name: str, schema: FunctionSchema | None,
+                        replay_allowlist: frozenset[str] | None) -> bool:
+    """A1.8.3: is recorded-success replay allowed for this tool/schema pair?
+
+    Recorded-success replay re-sends arguments that succeeded once, so it must never run
+    for a tool that is not explicitly allowlisted, never run for a side-effectful tool
+    (the replay could duplicate the side effect), and never run when the schema declares
+    no properties at all (an empty schema gives the schema gate no constraint, so
+    ``schema_valid`` and ``recorded_success_match`` would both be self-evidence instead of
+    independent evidence).
+    """
+    if not replay_allowlist or tool_name not in replay_allowlist:
+        return False
+    if is_side_effect_tool(tool_name):
+        return False
+    if schema is None or not schema.properties:
+        return False
+    return True
+
+
 
 def coerce_values_to_schema(arguments: dict, schema: FunctionSchema) -> dict:
     """Deterministically convert proposed values to the *declared* scalar types.
@@ -128,6 +169,8 @@ def repair_failure(
     extractor_map: ExtractorMap | None = None,
     successful_arguments: list[dict] | None = None,
     allow_recorded_success_replay: bool = False,
+    replay_allowlist: frozenset[str] | None = None,
+    replay_successes: list[dict] | None = None,
 ) -> RepairResult:
     """Apply the repair ladder; every *proposed* candidate is kept for the schema funnel.
 
@@ -142,15 +185,18 @@ def repair_failure(
        from schema validity; callers that do not have recorded successes (the live guard)
        never use this tier.
 
-    ``allow_recorded_success_replay`` (A1.7, default off) additionally lets the
-    same task/function recorded successes act as *replay candidates* — not merely as
-    value verification — but only for generic missing-parameters errors that name no
-    parameter.  Every replay candidate still goes through the same schema gate and the
-    existing evidence tiers: a candidate that fails the schema is counted as a rejected
-    proposal unless it is (as a replay candidate always is) a verbatim recorded success,
-    in which case it is admitted only through the separate ``value_verified`` tier and
-    never reported as schema-valid.  The default is ``False`` so the historical/headline
-    evaluation is bit-for-bit unchanged.
+    ``allow_recorded_success_replay`` (A1.7, default off) additionally lets recorded
+    successes act as *replay candidates* — not merely as value verification — but only for
+    generic missing-parameters errors that name no parameter, and (A1.8.3) only when the
+    tool is in the explicit ``replay_allowlist``, has no side-effectful name, and its schema
+    declares at least one property.  ``replay_successes`` is the candidate source (defaults
+    to ``successful_arguments``; pass training-side successes to avoid the test-fold oracle
+    the A1.7 experiment originally used).  Every replay candidate still goes through the
+    same schema gate and evidence tiers: a schema-failing candidate is counted as a rejected
+    proposal unless it is a verbatim recorded success, in which case it is admitted only
+    through the separate ``value_verified`` tier and never reported as schema-valid.
+    The defaults (``False`` / ``None``) keep the historical/headline evaluation bit-for-bit
+    unchanged.
 
     Rejected candidates are counted and exposed on ``result.candidates`` instead of being
     silently dropped, so the schema funnel is honest.
@@ -197,12 +243,17 @@ def repair_failure(
         # parameter), a recorded success of the *same task/function* is replay evidence.
         # Only added when the ladder found no schema-valid proposal, so this can never
         # change an already-accepted repair; the schema gate below still applies.
-        if (allow_recorded_success_replay and schema is not None and successful_arguments
+        # A1.8.3: replay is additionally gated by an explicit read-only allowlist, a
+        # side-effect-name guard and a non-empty declared schema; the candidate source is
+        # ``replay_successes`` (training-side successes) rather than the test-fold oracle.
+        replay_source = replay_successes if replay_successes is not None else successful_arguments
+        if (allow_recorded_success_replay and schema is not None and replay_source
                 and kind == "missing_required"
                 and not parse_missing_params(call.error or "")
-                and not any(p.repairable and p.schema_valid for p in proposals)):
+                and not any(p.repairable and p.schema_valid for p in proposals)
+                and replay_tool_allowed(call.tool_name, schema, replay_allowlist)):
             proposals.extend(
-                _generic_success_replay_candidates(call, schema, kind, successful_arguments))
+                _generic_success_replay_candidates(call, schema, kind, replay_source))
 
     for index, proposal in enumerate(proposals):
         if proposal.repairable and proposal.schema_valid:
@@ -243,12 +294,14 @@ def _generic_success_replay_candidates(
 ) -> list[RepairResult]:
     """Turn recorded successes of the same task/function into replay candidates.
 
-    Used only for generic missing-parameters errors (the message names no parameter) and
-    only when the ladder produced no schema-valid proposal.  Each distinct recorded
-    argument set becomes one candidate; the caller's normal schema gate and evidence
-    tiers decide the outcome, so a schema-invalid replay is either counted as rejected or
-    admitted solely through the existing exact-recorded-success (value-verified) tier —
-    never silently as a schema-valid repair.
+    Used only for generic missing-parameters errors (the message names no parameter), only
+    when the ladder produced no schema-valid proposal, and (A1.8.3) only after
+    :func:`replay_tool_allowed` accepted the tool/schema pair (explicit read-only
+    allowlist, no side-effectful name, non-empty declared schema).  Each distinct recorded
+    argument set becomes one candidate; the caller's normal schema gate and evidence tiers
+    decide the outcome, so a schema-invalid replay is either counted as rejected or admitted
+    solely through the existing exact-recorded-success (value-verified) tier — never
+    silently as a schema-valid repair.
     """
     candidates: list[RepairResult] = []
     seen: set[tuple[tuple[str, str], ...]] = set()

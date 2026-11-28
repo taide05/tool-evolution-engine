@@ -12,7 +12,15 @@ a16_schema    baseline ladder + in-memory error-driven schema completion (A1.6's
               with no declared type, so "schema-valid" is structural only)
 a17_extract   a16_schema + A1.7 deterministic extractors enabled (source/state/topic/ID)
 a17_replay    a17_extract + generic-error same-task/function recorded-success replay
-              (only for errors that name no parameter; schema gate applied as usual)
+              (only for errors that name no parameter; schema gate applied as usual).
+              A1.8.3: the replay candidate source is selected with ``--replay-source``:
+                * ``training`` (default) -- training-side SuccessMemory successes only,
+                  which is the honest replay gain (no test-fold oracle);
+                * ``test-fold-oracle`` -- the A1.7 candidate source (recorded successes of
+                  the *evaluated* fold).  This is an oracle, must be labelled as such and
+                  must never be reported as independent recovery.
+              Replay is also gated by the explicit read-only allowlist and the
+              empty-schema/side-effect guards added in ``engine.repair_tool_allowed``.
 a17_named_replay (sensitivity only, OUT of the documented scope): a17_extract + replay
               also for named errors, to quantify what the generic-only restriction costs.
 
@@ -44,7 +52,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tool_evolution.toolguard.backend import RecordedBackend  # noqa: E402
 from tool_evolution.toolguard.cache_index import CacheIndex  # noqa: E402
-from tool_evolution.toolguard.engine import _resolve_param_name, repair_failure  # noqa: E402
+from tool_evolution.toolguard.engine import (  # noqa: E402
+    _resolve_param_name, is_side_effect_tool, repair_failure,
+)
 from tool_evolution.toolguard.extractors import (  # noqa: E402
     EXPERIMENTAL_EXTRACTORS, ExtractorMap, extract_dates, extract_month_years,
 )
@@ -273,6 +283,15 @@ def main() -> int:
     parser.add_argument("--no-cache", action="store_true",
                         help="skip cache verification (counts are then not cache-checked)")
     parser.add_argument("--output-dir", default=".scratch/toolguard/a17")
+    parser.add_argument("--replay-source", choices=("training", "test-fold-oracle"),
+                        default="training",
+                        help="training: replay candidates are training-side SuccessMemory "
+                             "successes (honest gain); test-fold-oracle: A1.7's recorded "
+                             "successes of the evaluated fold (oracle, label separately)")
+    parser.add_argument("--replay-allowlist", default="",
+                        help="comma-separated replay allowlist (default: auto = every "
+                             "observed tool whose name does not look side-effectful; the "
+                             "engine still denies side-effect names and empty schemas)")
     parser.add_argument("--max-accepted-samples", type=int, default=20)
     parser.add_argument("--max-failed-samples", type=int, default=10)
     args = parser.parse_args()
@@ -284,6 +303,20 @@ def main() -> int:
     schemas, schema_fidelity = refine_schema_index(schemas, calls)
     families = sorted({call.model for call in calls})
     print(f"calls: {len(calls)} | schemas: {len(schemas)} | families: {families}")
+
+    # A1.8.3 replay allowlist.  The default (auto) is an experiment upper bound: every tool
+    # name observed in the dataset that does not look side-effectful.  The engine still
+    # denies side-effect names and replay on an empty declared schema regardless.
+    if args.replay_allowlist:
+        replay_allowlist = frozenset(
+            tool.strip() for tool in args.replay_allowlist.split(",") if tool.strip())
+        replay_allowlist_source = "explicit"
+    else:
+        replay_allowlist = frozenset({call.tool_name for call in calls
+                                      if not is_side_effect_tool(call.tool_name)})
+        replay_allowlist_source = "auto: all observed non-side-effect tool names"
+    print(f"replay source: {args.replay_source} | allowlist: {len(replay_allowlist)} "
+          f"tool(s) [{replay_allowlist_source}]")
 
     backend = None
     if not args.no_cache and (repo_root / args.cache).is_dir():
@@ -354,10 +387,18 @@ def main() -> int:
             else:
                 resolved = []
                 a16 = None
+                training_reference = memory.by_task_function.get(
+                    (call.group, call.query_id, call.tool_name)) or []
+                replay_successes = (training_reference if args.replay_source == "training"
+                                    else reference)
                 a17_result = repair_failure(
                     call, schemas, memory, extractor_map_a17,
-                    successful_arguments=reference, allow_recorded_success_replay=True)
+                    successful_arguments=reference, allow_recorded_success_replay=True,
+                    replay_allowlist=replay_allowlist,
+                    replay_successes=replay_successes)
                 a17 = _classify(a17_result)
+                a17["replay_source"] = args.replay_source
+                a17["replay_candidate_count"] = len(replay_successes or [])
                 sensitivity = None
                 param_schema = schema
                 value_evidence = _value_evidence(a17_result, call.arguments, reference)
@@ -675,9 +716,22 @@ def main() -> int:
                 "a16_schema_only": "in-memory error-driven schema completion (A1.6)",
                 "a17_extract": "a16_schema_only + A1.7 source/state/topic/ID extractors",
                 "a17_replay": ("a17_extract + same-task/function recorded-success replay for "
-                               "generic errors only, schema-gated"),
+                               "generic errors only, schema-gated; A1.8.3 gated by the "
+                               "read-only allowlist + side-effect/empty-schema guards"),
                 "a17_named_replay_sensitivity": ("sensitivity only, out of the documented "
                                                  "scope: replay also for named errors"),
+            },
+            "replay": {
+                "source": args.replay_source,
+                "source_meaning": (
+                    "training: training-side SuccessMemory successes only (honest gain)"
+                    if args.replay_source == "training" else
+                    "test-fold-oracle: recorded successes of the evaluated fold (A1.7 "
+                    "oracle; must not be reported as independent recovery)"),
+                "allowlist_source": replay_allowlist_source,
+                "allowlist_size": len(replay_allowlist),
+                "gates": ("allowlist membership + non-side-effect tool name + non-empty "
+                          "declared schema (engine.replay_tool_allowed)"),
             },
         },
         "protocol_verification": {
@@ -731,23 +785,24 @@ def main() -> int:
 def _render_report(result: dict) -> str:
     lines: list[str] = []
     tables = result["subset_tables"]
-    lines.append("# A1.7 before/after (228 missing_required no-proposal failures)\n")
+    replay = result["protocol"]["replay"]
+    lines.append("# A1.7/A1.8.3 before/after (228 missing_required no-proposal failures)\n")
     verification = result["protocol_verification"]
     lines.append(f"Protocol verification against metrics.json: "
                  f"**{'MATCH' if verification['match'] else 'MISMATCH'}** "
                  f"`{json.dumps(verification['computed'])}`\n")
+    lines.append(f"Replay source: **{replay['source']}** — {replay['source_meaning']} "
+                 f"(allowlist: {replay['allowlist_size']} tools, "
+                 f"{replay['allowlist_source']}; gates: {replay['gates']}).\n")
 
     lines.append("## Funnel\n")
-    rows = [
-        ["named (95)", "0 / 228 subset", "0", "0", "0", "0", "0", "95"],
-        ["generic (133)", "0 / 228 subset", "0", "0", "0", "0", "0", "133"],
-    ]
     named = tables["named"]
     a16 = named["a16_schema_only"]
     a17 = named["a17_extract"]
     sens = named["a17_named_replay_sensitivity"]
     gen = tables["generic"]["a17_replay"]
     total = tables["total"]["a17_after"]
+    replay_label = f"A1.8.3 replay ({replay['source']})"
     lines.append(_md_table(
         ["subset", "config", "proposed", "schema-valid", "value-verified", "exact recorded success",
          "schema rejected", "no proposal"],
@@ -764,25 +819,37 @@ def _render_report(result: dict) -> str:
              sens.get("exact_recorded_success", 0), sens.get("proposed_rejected", 0),
              sens.get("no_proposal", 0)],
             ["generic 133", "baseline", 0, 0, 0, 0, 0, 133],
-            ["generic 133", "A1.7 replay", gen.get("proposed", 0), gen.get("schema_valid", 0),
+            ["generic 133", replay_label, gen.get("proposed", 0), gen.get("schema_valid", 0),
              gen.get("value_verified", 0), gen.get("exact_recorded_success", 0),
              gen.get("proposed_rejected", 0), gen.get("no_proposal", 0)],
             ["total 228", "baseline", 0, 0, 0, 0, 0, 228],
-            ["total 228", "A1.7 after", total.get("proposed", 0), total.get("schema_valid", 0),
+            ["total 228", "A1.7/A1.8.3 after", total.get("proposed", 0), total.get("schema_valid", 0),
              total.get("value_verified", 0), total.get("exact_recorded_success", 0),
              total.get("proposed_rejected", 0), total.get("no_proposal", 0)],
         ]))
     lines.append("\n- `schema-valid` = accepted through the structural schema gate; it is "
                  "**not** value correctness.\n"
                  "- `value-verified` = the existing evaluator tier: a schema-failing proposal "
-                 "that is an exact recorded successful invocation of the same task/function.\n"
-                 "- `exact recorded success` = the accepted arguments are literally a recorded "
-                 "success of the same task/function. All 13 generic replay proposals are exact "
-                 "recorded successes: 7 pass the schema gate (tier 1) and 6 fail it only because "
-                 "the schema index declares no parameters for that function, so they are admitted "
-                 "under the existing value-verified tier (tier 2), counted separately, never as "
-                 "schema-valid. A replay is therefore *recovered by construction*, not an "
-                 "independent value check; the strict schema-gate-only count is 7.\n")
+                 "that is an exact recorded successful invocation of the same task/function.\n")
+    if replay["source"] == "training":
+        lines.append(
+            f"- **training-only replay gain on the 133 generic cases: "
+            f"{gen.get('accepted', 0)} accepted** "
+            f"({gen.get('schema_valid', 0)} schema-valid + {gen.get('value_verified', 0)} "
+            f"value-verified; {gen.get('no_proposal', 0)} still no proposal). This is the "
+            "honest gain: the baseline ladder already proposes every training-side success, so "
+            "there is no training-side recorded success left for the generic cases. The A1.7 "
+            "13 accepted replay cases came from the test-fold oracle and are not counted "
+            "here.\n")
+    else:
+        lines.append(
+            f"- **test-fold oracle replay (NOT independent): {gen.get('accepted', 0)} accepted** "
+            f"({gen.get('schema_valid', 0)} schema-valid + {gen.get('value_verified', 0)} "
+            f"value-verified; {gen.get('no_proposal', 0)} still no proposal). The A1.8.3 safety "
+            "gates refuse replay on an empty declared schema, so the historical 13 unsafe "
+            "admissions (7 schema-valid + 6 empty-schema `user_id='123456789'` placeholders) "
+            "shrink to the schema-valid subset. This row is an oracle upper bound, never "
+            "independent recovery.\n")
     scope_note = result["named_replay_scope_note"]
     lines.append(
         f"- the simulated named-replay sensitivity row is **out of the documented generic-only "
@@ -848,7 +915,8 @@ def _render_report(result: dict) -> str:
           row["exact_recorded_success"], json.dumps(row["cache_status"], ensure_ascii=False)]
          for row in result["distinct_accepted_values"]]))
 
-    lines.append("\n## Still-failed sample (10 of 140)\n")
+    lines.append(f"\n## Still-failed sample ({len(result['samples']['still_failed'])} of "
+                 f"{total.get('no_proposal', 0)})\n")
     lines.append(_md_table(
         ["tool", "parameter(s)", "status", "reason"],
         [[s["tool"], ", ".join(s["named_params"]) or "(unnamed)", s["after_status"],

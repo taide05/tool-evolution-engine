@@ -4,6 +4,12 @@ The replay rule is opt-in (``allow_recorded_success_replay=True``), only applies
 ``missing_required`` errors that name no parameter, and only when the regular ladder
 produced no schema-valid proposal.  It reuses the normal schema gate / value-verified
 tier, so a schema-invalid replay is still reported honestly.
+
+A1.8.3 adds safety gates on top (explicit read-only allowlist, side-effect-name denial,
+non-empty declared schema); the tests here pass an explicit allowlist.  The empty-schema
+replay admission that A1.7 used to allow is now rejected — see
+``test_generic_replay_with_empty_schema_is_blocked`` and
+``tests/test_toolguard/test_a18_replay_safety.py``.
 """
 
 from __future__ import annotations
@@ -17,13 +23,15 @@ from tool_evolution.toolguard.engine import repair_failure  # noqa: E402
 from tool_evolution.toolguard.extractors import ExtractorMap  # noqa: E402
 from tool_evolution.toolguard.records import FunctionSchema, ToolCall  # noqa: E402
 
+TRENDING_TOOL = "get_trending_for_url_content_extractor"
 TRENDING_SCHEMA = FunctionSchema(
-    name="get_trending_for_url_content_extractor",
+    name=TRENDING_TOOL,
     properties={"category": {"type": "string"}, "region": {"type": "string"}},
     required=(),
 )
-EMPTY_SCHEMA = FunctionSchema(name="get_user_orders_for_onboarding_project_v3",
-                              properties={}, required=())
+TRENDING_ALLOWLIST = frozenset({TRENDING_TOOL})
+EMPTY_TOOL = "get_user_orders_for_onboarding_project_v3"
+EMPTY_SCHEMA = FunctionSchema(name=EMPTY_TOOL, properties={}, required=())
 
 
 def _call(tool: str, error: str, arguments: dict | None = None,
@@ -37,39 +45,40 @@ def _call(tool: str, error: str, arguments: dict | None = None,
 
 
 def test_generic_replay_is_off_by_default():
-    call = _call("get_trending_for_url_content_extractor", "No input parameters provided")
-    result = repair_failure(call, {"get_trending_for_url_content_extractor": TRENDING_SCHEMA},
+    call = _call(TRENDING_TOOL, "No input parameters provided")
+    result = repair_failure(call, {TRENDING_TOOL: TRENDING_SCHEMA},
                             None, ExtractorMap(),
                             successful_arguments=[{"category": "news"}])
     assert not result.proposed, "the historical ladder must be unchanged by default"
 
 
 def test_generic_replay_proposes_the_recorded_success_and_passes_the_schema_gate():
-    call = _call("get_trending_for_url_content_extractor", "No input parameters provided")
-    result = repair_failure(call, {"get_trending_for_url_content_extractor": TRENDING_SCHEMA},
+    call = _call(TRENDING_TOOL, "No input parameters provided")
+    result = repair_failure(call, {TRENDING_TOOL: TRENDING_SCHEMA},
                             None, ExtractorMap(),
                             successful_arguments=[{"category": "news"}],
-                            allow_recorded_success_replay=True)
+                            allow_recorded_success_replay=True,
+                            replay_allowlist=TRENDING_ALLOWLIST)
     assert result.repairable and result.schema_valid
     assert result.arguments == {"category": "news"}
     assert result.rules == ["generic_success_replay"]
 
 
-def test_generic_replay_schema_invalid_candidate_is_not_silently_passed():
-    """With no declared parameters the candidate fails the schema; it is admitted only
-    through the existing value-verified tier (exact recorded success), reported as such."""
-    call = _call("get_user_orders_for_onboarding_project_v3",
-                 "Missing input parameters for retrieving user orders.")
-    result = repair_failure(call, {"get_user_orders_for_onboarding_project_v3": EMPTY_SCHEMA},
+def test_generic_replay_with_empty_schema_is_blocked():
+    """A1.8.3: an empty declared schema cannot self-verify a replay.
+
+    A1.7 admitted this candidate through the value-verified (exact recorded success) tier;
+    with no declared properties both evidence tiers would be self-evidence, so replay is
+    refused instead (the 6 user_id='123456789' placeholder admissions are no longer fixes).
+    """
+    call = _call(EMPTY_TOOL, "Missing input parameters for retrieving user orders.")
+    result = repair_failure(call, {EMPTY_TOOL: EMPTY_SCHEMA},
                             None, ExtractorMap(),
                             successful_arguments=[{"user_id": "123456789"}],
-                            allow_recorded_success_replay=True)
-    assert result.repairable
-    assert result.value_verified is True
-    assert result.schema_valid is False
-    # the schema violation is exposed, not swallowed
-    assert any("user_id" in error for error in result.schema_errors)
-    assert "recorded_success_match" in result.rules
+                            allow_recorded_success_replay=True,
+                            replay_allowlist=frozenset({EMPTY_TOOL}))
+    assert not result.proposed
+    assert "generic_success_replay" not in result.rules
 
 
 def test_generic_replay_only_applies_to_unnamed_errors():
@@ -83,7 +92,8 @@ def test_generic_replay_only_applies_to_unnamed_errors():
     result = repair_failure(call, {"coindesk_for_cryptocurrency_news": schema},
                             None, ExtractorMap(),
                             successful_arguments=[{"source": "CoinDesk"}],
-                            allow_recorded_success_replay=True)
+                            allow_recorded_success_replay=True,
+                            replay_allowlist=frozenset({"coindesk_for_cryptocurrency_news"}))
     assert not result.proposed
     assert "generic_success_replay" not in result.rules
 
@@ -98,27 +108,33 @@ def test_generic_replay_is_skipped_when_the_ladder_already_has_a_schema_valid_re
     result = repair_failure(call, {"advanced_search_for_ott_details": schema},
                             None, ExtractorMap(),
                             successful_arguments=[{"type": "show"}],
-                            allow_recorded_success_replay=True)
+                            allow_recorded_success_replay=True,
+                            replay_allowlist=frozenset({"advanced_search_for_ott_details"}))
     assert result.repairable and result.schema_valid
     assert result.rules[0].startswith("schema_default")
     assert "generic_success_replay" not in result.rules
 
 
 def test_generic_replay_does_not_apply_to_other_error_kinds():
-    call = _call("get_trending_for_url_content_extractor", "API not working")
-    result = repair_failure(call, {"get_trending_for_url_content_extractor": TRENDING_SCHEMA},
+    call = _call(TRENDING_TOOL, "API not working")
+    result = repair_failure(call, {TRENDING_TOOL: TRENDING_SCHEMA},
                             None, ExtractorMap(),
                             successful_arguments=[{"category": "news"}],
-                            allow_recorded_success_replay=True)
+                            allow_recorded_success_replay=True,
+                            replay_allowlist=TRENDING_ALLOWLIST)
     assert not result.proposed
 
 
 def test_generic_replay_dedupes_and_stops_at_the_first_valid_candidate():
-    call = _call("get_trending_for_url_content_extractor", "No input parameters provided")
+    call = _call(TRENDING_TOOL, "No input parameters provided")
     result = repair_failure(
-        call, {"get_trending_for_url_content_extractor": TRENDING_SCHEMA}, None, ExtractorMap(),
+        call, {TRENDING_TOOL: TRENDING_SCHEMA}, None, ExtractorMap(),
         successful_arguments=[
             {"category": "news"}, {"category": "news"}, {"category": "technology"}],
-        allow_recorded_success_replay=True)
+        allow_recorded_success_replay=True,
+        replay_allowlist=TRENDING_ALLOWLIST)
     assert result.repairable and result.schema_valid
     assert result.arguments == {"category": "news"}
+    replay_candidates = [candidate for candidate in result.candidates
+                         if "generic_success_replay" in candidate["rules"]]
+    assert len(replay_candidates) == 2, "duplicate recorded successes must be deduped"
