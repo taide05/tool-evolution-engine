@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import calendar
 import difflib
+import re
 
 from .extractors import ExtractorMap
 from .memory import SuccessMemory
@@ -171,6 +172,8 @@ def repair_failure(
     allow_recorded_success_replay: bool = False,
     replay_allowlist: frozenset[str] | None = None,
     replay_successes: list[dict] | None = None,
+    enable_required_default_completion: bool = False,
+    enable_enum_normalization: bool = False,
 ) -> RepairResult:
     """Apply the repair ladder; every *proposed* candidate is kept for the schema funnel.
 
@@ -200,6 +203,12 @@ def repair_failure(
 
     Rejected candidates are counted and exposed on ``result.candidates`` instead of being
     silently dropped, so the schema funnel is honest.
+
+    ``enable_required_default_completion`` and ``enable_enum_normalization`` (B6, default
+    off) append two extra deterministic rules after the historical ladder: filling missing
+    required parameters from schema example/default values, and normalizing a near-miss
+    value to a uniquely matching declared enum member.  Defaults leave the headline
+    evaluation bit-for-bit unchanged.
     """
     base = repair_call(call.tool_name, call.arguments, call.error, call.available_tools, schemas)
     proposals: list[RepairResult] = []
@@ -238,6 +247,25 @@ def repair_failure(
             completion = _schema_default_completion(call, schema, kind)
             if completion is not None:
                 proposals.append(completion)
+
+        # B6 new deterministic rules (opt-in, default off).  They are appended after the
+        # historical ladder so enabling them can never change an already-accepted repair;
+        # every proposal still goes through the same schema gate and evidence tiers.
+        # Rule 1: fill *all* missing required parameters from schema example/default values
+        # (the historical ``_schema_default_completion`` refuses when ``schema.required`` is
+        # non-empty; in practice ``rules._repair_missing_required`` already fills named /
+        # all-required defaults, so this rule is expected to add nothing -- it is measured
+        # rather than assumed, see experiments B6).
+        if enable_required_default_completion and schema is not None and kind == "missing_required":
+            required_default = _required_default_completion(call, schema, kind)
+            if required_default is not None:
+                proposals.append(required_default)
+        # Rule 2: normalize a value that differs from exactly one declared enum member only
+        # by case/space/hyphen/underscore.  Multiple candidate members -> refuse (no guessing).
+        if enable_enum_normalization and schema is not None:
+            enum_repair = _enum_normalization(call, schema)
+            if enum_repair is not None:
+                proposals.append(enum_repair)
 
         # A1.7 experiment B: for a generic missing-parameters error (the message names no
         # parameter), a recorded success of the *same task/function* is replay evidence.
@@ -507,6 +535,98 @@ def _schema_default_completion(call: ToolCall, schema: FunctionSchema, kind: str
         schema_valid=not errors,
         schema_errors=errors,
         reason="completed the call with schema-declared default/example values",
+    )
+
+
+# ---------------------------------------------------------------------------
+# B6: new deterministic rules (opt-in, default off)
+# ---------------------------------------------------------------------------
+_ENUM_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _normalized_enum_value(value: object) -> str:
+    return _ENUM_NORMALIZE_RE.sub("", str(value).lower())
+
+
+def _required_default_completion(call: ToolCall, schema: FunctionSchema,
+                                 kind: str) -> RepairResult | None:
+    """B6 rule 1 (opt-in): fill *all* missing required params from schema defaults.
+
+    Proposes only when every missing required parameter has a schema example/default, so
+    the full schema gate can actually pass; a partial fill would be a guaranteed rejection
+    and is not proposed.  Values come from the schema declaration only -- nothing is
+    invented.
+    """
+    if kind != "missing_required" or not schema.required:
+        return None
+    missing = [name for name in schema.required
+               if call.arguments.get(name) in (None, "")]
+    if not missing:
+        return None
+    values: dict[str, object] = {}
+    for name in missing:
+        value = schema.default_for(name)
+        if value is None:
+            return None
+        values[name] = value
+    arguments = dict(call.arguments)
+    rules: list[str] = []
+    for name, value in values.items():
+        arguments[name] = value
+        rules.append(f"required_default:{name}")
+    errors = validate_arguments(arguments, schema)
+    return RepairResult(
+        kind=kind,
+        repairable=not errors,
+        proposed=True,
+        rules=rules,
+        function_name=call.tool_name,
+        arguments=arguments,
+        schema_valid=not errors,
+        schema_errors=errors,
+        reason="filled every missing required parameter from schema example/default values "
+               "and passed the full schema gate",
+    )
+
+
+def _enum_normalization(call: ToolCall, schema: FunctionSchema) -> RepairResult | None:
+    """B6 rule 2 (opt-in): normalize a near-miss enum value to its unique declared member.
+
+    Only case/space/hyphen/underscore differences count, and only when exactly one enum
+    member matches after normalisation; two or more candidates means the rule refuses
+    instead of guessing (the proposal is not produced at all).
+    """
+    arguments = dict(call.arguments)
+    rules: list[str] = []
+    for name, value in list(arguments.items()):
+        prop = schema.properties.get(name) or {}
+        enum = prop.get("enum")
+        if not isinstance(enum, list) or not enum or value in enum:
+            continue
+        if not isinstance(value, str):
+            continue
+        target = _normalized_enum_value(value)
+        if not target:
+            continue
+        matches = [member for member in enum
+                   if isinstance(member, str) and _normalized_enum_value(member) == target]
+        if len(matches) != 1:
+            continue
+        arguments[name] = matches[0]
+        rules.append(f"enum_normalize:{name}")
+    if not rules:
+        return None
+    errors = validate_arguments(arguments, schema)
+    return RepairResult(
+        kind=classify_error(call.error),
+        repairable=not errors,
+        proposed=True,
+        rules=rules,
+        function_name=call.tool_name,
+        arguments=arguments,
+        schema_valid=not errors,
+        schema_errors=errors,
+        reason=f"normalized {len(rules)} near-miss enum value(s) to the unique declared member",
     )
 
 
