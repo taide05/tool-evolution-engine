@@ -127,6 +127,7 @@ def repair_failure(
     memory: SuccessMemory | None = None,
     extractor_map: ExtractorMap | None = None,
     successful_arguments: list[dict] | None = None,
+    allow_recorded_success_replay: bool = False,
 ) -> RepairResult:
     """Apply the repair ladder; every *proposed* candidate is kept for the schema funnel.
 
@@ -140,6 +141,16 @@ def repair_failure(
        of the same task/function.  This is empirical evidence, deliberately kept separate
        from schema validity; callers that do not have recorded successes (the live guard)
        never use this tier.
+
+    ``allow_recorded_success_replay`` (A1.7, default off) additionally lets the
+    same task/function recorded successes act as *replay candidates* — not merely as
+    value verification — but only for generic missing-parameters errors that name no
+    parameter.  Every replay candidate still goes through the same schema gate and the
+    existing evidence tiers: a candidate that fails the schema is counted as a rejected
+    proposal unless it is (as a replay candidate always is) a verbatim recorded success,
+    in which case it is admitted only through the separate ``value_verified`` tier and
+    never reported as schema-valid.  The default is ``False`` so the historical/headline
+    evaluation is bit-for-bit unchanged.
 
     Rejected candidates are counted and exposed on ``result.candidates`` instead of being
     silently dropped, so the schema funnel is honest.
@@ -182,6 +193,17 @@ def repair_failure(
             if completion is not None:
                 proposals.append(completion)
 
+        # A1.7 experiment B: for a generic missing-parameters error (the message names no
+        # parameter), a recorded success of the *same task/function* is replay evidence.
+        # Only added when the ladder found no schema-valid proposal, so this can never
+        # change an already-accepted repair; the schema gate below still applies.
+        if (allow_recorded_success_replay and schema is not None and successful_arguments
+                and kind == "missing_required"
+                and not parse_missing_params(call.error or "")
+                and not any(p.repairable and p.schema_valid for p in proposals)):
+            proposals.extend(
+                _generic_success_replay_candidates(call, schema, kind, successful_arguments))
+
     for index, proposal in enumerate(proposals):
         if proposal.repairable and proposal.schema_valid:
             return _accept(proposal, proposals)
@@ -208,6 +230,50 @@ def repair_failure(
                 )
                 return _accept(verified, proposals)
     return _all_rejected(kind, proposals, base)
+
+
+# ---------------------------------------------------------------------------
+# A1.7 strategy: generic missing-parameters error replay
+# ---------------------------------------------------------------------------
+def _generic_success_replay_candidates(
+    call: ToolCall,
+    schema: FunctionSchema,
+    kind: str,
+    successful_arguments: list[dict],
+) -> list[RepairResult]:
+    """Turn recorded successes of the same task/function into replay candidates.
+
+    Used only for generic missing-parameters errors (the message names no parameter) and
+    only when the ladder produced no schema-valid proposal.  Each distinct recorded
+    argument set becomes one candidate; the caller's normal schema gate and evidence
+    tiers decide the outcome, so a schema-invalid replay is either counted as rejected or
+    admitted solely through the existing exact-recorded-success (value-verified) tier —
+    never silently as a schema-valid repair.
+    """
+    candidates: list[RepairResult] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for recorded in successful_arguments:
+        if not isinstance(recorded, dict) or not recorded:
+            continue
+        fingerprint = tuple(sorted((str(name), repr(value)) for name, value in recorded.items()))
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        arguments = dict(recorded)
+        errors = validate_arguments(arguments, schema)
+        candidates.append(RepairResult(
+            kind=kind,
+            repairable=not errors,
+            proposed=True,
+            rules=["generic_success_replay"],
+            function_name=call.tool_name,
+            arguments=arguments,
+            schema_valid=not errors,
+            schema_errors=errors,
+            reason=("replayed a recorded successful invocation of the same task/function "
+                    "(the generic missing-parameters error did not name a parameter)"),
+        ))
+    return candidates
 
 
 # ---------------------------------------------------------------------------
